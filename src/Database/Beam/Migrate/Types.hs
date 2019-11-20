@@ -1,33 +1,35 @@
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE DeriveAnyClass #-} -- needed for 'Beamable', it can eventually go.
+{-# LANGUAGE UndecidableInstances #-}
 module Database.Beam.Migrate.Types where
 
-import           Data.Map               (Map)
-import qualified Data.Map.Strict as M
-import           Data.Set               (Set)
-import           Data.Text              (Text)
-import qualified Data.Text       as T
+import           Data.Map                    (Map)
+import qualified Data.Map.Strict             as M
+import           Data.Set                    (Set)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as T
+import           Lens.Micro                  ((^.))
 
 import           GHC.Generics
 
 import           Database.Beam.Postgres
-import           Database.Beam.Schema   (Beamable, Columnar, Database,
-                                         DatabaseSettings, PrimaryKey,
-                                         TableEntity, defaultDbSettings)
-import qualified Database.Beam.Schema   as Beam
+import           Database.Beam.Schema        (Beamable, Columnar, Database,
+                                              DatabaseSettings, PrimaryKey,
+                                              TableEntity, defaultDbSettings)
+import qualified Database.Beam.Schema        as Beam
+import           Database.Beam.Schema.Tables (dbEntityDescriptor, dbEntityName, IsDatabaseEntity)
 
 -- Needed only for the examples, (re)move eventually.
-import           Data.Int               (Int32, Int64)
-import           Data.Scientific        (Scientific)
-import           Data.Time              (UTCTime)
+import           Data.Int                    (Int32, Int64)
+import           Data.Scientific             (Scientific)
+import           Data.Time                   (UTCTime)
 
 --
 -- Types (sketched)
@@ -49,11 +51,16 @@ newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
 
 data Column = Column {
     columnType       :: ColumnType
-  , columnConstrains :: Set SchemaConstraint
+  , columnConstrains :: Set ColumnConstraint
   } deriving Show
 
+-- | Basic types for columns, everything is very naive for now.
 type ColumnType       = ()
-type SchemaConstraint = ()
+
+data ColumnConstraint =
+    PrimaryKey
+    -- ^ This 'Column' is the Table's primary key.
+    deriving (Show, Eq, Ord)
 
 -- | A possible list of edits on a 'Schema'.
 data Edit =
@@ -119,7 +126,7 @@ class GSchemaTable x where
 instance GSchema x => GSchema (D1 f x) where
     gSchema (M1 x) = gSchema x
 instance (Constructor f, GSchemaTables x) => GSchema (C1 f x) where
-    gSchema (M1 x) = 
+    gSchema (M1 x) =
         let sName = SchemaName . T.pack . conName $ (undefined :: (C1 f g x))
         in Schema { schemaName   = sName
                   , schemaTables = gSchemaTables x
@@ -130,24 +137,15 @@ instance (GSchemaTable a, GSchemaTables b) => GSchemaTables (a :*: b) where
 instance GSchemaTable (S1 f x) => GSchemaTables (S1 f x) where
     gSchemaTables = uncurry M.singleton . gSchemaTable
 
-instance Selector f => GSchemaTable (S1 f x) where
-  gSchemaTable (M1 _x) = 
-      let tName = TableName . T.pack . selName $ (undefined :: (S1 f g x))
-      in (tName, Table mempty) -- TODO(Fixme)
+instance GSchemaTable x => GSchemaTable (S1 f x) where
+  gSchemaTable (M1 x) = gSchemaTable x
+      -- let tName = TableName . T.pack . selName $ (undefined :: (S1 f g x))
+      -- in (tName, Table mempty) -- TODO(Fixme)
 
---instance GShowRecordFields x => GShowRecordFields (D1 f x) where
---    gRecFields (M1 x) = gRecFields x
---instance GShowRecordFields x => GShowRecordFields (C1 f x) where
---    gRecFields (M1 x) = gRecFields x
---instance (Selector f, GShowRecordFields x) => GShowRecordFields (S1 f x) where
---    gRecFields (M1 m1) = selName (undefined :: S1 f (K1 R a) x) : gRecFields m1
---instance GShowRecordFields (K1 R a) where
---    gRecFields _ = []
---instance (GShowRecordFields a, GShowRecordFields b) => GShowRecordFields (a :*: b) where
---    gRecFields (a :*: b) = gRecFields a <> gRecFields b
---instance (GShowRecordFields a, GShowRecordFields b) => GShowRecordFields (a :+: b) where
---    gRecFields (L1 a1) = gRecFields a1
---    gRecFields (R1 a1) = gRecFields a1
+instance IsDatabaseEntity be etype => GSchemaTable (K1 R (Beam.DatabaseEntity be db etype)) where
+  gSchemaTable (K1 entity) =
+      let tName = entity ^. dbEntityDescriptor . dbEntityName
+       in (TableName tName, Table mempty)
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
 fromDbSettings :: ( Generic (DatabaseSettings be db)
