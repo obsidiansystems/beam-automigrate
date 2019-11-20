@@ -97,70 +97,6 @@ data DiffError =
 -- Potential API (sketched)
 --
 
-{-
-
-> :kind! (Rep (DatabaseSettings Postgres FlowerDB) ())
-(Rep (DatabaseSettings Postgres FlowerDB) ()) :: *
-= D1
-    ('MetaData "FlowerDB" "Main" "main" 'False)
-    (C1
-       ('MetaCons "FlowerDB" 'PrefixI 'True)
-       (S1
-          ('MetaSel
-             ('Just "dbFlowers")
-             'NoSourceUnpackedness
-             'NoSourceStrictness
-             'DecidedLazy)
-          (Rec0 (DatabaseEntity Postgres FlowerDB (TableEntity FlowerT)))
-        :*: (S1
-               ('MetaSel
-                  ('Just "dbOrders")
-                  'NoSourceUnpackedness
-                  'NoSourceStrictness
-                  'DecidedLazy)
-               (Rec0 (DatabaseEntity Postgres FlowerDB (TableEntity OrderT)))
-             :*: S1
-                   ('MetaSel
-                      ('Just "dbLineItems")
-                      'NoSourceUnpackedness
-                      'NoSourceStrictness
-                      'DecidedLazy)
-                   (Rec0
-                      (DatabaseEntity Postgres FlowerDB (TableEntity LineItemT))))))
-    ()
-
-
-
-> :kind! (Rep (TableSettings (FlowerT)))
-(Rep (TableSettings (FlowerT))) :: * -> *
-= D1
-    ('MetaData "FlowerT" "Main" "main" 'False)
-    (C1
-       ('MetaCons "Flower" 'PrefixI 'True)
-       (S1
-          ('MetaSel
-             ('Just "flowerID")
-             'NoSourceUnpackedness
-             'NoSourceStrictness
-             'DecidedLazy)
-          (Rec0 (TableField FlowerT Int32))
-        :*: (S1
-               ('MetaSel
-                  ('Just "flowerName")
-                  'NoSourceUnpackedness
-                  'NoSourceStrictness
-                  'DecidedLazy)
-               (Rec0 (TableField FlowerT Text))
-             :*: S1
-                   ('MetaSel
-                      ('Just "flowerPrice")
-                      'NoSourceUnpackedness
-                      'NoSourceStrictness
-                      'DecidedLazy)
-                   (Rec0 (TableField FlowerT Scientific)))))
-
--}
-
 class GSchema x where
     gSchema :: x p -> Schema
 
@@ -224,7 +160,7 @@ instance GSchemaColumnEntry (S1 m (K1 R (Beam.TableField e t))) where
 -- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
 instance GSchemaColumnEntry (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
     gSchemaColumnEntry (M1 (K1 _e)) = 
-        let colName = ColumnName $ "todo" -- e ^. Beam.fieldName
+        let colName = ColumnName $ "todo" -- (Beam.pk e) ^. Beam.fieldName
         in (colName, Column () noColumnConstraints)
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
@@ -309,10 +245,11 @@ flowerDB = defaultDbSettings `withDbModification`
                             orderID = fieldNamed "id"
                           , orderTime = fieldNamed "order_time"
                           }
-            --, dbLineItems = modifyTableFields tableModification {
-            --                lineItemFlowerID = fieldNamed "flower_id"
-            --              , lineItemOrderID  = fieldNamed "order_id"
-            --              }
+            , dbLineItems = modifyTableFields tableModification {
+                            lineItemFlowerID = FlowerID "flower_id"
+                          , lineItemOrderID  = OrderID  "order_id"
+                          , lineItemQuantity = fieldNamed "quantity"
+                          }
             }
 
 example :: IO ()
