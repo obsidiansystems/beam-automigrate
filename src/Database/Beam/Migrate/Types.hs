@@ -23,12 +23,16 @@ import           Database.Beam.Postgres
 import           Database.Beam.Schema        (Beamable, Columnar, Database,
                                               DatabaseSettings, PrimaryKey,
                                               TableEntity, TableSettings,
-                                              defTblFieldSettings,
-                                              defaultDbSettings)
+                                              defaultDbSettings,
+                                              withDbModification,
+                                              dbModification,
+                                              tableModification,
+                                              modifyTableFields,
+                                              fieldNamed
+                                             )
 import qualified Database.Beam.Schema        as Beam
-import           Database.Beam.Schema.Tables (GDefaultTableFieldSettings,
-                                              IsDatabaseEntity,
-                                              dbEntityDescriptor, dbEntityName)
+import           Database.Beam.Schema.Tables (IsDatabaseEntity,
+                                              dbEntityDescriptor, dbEntityName, dbTableSettings)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                    (Int32, Int64)
@@ -186,21 +190,16 @@ instance (GSchemaTableEntry a, GSchemaTables b) => GSchemaTables (a :*: b) where
 instance GSchemaTableEntry (S1 f x) => GSchemaTables (S1 f x) where
     gSchemaTables = uncurry M.singleton . gSchemaTableEntry
 
-type family UnpackEntityType (etype :: *) where
-    UnpackEntityType (TableEntity e) = e
-
 instance GSchemaTableEntry x => GSchemaTableEntry (S1 f x) where
   gSchemaTableEntry (M1 x) = gSchemaTableEntry x
-instance ( IsDatabaseEntity be etype
-         , e ~ UnpackEntityType etype
-         , GSchemaTable (Rep (TableSettings e))
-         , Generic (TableSettings e)
-         , GDefaultTableFieldSettings (Rep (TableSettings e) ())
+instance ( IsDatabaseEntity be (TableEntity tbl)
+         , GSchemaTable (Rep (TableSettings tbl))
+         , Generic (TableSettings tbl)
          )
-  => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db etype)) where
+  => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db (TableEntity tbl))) where
   gSchemaTableEntry (K1 entity) =
       let tName = entity ^. dbEntityDescriptor . dbEntityName
-       in (TableName tName, gSchemaTable . from $ (defTblFieldSettings :: TableSettings e))
+       in (TableName tName, gSchemaTable . from $ (dbTableSettings $ entity ^. dbEntityDescriptor ))
 
 instance GSchemaTable x => GSchemaTable (D1 f x) where
     gSchemaTable (M1 x) = gSchemaTable x
@@ -299,8 +298,22 @@ instance Beam.Table LineItemT where
     <$> lineItemOrderID
     <*> lineItemFlowerID
 
+-- Modify the field names to be compliant with William Yao's format.
 flowerDB :: DatabaseSettings Postgres FlowerDB
-flowerDB = defaultDbSettings
+flowerDB = defaultDbSettings `withDbModification`
+            dbModification {
+              dbFlowers = modifyTableFields tableModification {
+                            flowerID = fieldNamed "id"
+                          }
+            , dbOrders = modifyTableFields tableModification {
+                            orderID = fieldNamed "id"
+                          , orderTime = fieldNamed "order_time"
+                          }
+            --, dbLineItems = modifyTableFields tableModification {
+            --                lineItemFlowerID = fieldNamed "flower_id"
+            --              , lineItemOrderID  = fieldNamed "order_id"
+            --              }
+            }
 
 example :: IO ()
 example = print $ fromDbSettings flowerDB
