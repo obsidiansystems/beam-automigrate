@@ -22,9 +22,13 @@ import           GHC.Generics
 import           Database.Beam.Postgres
 import           Database.Beam.Schema        (Beamable, Columnar, Database,
                                               DatabaseSettings, PrimaryKey,
-                                              TableEntity, defaultDbSettings)
+                                              TableEntity, TableSettings,
+                                              defTblFieldSettings,
+                                              defaultDbSettings)
 import qualified Database.Beam.Schema        as Beam
-import           Database.Beam.Schema.Tables (dbEntityDescriptor, dbEntityName, IsDatabaseEntity)
+import           Database.Beam.Schema.Tables (GDefaultTableFieldSettings,
+                                              IsDatabaseEntity,
+                                              dbEntityDescriptor, dbEntityName)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                    (Int32, Int64)
@@ -47,6 +51,12 @@ newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord)
 
 newtype Table = Table { tableColumns :: Map ColumnName Column } deriving Show
 
+instance Semigroup Table where
+    (Table t1) <> (Table t2) = Table (t1 <> t2)
+
+instance Monoid Table where
+    mempty = Table mempty
+
 newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
 
 data Column = Column {
@@ -56,6 +66,9 @@ data Column = Column {
 
 -- | Basic types for columns, everything is very naive for now.
 type ColumnType       = ()
+
+noColumnConstraints :: Set ColumnConstraint
+noColumnConstraints = mempty
 
 data ColumnConstraint =
     PrimaryKey
@@ -112,6 +125,36 @@ data DiffError =
                       (DatabaseEntity Postgres FlowerDB (TableEntity LineItemT))))))
     ()
 
+
+
+> :kind! (Rep (TableSettings (FlowerT)))
+(Rep (TableSettings (FlowerT))) :: * -> *
+= D1
+    ('MetaData "FlowerT" "Main" "main" 'False)
+    (C1
+       ('MetaCons "Flower" 'PrefixI 'True)
+       (S1
+          ('MetaSel
+             ('Just "flowerID")
+             'NoSourceUnpackedness
+             'NoSourceStrictness
+             'DecidedLazy)
+          (Rec0 (TableField FlowerT Int32))
+        :*: (S1
+               ('MetaSel
+                  ('Just "flowerName")
+                  'NoSourceUnpackedness
+                  'NoSourceStrictness
+                  'DecidedLazy)
+               (Rec0 (TableField FlowerT Text))
+             :*: S1
+                   ('MetaSel
+                      ('Just "flowerPrice")
+                      'NoSourceUnpackedness
+                      'NoSourceStrictness
+                      'DecidedLazy)
+                   (Rec0 (TableField FlowerT Scientific)))))
+
 -}
 
 class GSchema x where
@@ -120,8 +163,14 @@ class GSchema x where
 class GSchemaTables x where
     gSchemaTables :: x p -> Tables
 
+class GSchemaTableEntry x where
+    gSchemaTableEntry :: x p -> (TableName, Table)
+
 class GSchemaTable x where
-    gSchemaTable :: x p -> (TableName, Table)
+    gSchemaTable :: x p -> Table
+
+class GSchemaColumnEntry x where
+    gSchemaColumnEntry :: x p -> (ColumnName, Column)
 
 instance GSchema x => GSchema (D1 f x) where
     gSchema (M1 x) = gSchema x
@@ -132,20 +181,52 @@ instance (Constructor f, GSchemaTables x) => GSchema (C1 f x) where
                   , schemaTables = gSchemaTables x
                   }
 
-instance (GSchemaTable a, GSchemaTables b) => GSchemaTables (a :*: b) where
-  gSchemaTables (a :*: b) = uncurry M.singleton (gSchemaTable a) <> gSchemaTables b
-instance GSchemaTable (S1 f x) => GSchemaTables (S1 f x) where
-    gSchemaTables = uncurry M.singleton . gSchemaTable
+instance (GSchemaTableEntry a, GSchemaTables b) => GSchemaTables (a :*: b) where
+  gSchemaTables (a :*: b) = uncurry M.singleton (gSchemaTableEntry a) <> gSchemaTables b
+instance GSchemaTableEntry (S1 f x) => GSchemaTables (S1 f x) where
+    gSchemaTables = uncurry M.singleton . gSchemaTableEntry
 
-instance GSchemaTable x => GSchemaTable (S1 f x) where
-  gSchemaTable (M1 x) = gSchemaTable x
-      -- let tName = TableName . T.pack . selName $ (undefined :: (S1 f g x))
-      -- in (tName, Table mempty) -- TODO(Fixme)
+type family UnpackEntityType (etype :: *) where
+    UnpackEntityType (TableEntity e) = e
 
-instance IsDatabaseEntity be etype => GSchemaTable (K1 R (Beam.DatabaseEntity be db etype)) where
-  gSchemaTable (K1 entity) =
+instance GSchemaTableEntry x => GSchemaTableEntry (S1 f x) where
+  gSchemaTableEntry (M1 x) = gSchemaTableEntry x
+instance ( IsDatabaseEntity be etype
+         , e ~ UnpackEntityType etype
+         , GSchemaTable (Rep (TableSettings e))
+         , Generic (TableSettings e)
+         , GDefaultTableFieldSettings (Rep (TableSettings e) ())
+         )
+  => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db etype)) where
+  gSchemaTableEntry (K1 entity) =
       let tName = entity ^. dbEntityDescriptor . dbEntityName
-       in (TableName tName, Table mempty)
+       in (TableName tName, gSchemaTable . from $ (defTblFieldSettings :: TableSettings e))
+
+instance GSchemaTable x => GSchemaTable (D1 f x) where
+    gSchemaTable (M1 x) = gSchemaTable x
+
+instance GSchemaTable x => GSchemaTable (C1 f x) where
+    gSchemaTable (M1 x) = gSchemaTable x
+
+instance (GSchemaColumnEntry a, GSchemaTable b) => GSchemaTable (a :*: b) where
+    gSchemaTable (a :*: b) = 
+        Table (uncurry M.singleton (gSchemaColumnEntry a)) <> gSchemaTable b
+
+instance GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
+    gSchemaTable (M1 (K1 e)) = 
+        let colName = ColumnName $ e ^. Beam.fieldName
+        in  Table $ M.singleton colName (Column () noColumnConstraints)
+
+instance GSchemaColumnEntry (S1 m (K1 R (Beam.TableField e t))) where
+    gSchemaColumnEntry (M1 (K1 e)) = 
+        let colName = ColumnName $ e ^. Beam.fieldName
+        in (colName, Column () noColumnConstraints)
+
+-- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
+instance GSchemaColumnEntry (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
+    gSchemaColumnEntry (M1 (K1 _e)) = 
+        let colName = ColumnName $ "todo" -- e ^. Beam.fieldName
+        in (colName, Column () noColumnConstraints)
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
 fromDbSettings :: ( Generic (DatabaseSettings be db)
