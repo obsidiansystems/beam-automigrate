@@ -28,6 +28,8 @@ import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
                                                 , dbTableSettings
                                                 )
 
+import Database.Beam.Backend.SQL.AST (DataType(..))
+
 
 {- Machinery to derive a 'Schema' from a 'DatabaseSettings'. -}
 
@@ -84,16 +86,16 @@ instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) wher
 instance GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaTable (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName
-    in  Table noSchemaConstraints $ M.singleton colName (Column () noSchemaConstraints)
+    in  Table noSchemaConstraints $ M.singleton colName (Column DataTypeInteger noSchemaConstraints)
 
 instance GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaColumnEntries (M1 (K1 e)) =
-    let colName = ColumnName $ e ^. Beam.fieldName in [(colName, Column () noSchemaConstraints)]
+    let colName = ColumnName $ e ^. Beam.fieldName in [(colName, Column DataTypeInteger noSchemaConstraints)]
 
 -- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
 instance Beamable (PrimaryKey f)
     => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
   gSchemaColumnEntries (M1 (K1 e)) =
     let colNames = pkAsColumnNames e
-        cols     = repeat (Column () noSchemaConstraints) -- TODO(adn) fixme
+        cols     = repeat (Column DataTypeInteger noSchemaConstraints) -- TODO(adn) fixme
     in  zip colNames cols

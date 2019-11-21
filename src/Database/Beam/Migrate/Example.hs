@@ -25,7 +25,7 @@ import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
 import           Database.Beam.Migrate          ( fromDbSettings )
-import           Database.Beam.Migrate.Postgres (getTableSchema)
+import           Database.Beam.Migrate.Postgres (getSchema)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
@@ -102,6 +102,6 @@ example = do
     let schema1 = fromDbSettings flowerDB
     print schema1
     conn <- connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = "beam-test-db" }
-    schema2 <- getTableSchema conn
+    schema2 <- getSchema conn
     print schema2
     print $ schema1 == schema2

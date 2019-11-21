@@ -4,6 +4,8 @@ import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
 import           Data.Text                      ( Text )
 
+import qualified Database.Beam.Backend.SQL.AST as AST
+
 --
 -- Types (sketched)
 --
@@ -15,7 +17,7 @@ type Tables = Map TableName Table
 newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord)
 
 data Table = Table { tableConstraints :: Set SchemaConstraint
-                   , tableColumns :: Columns 
+                   , tableColumns :: Columns
                    } deriving (Eq, Show)
 
 type Columns = Map ColumnName Column
@@ -27,8 +29,9 @@ data Column = Column {
   , columnConstrains :: Set SchemaConstraint
   } deriving (Show, Eq)
 
--- | Basic types for columns, everything is very naive for now.
-type ColumnType = ()
+-- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
+-- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
+type ColumnType = AST.DataType
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
