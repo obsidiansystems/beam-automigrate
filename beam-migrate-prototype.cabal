@@ -19,9 +19,13 @@ extra-source-files:  CHANGELOG.md
 
 
 library
-  exposed-modules:     Database.Beam.Migrate.Types
-
+  exposed-modules:     Database.Beam.Migrate
   other-modules:
+                       Database.Beam.Migrate.Types
+                       Database.Beam.Migrate.Util
+                       Database.Beam.Migrate.Generic
+                       Database.Beam.Migrate.Example
+
 
   hs-source-dirs:      src
 
