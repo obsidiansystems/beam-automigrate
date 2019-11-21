@@ -10,6 +10,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Database.Beam.Migrate.Types where
 
+import           Control.Monad.State.Strict  (StateT, execStateT)
+import           Control.Monad.IO.Class (liftIO, MonadIO)
 import           Data.Map                    (Map)
 import qualified Data.Map.Strict             as M
 import           Data.Set                    (Set)
@@ -19,6 +21,7 @@ import           Lens.Micro                  ((^.))
 
 import           GHC.Generics
 
+import           Database.Beam               (MonadBeam)
 import           Database.Beam.Postgres
 import           Database.Beam.Schema        (Beamable, Columnar, Database,
                                               DatabaseSettings, PrimaryKey,
@@ -81,7 +84,7 @@ data ColumnConstraint =
 -- | A possible list of edits on a 'Schema'.
 data Edit =
     ColumnAdded TableName ColumnName Column
-  | ColumnRemoned TableName ColumnName
+  | ColumnRemoved TableName ColumnName
   | TableAdded TableName Table
   | TableRemoved TableName
 
@@ -159,7 +162,7 @@ instance GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
         in [(colName, Column () noColumnConstraints)]
 
 -- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
-instance Beamable (PrimaryKey f) 
+instance Beamable (PrimaryKey f)
     => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
     gSchemaColumnEntries (M1 (K1 e)) =
         let colNames = pkAsColumnNames e
@@ -174,18 +177,34 @@ fromDbSettings :: ( Generic (DatabaseSettings be db)
                -> Schema
 fromDbSettings = gSchema . from
 
--- | Interpret a single 'Edit' into a function that transform the 'Schema'.
---evalEdit :: Edit -> (Schema -> Schema)
---evalEdit = \case
---    ColumnAdded tblName colName col -> _
---    ColumnRemoned tblName colName -> _
---    TableAdded tblName tbl -> _
---    TableRemoved tblName -> _
+-- | Interpret a single 'Edit'.
+-- NOTE(adn) Until we figure out whether or not we want to use Beam's Query
+-- builder, this can for now yield the raw SQL fragment, for simplicity, which
+-- can later be interpreted via 'Database.Beam.Query.CustomSQL'.
+-- For now this is /very/ naive, we don't want to write custom, raw SQL fragments.
+evalEdit :: Edit -> Text
+evalEdit = \case
+    ColumnAdded tblName colName _col -> 
+        "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
+    ColumnRemoved tblName colName ->
+        "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
+    TableAdded tblName _tbl ->
+        "CREATE TABLE \"" <> tableName tblName <> "\" ()"
+    TableRemoved tblName ->
+        "DROP TABLE \"" <> tableName tblName <> "\""
 
 -- | Computes the diff between two 'Schema's, either failing with a 'DiffError'
 -- or returning the list of 'Edit's necessary to turn the first into the second.
 diff :: Schema -> Schema -> Either DiffError [Edit]
 diff _old _new = undefined
+
+type Migration m = StateT [Edit] m ()
+
+-- | Runs the input 'Migration'.
+runMigration :: (MonadBeam be m, MonadIO m) => Migration m -> m ()
+runMigration m = do
+    migs <- execStateT m mempty
+    liftIO $ print (map evalEdit migs)
 
 --
 -- Beam utility functions
@@ -202,11 +221,13 @@ pkFieldNames :: (Beamable (PrimaryKey tbl), Beam.Table tbl)
 pkFieldNames entity =
     map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
 
-pkAsColumnNames :: Beamable (PrimaryKey table) 
+-- | Similar to 'pkFieldNames', but it works with an input 'PrimaryKey'.
+pkAsColumnNames :: Beamable (PrimaryKey table)
                 => PrimaryKey table (Beam.TableField c) -> [ColumnName]
 pkAsColumnNames pk =
     map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
 
+-- | Returns /all/ the 'ColumnName's for a given 'DatabaseEntity'.
 allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> [ColumnName]
 allColumnNames entity =
     let settings = dbTableSettings $ entity ^. dbEntityDescriptor

@@ -31,6 +31,7 @@ library
                      , containers           >= 0.5.9.2 && < 0.8.0.0
                      , text                 >= 1.2.0.0 && < 1.3.0.0
                      , microlens 
+                     , mtl
                      -- needed to use beam's stock lenses
                      , time
                      , scientific
