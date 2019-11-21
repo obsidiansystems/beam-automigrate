@@ -9,7 +9,6 @@ import           Database.Beam.Migrate.Util     ( pkAsColumnNames )
 import           Database.Beam.Migrate.Types
 
 import qualified Data.Map.Strict               as M
-import qualified Data.Text                     as T
 import           Lens.Micro                     ( (^.) )
 
 import           GHC.Generics
@@ -49,9 +48,7 @@ class GSchemaColumnEntries x where
 instance GSchema x => GSchema (D1 f x) where
   gSchema (M1 x) = gSchema x
 instance (Constructor f, GSchemaTables x) => GSchema (C1 f x) where
-  gSchema (M1 x) =
-    let sName = SchemaName . T.pack . conName $ (undefined :: (C1 f g x))
-    in  Schema { schemaName = sName, schemaTables = gSchemaTables x }
+  gSchema (M1 x) = Schema { schemaTables = gSchemaTables x }
 
 instance (GSchemaTableEntry a, GSchemaTables b) => GSchemaTables (a :*: b) where
   gSchemaTables (a :*: b) = uncurry M.singleton (gSchemaTableEntry a) <> gSchemaTables b

@@ -25,6 +25,7 @@ import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
 import           Database.Beam.Migrate          ( fromDbSettings )
+import           Database.Beam.Migrate.Postgres (getTableSchema)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
@@ -95,5 +96,12 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
+-- | Just a simple example demonstrating a possible workflow for a migration.
 example :: IO ()
-example = print $ fromDbSettings flowerDB
+example = do
+    let schema1 = fromDbSettings flowerDB
+    print schema1
+    conn <- connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = "beam-test-db" }
+    schema2 <- getTableSchema conn
+    print schema2
+    print $ schema1 == schema2

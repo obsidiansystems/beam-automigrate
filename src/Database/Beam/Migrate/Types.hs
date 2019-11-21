@@ -8,17 +8,25 @@ import           Data.Text                      ( Text )
 -- Types (sketched)
 --
 
-data Schema = Schema { schemaName   :: SchemaName
-                     , schemaTables :: Tables
-                     } deriving Show
+newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq)
 
 type Tables = Map TableName Table
 
-newtype SchemaName = SchemaName { unSchemaName :: Text } deriving Show
-
 newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord)
 
-newtype Table = Table { tableColumns :: Map ColumnName Column } deriving Show
+newtype Table = Table { tableColumns :: Columns } deriving (Eq, Show)
+
+type Columns = Map ColumnName Column
+
+newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
+
+data Column = Column {
+    columnType       :: ColumnType
+  , columnConstrains :: Set ColumnConstraint
+  } deriving (Show, Eq)
+
+-- | Basic types for columns, everything is very naive for now.
+type ColumnType = ()
 
 instance Semigroup Table where
   (Table t1) <> (Table t2) = Table (t1 <> t2)
@@ -26,15 +34,6 @@ instance Semigroup Table where
 instance Monoid Table where
   mempty = Table mempty
 
-newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
-
-data Column = Column {
-    columnType       :: ColumnType
-  , columnConstrains :: Set ColumnConstraint
-  } deriving Show
-
--- | Basic types for columns, everything is very naive for now.
-type ColumnType = ()
 
 noColumnConstraints :: Set ColumnConstraint
 noColumnConstraints = mempty
