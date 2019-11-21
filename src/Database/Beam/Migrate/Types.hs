@@ -23,16 +23,15 @@ import           Database.Beam.Postgres
 import           Database.Beam.Schema        (Beamable, Columnar, Database,
                                               DatabaseSettings, PrimaryKey,
                                               TableEntity, TableSettings,
-                                              defaultDbSettings,
-                                              withDbModification,
-                                              dbModification,
+                                              dbModification, defaultDbSettings,
+                                              fieldNamed, modifyTableFields,
                                               tableModification,
-                                              modifyTableFields,
-                                              fieldNamed
-                                             )
+                                              withDbModification)
 import qualified Database.Beam.Schema        as Beam
-import           Database.Beam.Schema.Tables (IsDatabaseEntity,
-                                              dbEntityDescriptor, dbEntityName, dbTableSettings)
+import           Database.Beam.Schema.Tables (Columnar' (..), IsDatabaseEntity,
+                                              allBeamValues, dbEntityDescriptor,
+                                              dbEntityName, dbTableSettings,
+                                              fieldName, primaryKey)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                    (Int32, Int64)
@@ -109,8 +108,10 @@ class GSchemaTableEntry x where
 class GSchemaTable x where
     gSchemaTable :: x p -> Table
 
-class GSchemaColumnEntry x where
-    gSchemaColumnEntry :: x p -> (ColumnName, Column)
+-- | Due to the fact that 'PrimaryKey' expansion can give multiple ColumnName,
+-- we return a [(ColumnName, Column)].
+class GSchemaColumnEntries x where
+    gSchemaColumnEntries :: x p -> [(ColumnName, Column)]
 
 instance GSchema x => GSchema (D1 f x) where
     gSchema (M1 x) = gSchema x
@@ -143,25 +144,27 @@ instance GSchemaTable x => GSchemaTable (D1 f x) where
 instance GSchemaTable x => GSchemaTable (C1 f x) where
     gSchemaTable (M1 x) = gSchemaTable x
 
-instance (GSchemaColumnEntry a, GSchemaTable b) => GSchemaTable (a :*: b) where
-    gSchemaTable (a :*: b) = 
-        Table (uncurry M.singleton (gSchemaColumnEntry a)) <> gSchemaTable b
+instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) where
+    gSchemaTable (a :*: b) =
+        Table (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
 
 instance GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
-    gSchemaTable (M1 (K1 e)) = 
+    gSchemaTable (M1 (K1 e)) =
         let colName = ColumnName $ e ^. Beam.fieldName
         in  Table $ M.singleton colName (Column () noColumnConstraints)
 
-instance GSchemaColumnEntry (S1 m (K1 R (Beam.TableField e t))) where
-    gSchemaColumnEntry (M1 (K1 e)) = 
+instance GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
+    gSchemaColumnEntries (M1 (K1 e)) =
         let colName = ColumnName $ e ^. Beam.fieldName
-        in (colName, Column () noColumnConstraints)
+        in [(colName, Column () noColumnConstraints)]
 
 -- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
-instance GSchemaColumnEntry (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
-    gSchemaColumnEntry (M1 (K1 _e)) = 
-        let colName = ColumnName $ "todo" -- (Beam.pk e) ^. Beam.fieldName
-        in (colName, Column () noColumnConstraints)
+instance Beamable (PrimaryKey f) 
+    => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
+    gSchemaColumnEntries (M1 (K1 e)) =
+        let colNames = pkAsColumnNames e
+            cols     = repeat (Column () noColumnConstraints) -- TODO(adn) fixme
+        in zip colNames cols
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
 fromDbSettings :: ( Generic (DatabaseSettings be db)
@@ -183,6 +186,31 @@ fromDbSettings = gSchema . from
 -- or returning the list of 'Edit's necessary to turn the first into the second.
 diff :: Schema -> Schema -> Either DiffError [Edit]
 diff _old _new = undefined
+
+--
+-- Beam utility functions
+--
+
+-- | Extracts the 'TableSettings' out of the input 'DatabaseEntity'.
+tableSettings :: Beam.DatabaseEntity be db (TableEntity tbl) -> TableSettings tbl
+tableSettings entity = dbTableSettings $ entity ^. dbEntityDescriptor
+
+-- | Extracts the primary key of a table as a list of 'ColumnName'.
+pkFieldNames :: (Beamable (PrimaryKey tbl), Beam.Table tbl)
+             => Beam.DatabaseEntity be db (TableEntity tbl)
+             -> [ColumnName]
+pkFieldNames entity =
+    map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
+
+pkAsColumnNames :: Beamable (PrimaryKey table) 
+                => PrimaryKey table (Beam.TableField c) -> [ColumnName]
+pkAsColumnNames pk =
+    map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
+
+allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> [ColumnName]
+allColumnNames entity =
+    let settings = dbTableSettings $ entity ^. dbEntityDescriptor
+    in map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) settings)
 
 --
 -- Example
