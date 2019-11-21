@@ -14,7 +14,9 @@ type Tables = Map TableName Table
 
 newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord)
 
-newtype Table = Table { tableColumns :: Columns } deriving (Eq, Show)
+data Table = Table { tableConstraints :: Set SchemaConstraint
+                   , tableColumns :: Columns 
+                   } deriving (Eq, Show)
 
 type Columns = Map ColumnName Column
 
@@ -22,25 +24,25 @@ newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
 
 data Column = Column {
     columnType       :: ColumnType
-  , columnConstrains :: Set ColumnConstraint
+  , columnConstrains :: Set SchemaConstraint
   } deriving (Show, Eq)
 
 -- | Basic types for columns, everything is very naive for now.
 type ColumnType = ()
 
 instance Semigroup Table where
-  (Table t1) <> (Table t2) = Table (t1 <> t2)
+  (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
 
 instance Monoid Table where
-  mempty = Table mempty
+  mempty = Table mempty mempty
 
 
-noColumnConstraints :: Set ColumnConstraint
-noColumnConstraints = mempty
+noSchemaConstraints :: Set SchemaConstraint
+noSchemaConstraints = mempty
 
-data ColumnConstraint =
-    PrimaryKey
-    -- ^ This 'Column' is the Table's primary key.
+data SchemaConstraint =
+    PrimaryKey (Set ColumnName)
+    -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
     deriving (Show, Eq, Ord)
 
 -- | A possible list of edits on a 'Schema'.
