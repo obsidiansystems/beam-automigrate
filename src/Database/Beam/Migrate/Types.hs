@@ -10,36 +10,54 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Database.Beam.Migrate.Types where
 
-import           Control.Monad.State.Strict  (StateT, execStateT)
-import           Control.Monad.IO.Class (liftIO, MonadIO)
-import           Data.Map                    (Map)
-import qualified Data.Map.Strict             as M
-import           Data.Set                    (Set)
-import           Data.Text                   (Text)
-import qualified Data.Text                   as T
-import           Lens.Micro                  ((^.))
+import           Control.Monad.State.Strict     ( StateT
+                                                , execStateT
+                                                )
+import           Control.Monad.IO.Class         ( liftIO
+                                                , MonadIO
+                                                )
+import           Data.Map                       ( Map )
+import qualified Data.Map.Strict               as M
+import           Data.Set                       ( Set )
+import           Data.Text                      ( Text )
+import qualified Data.Text                     as T
+import           Lens.Micro                     ( (^.) )
 
 import           GHC.Generics
 
-import           Database.Beam               (MonadBeam)
+import           Database.Beam                  ( MonadBeam )
 import           Database.Beam.Postgres
-import           Database.Beam.Schema        (Beamable, Columnar, Database,
-                                              DatabaseSettings, PrimaryKey,
-                                              TableEntity, TableSettings,
-                                              dbModification, defaultDbSettings,
-                                              fieldNamed, modifyTableFields,
-                                              tableModification,
-                                              withDbModification)
-import qualified Database.Beam.Schema        as Beam
-import           Database.Beam.Schema.Tables (Columnar' (..), IsDatabaseEntity,
-                                              allBeamValues, dbEntityDescriptor,
-                                              dbEntityName, dbTableSettings,
-                                              fieldName, primaryKey)
+import           Database.Beam.Schema           ( Beamable
+                                                , Columnar
+                                                , Database
+                                                , DatabaseSettings
+                                                , PrimaryKey
+                                                , TableEntity
+                                                , TableSettings
+                                                , dbModification
+                                                , defaultDbSettings
+                                                , fieldNamed
+                                                , modifyTableFields
+                                                , tableModification
+                                                , withDbModification
+                                                )
+import qualified Database.Beam.Schema          as Beam
+import           Database.Beam.Schema.Tables    ( Columnar'(..)
+                                                , IsDatabaseEntity
+                                                , allBeamValues
+                                                , dbEntityDescriptor
+                                                , dbEntityName
+                                                , dbTableSettings
+                                                , fieldName
+                                                , primaryKey
+                                                )
 
 -- Needed only for the examples, (re)move eventually.
-import           Data.Int                    (Int32, Int64)
-import           Data.Scientific             (Scientific)
-import           Data.Time                   (UTCTime)
+import           Data.Int                       ( Int32
+                                                , Int64
+                                                )
+import           Data.Scientific                ( Scientific )
+import           Data.Time                      ( UTCTime )
 
 --
 -- Types (sketched)
@@ -58,10 +76,10 @@ newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord)
 newtype Table = Table { tableColumns :: Map ColumnName Column } deriving Show
 
 instance Semigroup Table where
-    (Table t1) <> (Table t2) = Table (t1 <> t2)
+  (Table t1) <> (Table t2) = Table (t1 <> t2)
 
 instance Monoid Table where
-    mempty = Table mempty
+  mempty = Table mempty
 
 newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
 
@@ -71,7 +89,7 @@ data Column = Column {
   } deriving Show
 
 -- | Basic types for columns, everything is very naive for now.
-type ColumnType       = ()
+type ColumnType = ()
 
 noColumnConstraints :: Set ColumnConstraint
 noColumnConstraints = mempty
@@ -117,18 +135,16 @@ class GSchemaColumnEntries x where
     gSchemaColumnEntries :: x p -> [(ColumnName, Column)]
 
 instance GSchema x => GSchema (D1 f x) where
-    gSchema (M1 x) = gSchema x
+  gSchema (M1 x) = gSchema x
 instance (Constructor f, GSchemaTables x) => GSchema (C1 f x) where
-    gSchema (M1 x) =
-        let sName = SchemaName . T.pack . conName $ (undefined :: (C1 f g x))
-        in Schema { schemaName   = sName
-                  , schemaTables = gSchemaTables x
-                  }
+  gSchema (M1 x) =
+    let sName = SchemaName . T.pack . conName $ (undefined :: (C1 f g x))
+    in  Schema { schemaName = sName, schemaTables = gSchemaTables x }
 
 instance (GSchemaTableEntry a, GSchemaTables b) => GSchemaTables (a :*: b) where
   gSchemaTables (a :*: b) = uncurry M.singleton (gSchemaTableEntry a) <> gSchemaTables b
 instance GSchemaTableEntry (S1 f x) => GSchemaTables (S1 f x) where
-    gSchemaTables = uncurry M.singleton . gSchemaTableEntry
+  gSchemaTables = uncurry M.singleton . gSchemaTableEntry
 
 instance GSchemaTableEntry x => GSchemaTableEntry (S1 f x) where
   gSchemaTableEntry (M1 x) = gSchemaTableEntry x
@@ -138,41 +154,37 @@ instance ( IsDatabaseEntity be (TableEntity tbl)
          )
   => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db (TableEntity tbl))) where
   gSchemaTableEntry (K1 entity) =
-      let tName = entity ^. dbEntityDescriptor . dbEntityName
-       in (TableName tName, gSchemaTable . from $ (dbTableSettings $ entity ^. dbEntityDescriptor ))
+    let tName = entity ^. dbEntityDescriptor . dbEntityName
+    in  (TableName tName, gSchemaTable . from $ (dbTableSettings $ entity ^. dbEntityDescriptor))
 
 instance GSchemaTable x => GSchemaTable (D1 f x) where
-    gSchemaTable (M1 x) = gSchemaTable x
+  gSchemaTable (M1 x) = gSchemaTable x
 
 instance GSchemaTable x => GSchemaTable (C1 f x) where
-    gSchemaTable (M1 x) = gSchemaTable x
+  gSchemaTable (M1 x) = gSchemaTable x
 
 instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) where
-    gSchemaTable (a :*: b) =
-        Table (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
+  gSchemaTable (a :*: b) = Table (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
 
 instance GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
-    gSchemaTable (M1 (K1 e)) =
-        let colName = ColumnName $ e ^. Beam.fieldName
-        in  Table $ M.singleton colName (Column () noColumnConstraints)
+  gSchemaTable (M1 (K1 e)) =
+    let colName = ColumnName $ e ^. Beam.fieldName
+    in  Table $ M.singleton colName (Column () noColumnConstraints)
 
 instance GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
-    gSchemaColumnEntries (M1 (K1 e)) =
-        let colName = ColumnName $ e ^. Beam.fieldName
-        in [(colName, Column () noColumnConstraints)]
+  gSchemaColumnEntries (M1 (K1 e)) =
+    let colName = ColumnName $ e ^. Beam.fieldName in [(colName, Column () noColumnConstraints)]
 
 -- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
 instance Beamable (PrimaryKey f)
     => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
-    gSchemaColumnEntries (M1 (K1 e)) =
-        let colNames = pkAsColumnNames e
-            cols     = repeat (Column () noColumnConstraints) -- TODO(adn) fixme
-        in zip colNames cols
+  gSchemaColumnEntries (M1 (K1 e)) =
+    let colNames = pkAsColumnNames e
+        cols     = repeat (Column () noColumnConstraints) -- TODO(adn) fixme
+    in  zip colNames cols
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
-fromDbSettings :: ( Generic (DatabaseSettings be db)
-                  , GSchema (Rep (DatabaseSettings be db))
-                  )
+fromDbSettings :: (Generic (DatabaseSettings be db), GSchema (Rep (DatabaseSettings be db)))
                => DatabaseSettings be db
                -> Schema
 fromDbSettings = gSchema . from
@@ -184,14 +196,12 @@ fromDbSettings = gSchema . from
 -- For now this is /very/ naive, we don't want to write custom, raw SQL fragments.
 evalEdit :: Edit -> Text
 evalEdit = \case
-    ColumnAdded tblName colName _col -> 
-        "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
-    ColumnRemoved tblName colName ->
-        "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
-    TableAdded tblName _tbl ->
-        "CREATE TABLE \"" <> tableName tblName <> "\" ()"
-    TableRemoved tblName ->
-        "DROP TABLE \"" <> tableName tblName <> "\""
+  ColumnAdded tblName colName _col ->
+    "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
+  ColumnRemoved tblName colName ->
+    "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
+  TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
+  TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
 
 -- | Computes the diff between two 'Schema's, either failing with a 'DiffError'
 -- or returning the list of 'Edit's necessary to turn the first into the second.
@@ -203,8 +213,8 @@ type Migration m = StateT [Edit] m ()
 -- | Runs the input 'Migration'.
 runMigration :: (MonadBeam be m, MonadIO m) => Migration m -> m ()
 runMigration m = do
-    migs <- execStateT m mempty
-    liftIO $ print (map evalEdit migs)
+  migs <- execStateT m mempty
+  liftIO $ print (map evalEdit migs)
 
 --
 -- Beam utility functions
@@ -219,19 +229,17 @@ pkFieldNames :: (Beamable (PrimaryKey tbl), Beam.Table tbl)
              => Beam.DatabaseEntity be db (TableEntity tbl)
              -> [ColumnName]
 pkFieldNames entity =
-    map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
+  map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
 
 -- | Similar to 'pkFieldNames', but it works with an input 'PrimaryKey'.
-pkAsColumnNames :: Beamable (PrimaryKey table)
-                => PrimaryKey table (Beam.TableField c) -> [ColumnName]
-pkAsColumnNames pk =
-    map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
+pkAsColumnNames :: Beamable (PrimaryKey table) => PrimaryKey table (Beam.TableField c) -> [ColumnName]
+pkAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
 
 -- | Returns /all/ the 'ColumnName's for a given 'DatabaseEntity'.
 allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> [ColumnName]
 allColumnNames entity =
-    let settings = dbTableSettings $ entity ^. dbEntityDescriptor
-    in map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) settings)
+  let settings = dbTableSettings $ entity ^. dbEntityDescriptor
+  in  map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) settings)
 
 --
 -- Example
@@ -279,27 +287,20 @@ instance Beam.Table LineItemT where
   data PrimaryKey LineItemT f =
     LineItemID (PrimaryKey OrderT f) (PrimaryKey FlowerT f)
     deriving (Generic, Beamable)
-  primaryKey = LineItemID
-    <$> lineItemOrderID
-    <*> lineItemFlowerID
+  primaryKey = LineItemID <$> lineItemOrderID <*> lineItemFlowerID
 
 -- Modify the field names to be compliant with William Yao's format.
 flowerDB :: DatabaseSettings Postgres FlowerDB
-flowerDB = defaultDbSettings `withDbModification`
-            dbModification {
-              dbFlowers = modifyTableFields tableModification {
-                            flowerID = fieldNamed "id"
-                          }
-            , dbOrders = modifyTableFields tableModification {
-                            orderID = fieldNamed "id"
-                          , orderTime = fieldNamed "order_time"
-                          }
-            , dbLineItems = modifyTableFields tableModification {
-                            lineItemFlowerID = FlowerID "flower_id"
-                          , lineItemOrderID  = OrderID  "order_id"
-                          , lineItemQuantity = fieldNamed "quantity"
-                          }
-            }
+flowerDB = defaultDbSettings `withDbModification` dbModification
+  { dbFlowers   = modifyTableFields tableModification { flowerID = fieldNamed "id" }
+  , dbOrders    = modifyTableFields tableModification { orderID   = fieldNamed "id"
+                                                      , orderTime = fieldNamed "order_time"
+                                                      }
+  , dbLineItems = modifyTableFields tableModification { lineItemFlowerID = FlowerID "flower_id"
+                                                      , lineItemOrderID  = OrderID "order_id"
+                                                      , lineItemQuantity = fieldNamed "quantity"
+                                                      }
+  }
 
 example :: IO ()
 example = print $ fromDbSettings flowerDB
