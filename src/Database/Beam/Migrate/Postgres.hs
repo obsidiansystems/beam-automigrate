@@ -16,13 +16,15 @@ import qualified Data.Map.Strict               as M
 import qualified Data.Set                      as S
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
-import           Data.List                      ( foldl' )
+import           Data.List                      ( foldl', groupBy, partition )
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as TE
 import           Data.ByteString                ( ByteString )
 
-import           Database.Beam.Backend.SQL
+import           Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.PostgreSQL.Simple    as Pg
+import Database.PostgreSQL.Simple.FromRow    (FromRow(..), field)
+import Database.PostgreSQL.Simple.FromField    (FromField(..), fromField)
 import qualified Database.PostgreSQL.Simple.Types
                                                as Pg
 import qualified Database.PostgreSQL.Simple.TypeInfo.Static
@@ -30,6 +32,44 @@ import qualified Database.PostgreSQL.Simple.TypeInfo.Static
 
 import           Database.Beam.Migrate.Types
 
+--
+-- Necessary types to make working with the underlying raw SQL a bit more pleasant
+--
+
+data SqlRawConstraintType = 
+    SQL_raw_pk
+  | SQL_raw_unique
+  | SQL_raw_fk
+  deriving (Show, Eq)
+
+data SqlRawConstraint = SqlRawConstraint
+    { sqlCon_name :: Text
+    , sqlCon_ref_origin :: TableName
+    , sqlCon_ref_target :: TableName
+    , sqlCon_column_name :: ColumnName
+    , sqlCon_constraint_type :: SqlRawConstraintType
+    } deriving (Show, Eq)
+
+
+instance Pg.FromRow SqlRawConstraint where
+  fromRow = SqlRawConstraint <$> field 
+                             <*> (fmap TableName field) 
+                             <*> (fmap TableName field) 
+                             <*> (fmap ColumnName field) 
+                             <*> field
+
+instance FromField SqlRawConstraintType where
+  fromField f dat = do
+      t <- fromField f dat
+      case t of
+        "PRIMARY KEY" -> pure SQL_raw_pk
+        "UNIQUE"      -> pure SQL_raw_unique
+        "FOREIGN KEY" -> pure SQL_raw_fk
+        _ -> fail ("Uknown costraint type: " <> t)
+
+--
+-- Postgres queries to extract the schema out of the DB
+--
 
 -- | A SQL query to select all user's queries, skipping any beam-related tables (i.e. leftovers from
 -- beam-migrate, for example).
@@ -55,6 +95,31 @@ primaryKeysQ = fromString $ unlines
   , "GROUP BY relname, i.indrelid"
   ]
 
+-- | Return all constraints for a given 'Table'.
+constraintsQ :: Pg.Query
+constraintsQ = fromString $ unlines
+  [ "SELECT tc.constraint_name, tc.table_name as ref_origin, u.table_name as ref_target, column_name, constraint_type "
+  , "FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage u ON "
+  , "tc.constraint_catalog=u.constraint_catalog AND tc.constraint_schema=u.constraint_schema AND "
+  , "tc.constraint_name=u.constraint_name WHERE u.table_name=? ORDER BY u.constraint_name, column_name"
+  ]
+
+-- | Return all \"action types\" for a given constraint, for example 'ON DELETE RESTRICT'.
+referenceActionQ :: Pg.Query
+referenceActionQ = fromString $ unlines
+  [ "SELECT c.conname, sch_parent.nspname, cl_parent.relname, c. confdeltype, c.confupdtype, a_child.attname AS child, a_parent.attname AS parent FROM "
+  , "(SELECT r.conrelid, r.confrelid, unnest(r.conkey) AS conkey, unnest(r.confkey) AS confkey, r.conname, r.confupdtype, r.confdeltype "
+  , "FROM pg_catalog.pg_constraint r WHERE r.contype = 'f') AS c "
+  , "INNER JOIN pg_attribute a_parent ON a_parent.attnum = c.confkey AND a_parent.attrelid = c.confrelid "
+  , "INNER JOIN pg_class cl_parent ON cl_parent.oid = c.confrelid "
+  , "INNER JOIN pg_namespace sch_parent ON sch_parent.oid = cl_parent.relnamespace "
+  , "INNER JOIN pg_attribute a_child ON a_child.attnum = c.conkey AND a_child.attrelid = c.conrelid "
+  , "INNER JOIN pg_class cl_child ON cl_child.oid = c.conrelid "
+  , "INNER JOIN pg_namespace sch_child ON sch_child.oid = cl_child.relnamespace "
+  , "WHERE sch_child.nspname = current_schema() AND cl_child.relname = ? AND c.conname = ?"
+  , "ORDER BY c.conname "
+  ]
+
 -- | Connects to a running PostgreSQL database and extract the relevant 'Schema' out of it.
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
@@ -67,6 +132,7 @@ getSchema conn = do
     getTable :: Map TableName (Set ColumnName) -> Tables -> (Pg.Oid, Text) -> IO Tables
     getTable pkLookupTable allTables (oid, TableName -> tName) = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
+      _ <- getTableConstraints conn tName
       newTable  <-
         Table (maybe noSchemaConstraints (S.singleton . PrimaryKey) (M.lookup tName pkLookupTable))
           <$> foldlM getColumns mempty pgColumns
@@ -87,7 +153,6 @@ getSchema conn = do
             <> " of field "
             <> show attname
             <> " into a valid ColumnType."
-
     -- Builds a lookup table from a 'TableName' to the set of column names which constitutes a 'PrimaryKey' for
     -- a particular table. Potentially large for big DBs (> 10k tables).
     -- NOTE(adn) Currently the program is optimised for speed, not memory, and this is why this 'toPkLooupTable'
@@ -100,6 +165,9 @@ getSchema conn = do
         go m (tName, columns) =
           M.insert (TableName tName) (S.fromList . map ColumnName . V.toList $ columns) m
 
+--
+-- Postgres type mapping
+--
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).
@@ -141,116 +209,35 @@ pgTypeToColumnType oid width
   = Just (timestampType Nothing False)
   | Pg.typoid Pg.timestamptz == oid
   = Just (timestampType Nothing True)
-  |
-
-  -- Postgres specific datatypes, haskell versions
-  -- NOTE(adn) For the sake of the prototype, let's not worry about this.
-  -- | Pg.typoid Pg.uuid        == oid =
-  --     Just $ HsDataType (hsVarFrom "uuid" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "UUID")
-  --                               (importSome "Data.UUID.Types" [importTyNamed "UUID"]))
-  --                       (pgDataTypeSerialized pgUuidType)
-  -- | Pg.typoid Pg.money       == oid ->
-  --     Just $ HsDataType (hsVarFrom "money" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "PgMoney")
-  --                               (importSome "Database.Beam.Postgres" [importTyNamed "PgMoney"]))
-  --                       (pgDataTypeSerialized pgMoneyType)
-  -- | Pg.typoid Pg.json        == oid ->
-  --     Just $ HsDataType (hsVarFrom "json" "Database.Beam.Postgres")
-  --                       (HsType (tyApp (tyConNamed "PgJSON") [ tyConNamed "Value" ])
-  --                               (importSome "Data.Aeson" [importTyNamed "Value"] <>
-  --                                importSome "Database.Beam.Postgres" [importTyNamed "PgJSON"]))
-  --                       (pgDataTypeSerialized pgJsonType)
-  -- | Pg.typoid Pg.jsonb       == oid ->
-  --     Just $ HsDataType (hsVarFrom "jsonb" "Database.Beam.Postgres")
-  --                       (HsType (tyApp (tyConNamed "PgJSONB") [ tyConNamed "Value" ])
-  --                               (importSome "Data.Aeson" [importTyNamed "Value"] <>
-  --                                importSome "Database.Beam.Postgres" [importTyNamed "PgJSONB"]))
-  --                       (pgDataTypeSerialized pgJsonType)
-  -- | Pg.typoid pgTsVectorTypeInfo == oid ->
-  --     Just $ HsDataType (hsVarFrom "tsvector" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "TsVector")
-  --                               (importSome "Database.Beam.Postgres" [importTyNamed "TsVector"]))
-  --                       (pgDataTypeSerialized pgTsVectorType)
-  -- | Pg.typoid pgTsQueryTypeInfo == oid ->
-  --     Just $ HsDataType (hsVarFrom "tsquery" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "TsQuery")
-  --                               (importSome "Database.Beam.Postgres" [importTyNamed "TsQuery"]))
-  --                       (pgDataTypeSerialized pgTsQueryType)
-  -- | Pg.typoid Pg.point   == oid ->
-  --     Just $ HsDataType (hsVarFrom "point" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "PgPoint")
-  --                               (importSome "Database.Beam.Postgres" [ importTyNamed "PgPoint" ]))
-  --                       (pgDataTypeSerialized pgPointType)
-  -- | Pg.typoid Pg.line    == oid ->
-  --     Just $ HsDataType (hsVarFrom "line" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "PgLine")
-  --                               (importSome "Database.Beam.Postgres" [ importTyNamed "PgLine" ]))
-  --                       (pgDataTypeSerialized pgLineType)
-  -- | Pg.typoid Pg.lseg    == oid ->
-  --     Just $ HsDataType (hsVarFrom "lineSegment" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "PgLineSegment")
-  --                               (importSome "Database.Beam.Postgres" [ importTyNamed "PgLineSegment" ]))
-  --                       (pgDataTypeSerialized pgLineSegmentType)
-  -- | Pg.typoid Pg.box     == oid ->
-  --     Just $ HsDataType (hsVarFrom "box" "Database.Beam.Postgres")
-  --                       (HsType (tyConNamed "PgBox")
-  --                               (importSome "Database.Beam.Postgres" [ importTyNamed "PgBox" ]))
-  --                       (pgDataTypeSerialized pgBoxType)
-    otherwise
+  | otherwise 
   = Nothing
 
---enumerationData <- Pg.query_
---  conn
---  (fromString
---    (unlines
---      [ "SELECT t.typname, t.oid, array_agg(e.enumlabel ORDER BY e.enumsortorder)"
---      , "FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid"
---      , "GROUP BY t.typname, t.oid"
---      ]
---    )
---  )
+--
+-- Constraints discovery
+--
 
+-- | Given an input 'TableName', it returns a pair of the \"table-level\" constraints (for example primary
+-- keys or foreign keys spanning multiple columns) and \"column-level\" constraints (e.g. 'UNIQUE, 'NOT NULL',
+-- etc).
+getTableConstraints :: Pg.Connection 
+                    -> TableName 
+                    -> IO (Map TableName (Set SchemaConstraint), Map ColumnName (Set SchemaConstraint))
+getTableConstraints conn (tableName -> tName) = do
+    allConstraints <- Pg.query conn constraintsQ (Pg.Only tName)
 
+    let grouped = groupBy (\con1 con2 -> sqlCon_name con1 == sqlCon_name con2) allConstraints
+    let (tableLevelRaw, columnLevelRaw) = partition ((> 1) . length) grouped
 
---columnChecks <- fmap mconcat . forM tbls $ \(oid, tbl) -> do
---  columns <- Pg.query
---    conn
---    tableColumns
---    (Pg.Only (oid :: Pg.Oid))
---  let columnChecks = map
---        (\(nm, typId :: Pg.Oid, typmod, _, typ :: ByteString) ->
---          let typmod' = if typmod == -1 then Nothing else Just (typmod - 4)
+    print tableLevelRaw
+    print columnLevelRaw
 
---              pgDataType =
---                  fromMaybe (pgUnknownDataType typId typmod')
---                    $   pgDataTypeFromAtt typ typId typmod'
---                    <|> pgEnumerationTypeFromAtt enumerationData typ typId typmod'
---          in  Db.SomeDatabasePredicate
---                (Db.TableHasColumn (Db.QualifiedName Nothing tbl) nm pgDataType :: Db.TableHasColumn
---                    Postgres
---                )
---        )
---        columns
---      notNullChecks = concatMap
---        (\(nm, _, _, isNotNull, _) -> if isNotNull
---          then
---            [ Db.SomeDatabasePredicate
---                (Db.TableColumnHasConstraint
---                  (Db.QualifiedName Nothing tbl)
---                  nm
---                  (Db.constraintDefinitionSyntax Nothing Db.notNullConstraintSyntax Nothing) :: Db.TableColumnHasConstraint
---                    Postgres
---                )
---            ]
---          else []
---        )
---        columns
+    columnLevel <- getColumnLevelConstraints columnLevelRaw
+    tableLevel  <- getTableLevelConstraints  tableLevelRaw
 
---  pure (columnChecks ++ notNullChecks)
+    pure (tableLevel, columnLevel)
 
---let enumerations = map
---      (\(enumNm, _, options) -> Db.SomeDatabasePredicate (PgHasEnum enumNm (V.toList options)))
---      enumerationData
+getColumnLevelConstraints :: [[SqlRawConstraint]] -> IO (Map ColumnName (Set SchemaConstraint))
+getColumnLevelConstraints _ = pure mempty
 
--- pure (tblsExist ++ columnChecks ++ primaryKeys ++ enumerations)
+getTableLevelConstraints :: [[SqlRawConstraint]] -> IO (Map TableName (Set SchemaConstraint))
+getTableLevelConstraints _ = pure mempty

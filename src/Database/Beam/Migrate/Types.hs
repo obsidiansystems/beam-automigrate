@@ -46,8 +46,23 @@ noSchemaConstraints = mempty
 data SchemaConstraint =
       PrimaryKey (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
+    | ForeignKey (Set ColumnName) (Maybe ReferenceAction) {- onDelete -} (Maybe ReferenceAction) {- onUpdate -}
+      -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is found in the 'tableConstraints'
+      -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
+    | IsForeignKeyOf TableName (Set ColumnName)
+      -- ^ \"backward pointer\" to express the relation that the current table has some of its columns
+      -- referenced in a 'ForeignKey' constraint. This is found in the 'tableConstraints' of the table
+      -- where the foreign key \"points to\".
     | NotNull
     | Unique
+    deriving (Show, Eq, Ord)
+
+data ReferenceAction =
+      NoAction
+    | Restrict
+    | Cascade
+    | SetNull
+    | SetDefault
     deriving (Show, Eq, Ord)
 
 -- | A possible list of edits on a 'Schema'.
