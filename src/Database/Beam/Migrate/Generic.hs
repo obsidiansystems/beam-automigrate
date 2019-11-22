@@ -29,7 +29,6 @@ import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
                                                 , dbTableSettings
                                                 )
 
-import           Database.Beam.Backend.SQL.AST  ( DataType(..) )
 import           Database.Beam.Migrate.Compat
 
 {- Machinery to derive a 'Schema' from a 'DatabaseSettings'. -}
@@ -50,6 +49,9 @@ class GSchemaTable x where
 -- we return a [(ColumnName, Column)].
 class GSchemaColumnEntries x where
     gSchemaColumnEntries :: x p -> [(ColumnName, Column)]
+
+class GSchemaColumns x where
+    gSchemaColumns :: x p -> [Column]
 
 instance GSchema x => GSchema (D1 f x) where
   gSchema (M1 x) = gSchema x
@@ -96,9 +98,27 @@ instance HasDefaultSqlDataType t => GSchemaColumnEntries (S1 m (K1 R (Beam.Table
     let colName = ColumnName $ e ^. Beam.fieldName
     in  [(colName, Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)] -- TODO(adn) support constraints
 
-instance Beamable (PrimaryKey f)
+instance ( GSchemaColumns (Rep (PrimaryKey f (Beam.TableField t)))
+         , Generic (PrimaryKey f (Beam.TableField t))
+         , Beamable (PrimaryKey f)
+         )
     => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
   gSchemaColumnEntries (M1 (K1 e)) =
     let colNames = pkAsColumnNames e
-        cols     = repeat (Column DataTypeInteger noSchemaConstraints) -- TODO(adn) support constraints
+        cols     = gSchemaColumns (from e)
     in  zip colNames cols
+
+
+instance GSchemaColumns x => GSchemaColumns (D1 f x) where
+  gSchemaColumns (M1 x) = gSchemaColumns x
+
+instance GSchemaColumns x => GSchemaColumns (C1 f x) where
+  gSchemaColumns (M1 x) = gSchemaColumns x
+
+instance GSchemaColumns x => GSchemaColumns (S1 f x) where
+  gSchemaColumns (M1 x) = gSchemaColumns x
+
+instance HasDefaultSqlDataType ty
+  => GSchemaColumns (K1 R (Beam.TableField e ty)) where
+  gSchemaColumns (K1 _ty) = 
+      Column (defaultSqlDataType (Proxy @ty) False) noSchemaConstraints : []
