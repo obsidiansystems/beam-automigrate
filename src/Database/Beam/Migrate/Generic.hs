@@ -93,6 +93,9 @@ instance HasDefaultSqlDataType t => GSchemaTable (S1 m (K1 R (Beam.TableField e 
     in  Table noSchemaConstraints
           $ M.singleton colName (Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)
 
+instance (GSchemaColumnEntries a, GSchemaColumnEntries b) => GSchemaColumnEntries (a :*: b) where
+  gSchemaColumnEntries (a :*: b) = gSchemaColumnEntries a <> gSchemaColumnEntries b
+
 instance HasDefaultSqlDataType t => GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaColumnEntries (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName

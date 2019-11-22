@@ -105,7 +105,5 @@ example = do
     dbSchema <- getSchema conn
     print dbSchema
     print $ dbSchema == hsSchema
-    let schemaDiff1 = diff dbSchema hsSchema
-    let schemaDiff2 = diff hsSchema dbSchema
-    print schemaDiff1
-    print schemaDiff2
+    let schemaDiff = diff hsSchema dbSchema
+    print schemaDiff
