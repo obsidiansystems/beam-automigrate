@@ -17,6 +17,7 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:     Database.Beam.Migrate
   other-modules:
+                       Database.Beam.Migrate.Compat
                        Database.Beam.Migrate.Example
                        Database.Beam.Migrate.Generic
                        Database.Beam.Migrate.Postgres

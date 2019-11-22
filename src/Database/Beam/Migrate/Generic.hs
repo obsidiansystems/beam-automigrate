@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeFamilies         #-}
@@ -9,7 +10,7 @@ import           Database.Beam.Migrate.Util     ( pkAsColumnNames
                                                 , pkFieldNames
                                                 )
 import           Database.Beam.Migrate.Types
-
+import           Data.Proxy
 import qualified Data.Map.Strict               as M
 import qualified Data.Set                      as S
 import           Lens.Micro                     ( (^.) )
@@ -28,8 +29,8 @@ import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
                                                 , dbTableSettings
                                                 )
 
-import Database.Beam.Backend.SQL.AST (DataType(..))
-
+import           Database.Beam.Backend.SQL.AST  ( DataType(..) )
+import           Database.Beam.Migrate.Compat
 
 {- Machinery to derive a 'Schema' from a 'DatabaseSettings'. -}
 
@@ -83,19 +84,21 @@ instance GSchemaTable x => GSchemaTable (C1 f x) where
 instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) where
   gSchemaTable (a :*: b) = Table noSchemaConstraints (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
 
-instance GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
+instance HasDefaultSqlDataType t => GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaTable (M1 (K1 e)) =
+    -- TODO(adn) support constraints
     let colName = ColumnName $ e ^. Beam.fieldName
-    in  Table noSchemaConstraints $ M.singleton colName (Column DataTypeInteger noSchemaConstraints)
+    in  Table noSchemaConstraints
+          $ M.singleton colName (Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)
 
-instance GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
+instance HasDefaultSqlDataType t => GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaColumnEntries (M1 (K1 e)) =
-    let colName = ColumnName $ e ^. Beam.fieldName in [(colName, Column DataTypeInteger noSchemaConstraints)]
+    let colName = ColumnName $ e ^. Beam.fieldName
+    in  [(colName, Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)] -- TODO(adn) support constraints
 
--- TODO(adn) Not quite correct as far as the 'PrimaryKey' is concerned.
 instance Beamable (PrimaryKey f)
     => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
   gSchemaColumnEntries (M1 (K1 e)) =
     let colNames = pkAsColumnNames e
-        cols     = repeat (Column DataTypeInteger noSchemaConstraints) -- TODO(adn) fixme
+        cols     = repeat (Column DataTypeInteger noSchemaConstraints) -- TODO(adn) support constraints
     in  zip colNames cols

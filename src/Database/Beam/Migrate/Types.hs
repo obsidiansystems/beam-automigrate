@@ -44,8 +44,9 @@ noSchemaConstraints :: Set SchemaConstraint
 noSchemaConstraints = mempty
 
 data SchemaConstraint =
-    PrimaryKey (Set ColumnName)
-    -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
+      PrimaryKey (Set ColumnName)
+      -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
+    | NotNull
     deriving (Show, Eq, Ord)
 
 -- | A possible list of edits on a 'Schema'.
