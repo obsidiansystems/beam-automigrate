@@ -1,6 +1,12 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
-module Database.Beam.Migrate where
+module Database.Beam.Migrate
+  ( fromDbSettings
+  , runMigration
+    -- * Handy re-exports
+  , module Exports
+  )
+where
 
 import           Control.Monad.State.Strict     ( StateT
                                                 , execStateT
@@ -12,11 +18,13 @@ import           Data.Text                      ( Text )
 
 import           GHC.Generics
 
+
 import           Database.Beam                  ( MonadBeam )
 import           Database.Beam.Schema           ( DatabaseSettings )
 
-import           Database.Beam.Migrate.Generic
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.Generic as Exports
+import           Database.Beam.Migrate.Types   as Exports
+import           Database.Beam.Migrate.Diff   as Exports
 
 --
 -- Potential API (sketched)
@@ -41,11 +49,8 @@ evalEdit = \case
     "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
   TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
   TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
+  _ -> "UNSUPPORTED FOR NOW, TODO."
 
--- | Computes the diff between two 'Schema's, either failing with a 'DiffError'
--- or returning the list of 'Edit's necessary to turn the first into the second.
-diff :: Schema -> Schema -> Either DiffError [Edit]
-diff _old _new = undefined
 
 type Migration m = StateT [Edit] m ()
 

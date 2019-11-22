@@ -25,8 +25,8 @@ type Columns = Map ColumnName Column
 newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord)
 
 data Column = Column {
-    columnType       :: ColumnType
-  , columnConstrains :: Set SchemaConstraint
+    columnType        :: ColumnType
+  , columnConstraints :: Set SchemaConstraint
   } deriving (Show, Eq)
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
@@ -51,10 +51,16 @@ data SchemaConstraint =
 
 -- | A possible list of edits on a 'Schema'.
 data Edit =
-    ColumnAdded TableName ColumnName Column
-  | ColumnRemoved TableName ColumnName
-  | TableAdded TableName Table
+    TableAdded TableName Table
   | TableRemoved TableName
+  | TableConstraintsAdded   TableName (Set SchemaConstraint)
+  | TableConstraintsRemoved TableName (Set SchemaConstraint)
+  | ColumnAdded TableName ColumnName Column
+  | ColumnRemoved TableName ColumnName
+  | ColumnTypeChanged ColumnName ColumnType {- old type -} ColumnType {- new type -}
+  | ColumnConstraintsAdded   ColumnName (Set SchemaConstraint)
+  | ColumnConstraintsRemoved ColumnName (Set SchemaConstraint)
+  deriving (Show, Eq)
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
 data DiffError =
@@ -62,3 +68,4 @@ data DiffError =
     -- ^ The diff couldn't be completed. TODO(adn) We need extra information
     -- we can later on reify into the raw SQL queries users can try to run
     -- themselves.
+    deriving (Show, Eq)

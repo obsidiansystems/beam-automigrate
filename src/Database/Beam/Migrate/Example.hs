@@ -24,7 +24,7 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
-import           Database.Beam.Migrate          ( fromDbSettings )
+import           Database.Beam.Migrate          ( fromDbSettings, diff )
 import           Database.Beam.Migrate.Postgres (getSchema)
 
 -- Needed only for the examples, (re)move eventually.
@@ -99,9 +99,13 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
 -- | Just a simple example demonstrating a possible workflow for a migration.
 example :: IO ()
 example = do
-    let schema1 = fromDbSettings flowerDB
-    print schema1
+    let hsSchema = fromDbSettings flowerDB
+    print hsSchema
     conn <- connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = "beam-test-db" }
-    schema2 <- getSchema conn
-    print schema2
-    print $ schema1 == schema2
+    dbSchema <- getSchema conn
+    print dbSchema
+    print $ dbSchema == hsSchema
+    let schemaDiff1 = diff dbSchema hsSchema
+    let schemaDiff2 = diff hsSchema dbSchema
+    print schemaDiff1
+    print schemaDiff2
