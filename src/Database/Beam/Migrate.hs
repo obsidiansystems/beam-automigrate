@@ -43,13 +43,20 @@ fromDbSettings = gSchema . from
 -- For now this is /very/ naive, we don't want to write custom, raw SQL fragments.
 evalEdit :: Edit -> Text
 evalEdit = \case
+  TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
+  TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
+  TableConstraintsAdded   _tblName _cstr -> "TABLE_CONTRAINTS_ADDED TODO"
+  TableConstraintsRemoved _tblName _cstr -> "TABLE_CONTRAINTS_REMOVED TODO"
   ColumnAdded tblName colName _col ->
     "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
   ColumnRemoved tblName colName ->
     "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
-  TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
-  TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
-  _ -> "UNSUPPORTED FOR NOW, TODO."
+  ColumnTypeChanged _colName _old _new ->
+      "COLUMN TYPE CHANGE TODO"
+  ColumnConstraintsAdded _colName _cstr -> 
+      "COLUMN CONSTRAINTS ADDED TODO"
+  ColumnConstraintsRemoved _colName _cstr ->
+      "COLUMN CONSTRAINTS REMOVED TODO"
 
 
 type Migration m = StateT [Edit] m ()

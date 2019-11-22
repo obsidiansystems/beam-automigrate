@@ -1,22 +1,27 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
-module Database.Beam.Migrate.Postgres (getSchema) where
+module Database.Beam.Migrate.Postgres
+  ( getSchema
+  )
+where
 
 import           Data.String
-import           Data.Maybe (fromMaybe)
-import Data.Bits ((.&.), shiftR)
+import           Data.Maybe                     ( fromMaybe )
+import           Data.Bits                      ( (.&.)
+                                                , shiftR
+                                                )
 import           Data.Foldable                  ( foldlM )
 import qualified Data.Vector                   as V
 import qualified Data.Map.Strict               as M
+import qualified Data.Set                      as S
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
 import           Data.List                      ( foldl' )
-import qualified Data.Set                      as S
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as TE
 import           Data.ByteString                ( ByteString )
 
-import Database.Beam.Backend.SQL
+import           Database.Beam.Backend.SQL
 import qualified Database.PostgreSQL.Simple    as Pg
 import qualified Database.PostgreSQL.Simple.Types
                                                as Pg
@@ -68,14 +73,20 @@ getSchema conn = do
       pure $ M.insert tName newTable allTables
 
     getColumns :: Columns -> (ByteString, Pg.Oid, Int, Bool, ByteString) -> IO Columns
-    getColumns c (attname, atttypid, atttypmod, _attnotnull, format_type) = do
-      let mbPrecision =  if atttypmod == -1 then Nothing else Just (atttypmod - 4)
+    getColumns c (attname, atttypid, atttypmod, attnotnull, format_type) = do
+      let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
       case pgTypeToColumnType atttypid mbPrecision of
         Just cType -> do
-          let newColumn = Column cType noSchemaConstraints
+          let mbConstraints = if attnotnull then Just $ S.fromList [NotNull] else Nothing
+          let newColumn     = Column cType (fromMaybe noSchemaConstraints mbConstraints)
           pure $ M.insert (ColumnName (TE.decodeUtf8 attname)) newColumn c
         Nothing ->
-            fail $ "Couldn't convert pgType " <> show format_type <> " of field " <> show attname <> " into a valid ColumnType."
+          fail
+            $  "Couldn't convert pgType "
+            <> show format_type
+            <> " of field "
+            <> show attname
+            <> " into a valid ColumnType."
 
     -- Builds a lookup table from a 'TableName' to the set of column names which constitutes a 'PrimaryKey' for
     -- a particular table. Potentially large for big DBs (> 10k tables).
@@ -94,36 +105,44 @@ getSchema conn = do
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).
 pgTypeToColumnType :: Pg.Oid -> Maybe Int -> Maybe ColumnType
 pgTypeToColumnType oid width
-  | Pg.typoid Pg.int2    == oid = Just smallIntType
-  | Pg.typoid Pg.int4    == oid = Just intType
-  | Pg.typoid Pg.int8    == oid = Just bigIntType
-  | Pg.typoid Pg.bpchar  == oid = Just (charType (fromIntegral <$> width) Nothing)
-  | Pg.typoid Pg.varchar == oid = Just (varCharType (fromIntegral <$> width) Nothing)
-  | Pg.typoid Pg.bit     == oid = Just (bitType (fromIntegral <$> width))
-  | Pg.typoid Pg.varbit  == oid = Just (varBitType (fromIntegral <$> width))
-  | Pg.typoid Pg.numeric == oid =
-      let decimals = fromMaybe 0 width .&. 0xFFFF
-          prec     = (fromMaybe 0 width `shiftR` 16) .&. 0xFFFF
-      in Just (numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
-  | Pg.typoid Pg.float4  == oid = Just (floatType (fromIntegral <$> width))
-  | Pg.typoid Pg.float8  == oid = Just doubleType
-  | Pg.typoid Pg.date    == oid = Just dateType
-  -- We prefer using the standard beam names
-  | Pg.typoid Pg.text    == oid = Just characterLargeObjectType
-  | Pg.typoid Pg.bytea   == oid = Just binaryLargeObjectType
-  | Pg.typoid Pg.bool    == oid = Just booleanType
-  -- TODO timestamp prec
-  | Pg.typoid Pg.time        == oid = Just (timeType Nothing False)
-  | Pg.typoid Pg.timestamp   == oid = Just (timestampType Nothing False)
-  | Pg.typoid Pg.timestamptz == oid = Just (timestampType Nothing True)
+  | Pg.typoid Pg.int2 == oid
+  = Just smallIntType
+  | Pg.typoid Pg.int4 == oid
+  = Just intType
+  | Pg.typoid Pg.int8 == oid
+  = Just bigIntType
+  | Pg.typoid Pg.bpchar == oid
+  = Just (charType (fromIntegral <$> width) Nothing)
+  | Pg.typoid Pg.varchar == oid
+  = Just (varCharType (fromIntegral <$> width) Nothing)
+  | Pg.typoid Pg.bit == oid
+  = Just (bitType (fromIntegral <$> width))
+  | Pg.typoid Pg.varbit == oid
+  = Just (varBitType (fromIntegral <$> width))
+  | Pg.typoid Pg.numeric == oid
+  = let decimals = fromMaybe 0 width .&. 0xFFFF
+        prec     = (fromMaybe 0 width `shiftR` 16) .&. 0xFFFF
+    in  Just (numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
+  | Pg.typoid Pg.float4 == oid
+  = Just (floatType (fromIntegral <$> width))
+  | Pg.typoid Pg.float8 == oid
+  = Just doubleType
+  | Pg.typoid Pg.date == oid
+  = Just dateType
+  | Pg.typoid Pg.text == oid
+  = Just characterLargeObjectType
+  | Pg.typoid Pg.bytea == oid
+  = Just binaryLargeObjectType
+  | Pg.typoid Pg.bool == oid
+  = Just booleanType
+  | Pg.typoid Pg.time == oid
+  = Just (timeType Nothing False)
+  | Pg.typoid Pg.timestamp == oid
+  = Just (timestampType Nothing False)
+  | Pg.typoid Pg.timestamptz == oid
+  = Just (timestampType Nothing True)
+  |
 
-  -- | Pg.typoid Pg.float4  == oid = Just (floatType (fromIntegral <$> width))
-  -- | Pg.typoid Pg.float8  == oid = Just doubleType
-  -- | Pg.typoid Pg.date    == oid = Just dateType
-  -- -- We prefer using the standard beam names
-  -- | Pg.typoid Pg.text    == oid = Just characterLargeObjectType
-  -- | Pg.typoid Pg.bytea   == oid = Just binaryLargeObjectType
-  -- | Pg.typoid Pg.bool    == oid = Just booleanType
   -- Postgres specific datatypes, haskell versions
   -- NOTE(adn) For the sake of the prototype, let's not worry about this.
   -- | Pg.typoid Pg.uuid        == oid =
@@ -178,7 +197,8 @@ pgTypeToColumnType oid width
   --                       (HsType (tyConNamed "PgBox")
   --                               (importSome "Database.Beam.Postgres" [ importTyNamed "PgBox" ]))
   --                       (pgDataTypeSerialized pgBoxType)
-  | otherwise = Nothing
+    otherwise
+  = Nothing
 
 --enumerationData <- Pg.query_
 --  conn

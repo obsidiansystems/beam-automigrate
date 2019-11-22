@@ -47,6 +47,7 @@ data SchemaConstraint =
       PrimaryKey (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
     | NotNull
+    | Unique
     deriving (Show, Eq, Ord)
 
 -- | A possible list of edits on a 'Schema'.
