@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 module Database.Beam.Migrate.Diff
   ( Diffable(..)
+  , Diff
   )
 where
 

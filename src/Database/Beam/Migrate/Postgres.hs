@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
 module Database.Beam.Migrate.Postgres
@@ -5,6 +7,7 @@ module Database.Beam.Migrate.Postgres
   )
 where
 
+import           Data.Function
 import           Data.String
 import           Data.Maybe                     ( fromMaybe )
 import           Data.Bits                      ( (.&.)
@@ -16,7 +19,7 @@ import qualified Data.Map.Strict               as M
 import qualified Data.Set                      as S
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
-import           Data.List                      ( foldl', groupBy, partition )
+import           Data.List                      ( foldl', partition )
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as TE
 import           Data.ByteString                ( ByteString )
@@ -46,16 +49,15 @@ data SqlRawConstraint = SqlRawConstraint
     { sqlCon_name :: Text
     , sqlCon_ref_origin :: TableName
     , sqlCon_ref_target :: TableName
-    , sqlCon_column_name :: ColumnName
+    , sqlCon_columns    :: V.Vector ColumnName
     , sqlCon_constraint_type :: SqlRawConstraintType
     } deriving (Show, Eq)
-
 
 instance Pg.FromRow SqlRawConstraint where
   fromRow = SqlRawConstraint <$> field 
                              <*> (fmap TableName field) 
                              <*> (fmap TableName field) 
-                             <*> (fmap ColumnName field) 
+                             <*> (fmap (V.map ColumnName) field) 
                              <*> field
 
 instance FromField SqlRawConstraintType where
@@ -98,10 +100,11 @@ primaryKeysQ = fromString $ unlines
 -- | Return all constraints for a given 'Table'.
 constraintsQ :: Pg.Query
 constraintsQ = fromString $ unlines
-  [ "SELECT tc.constraint_name, tc.table_name as ref_origin, u.table_name as ref_target, column_name, constraint_type "
-  , "FROM information_schema.table_constraints tc JOIN information_schema.constraint_column_usage u ON "
-  , "tc.constraint_catalog=u.constraint_catalog AND tc.constraint_schema=u.constraint_schema AND "
-  , "tc.constraint_name=u.constraint_name WHERE u.table_name=? ORDER BY u.constraint_name, column_name"
+  [ "SELECT tc.constraint_name, tc.table_name as ref_origin, u.table_name as ref_target, "
+  , "array_agg(column_name)::text[] as column_names, constraint_type FROM information_schema.table_constraints tc "
+  , "JOIN information_schema.constraint_column_usage u ON tc.constraint_catalog=u.constraint_catalog AND "
+  , "tc.constraint_schema=u.constraint_schema AND tc.constraint_name=u.constraint_name WHERE u.table_name=? "
+  , "GROUP BY tc.constraint_name, ref_origin, ref_target, constraint_type"
   ]
 
 -- | Return all \"action types\" for a given constraint, for example 'ON DELETE RESTRICT'.
@@ -134,7 +137,7 @@ getSchema conn = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
       _ <- getTableConstraints conn tName
       newTable  <-
-        Table (maybe noSchemaConstraints (S.singleton . PrimaryKey) (M.lookup tName pkLookupTable))
+        Table (maybe noTableConstraints (S.singleton . PrimaryKey) (M.lookup tName pkLookupTable))
           <$> foldlM getColumns mempty pgColumns
       pure $ M.insert tName newTable allTables
 
@@ -144,7 +147,7 @@ getSchema conn = do
       case pgTypeToColumnType atttypid mbPrecision of
         Just cType -> do
           let mbConstraints = if attnotnull then Just $ S.fromList [NotNull] else Nothing
-          let newColumn     = Column cType (fromMaybe noSchemaConstraints mbConstraints)
+          let newColumn     = Column cType (fromMaybe noColumnConstraints mbConstraints)
           pure $ M.insert (ColumnName (TE.decodeUtf8 attname)) newColumn c
         Nothing ->
           fail
@@ -216,28 +219,88 @@ pgTypeToColumnType oid width
 -- Constraints discovery
 --
 
+-- We consider table constraints primary & foreign keys constraints, as they can span
+-- multiple columns and are generally easier to process at the table-level.
+isTableConstraint :: SqlRawConstraint -> Bool
+isTableConstraint (sqlCon_constraint_type -> ctype)
+  | ctype == SQL_raw_pk || ctype == SQL_raw_fk = True
+  | otherwise = False
+
 -- | Given an input 'TableName', it returns a pair of the \"table-level\" constraints (for example primary
 -- keys or foreign keys spanning multiple columns) and \"column-level\" constraints (e.g. 'UNIQUE, 'NOT NULL',
 -- etc).
 getTableConstraints :: Pg.Connection 
                     -> TableName 
-                    -> IO (Map TableName (Set SchemaConstraint), Map ColumnName (Set SchemaConstraint))
-getTableConstraints conn (tableName -> tName) = do
-    allConstraints <- Pg.query conn constraintsQ (Pg.Only tName)
+                    -> IO (Map TableName (Set TableConstraint), Map ColumnName (Set ColumnConstraint))
+getTableConstraints conn (tableName -> currentTable) = do
+    allConstraints <- Pg.query conn constraintsQ (Pg.Only currentTable)
 
-    let grouped = groupBy (\con1 con2 -> sqlCon_name con1 == sqlCon_name con2) allConstraints
-    let (tableLevelRaw, columnLevelRaw) = partition ((> 1) . length) grouped
-
-    print tableLevelRaw
-    print columnLevelRaw
+    let (tableLevelRaw, columnLevelRaw) = partition isTableConstraint allConstraints
 
     columnLevel <- getColumnLevelConstraints columnLevelRaw
-    tableLevel  <- getTableLevelConstraints  tableLevelRaw
+    tableLevel  <- getTableLevelConstraints  (TableName currentTable) tableLevelRaw
+
+    putStrLn "=0="
+    print currentTable
+    print tableLevel
+    print columnLevel
 
     pure (tableLevel, columnLevel)
 
-getColumnLevelConstraints :: [[SqlRawConstraint]] -> IO (Map ColumnName (Set SchemaConstraint))
-getColumnLevelConstraints _ = pure mempty
 
-getTableLevelConstraints :: [[SqlRawConstraint]] -> IO (Map TableName (Set SchemaConstraint))
-getTableLevelConstraints _ = pure mempty
+getTableLevelConstraints :: TableName 
+                         -- ^ The 'Table' we are currently processing.
+                         -> [SqlRawConstraint] 
+                         -> IO (Map TableName (Set TableConstraint))
+getTableLevelConstraints currentTable = foldlM go mempty
+  where
+    go :: Map TableName (Set TableConstraint)
+       -> SqlRawConstraint
+       -> IO (Map TableName (Set TableConstraint))
+    go m SqlRawConstraint{..} = do
+        let columnSet = S.fromList . V.toList $ sqlCon_columns
+        pure $ case sqlCon_constraint_type of
+          SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey columnSet) m
+          SQL_raw_fk -> do
+              -- Here we need to add two constraints: one for 'ForeignKey' and one for
+              -- 'IsForeignKeyOf'.
+              -- TODO(adn) actions.
+              m & addTableConstraint currentTable (IsForeignKeyOf sqlCon_ref_origin columnSet) 
+                . addTableConstraint sqlCon_ref_origin (ForeignKey columnSet Nothing Nothing)
+          _ -> m
+
+
+getColumnLevelConstraints :: [SqlRawConstraint]
+                          -> IO (Map ColumnName (Set ColumnConstraint))
+getColumnLevelConstraints = foldlM go mempty 
+  where
+    go :: Map ColumnName (Set ColumnConstraint)
+       -> SqlRawConstraint 
+       -> IO (Map ColumnName (Set ColumnConstraint))
+    go m SqlRawConstraint{..} = do
+        pure $ case sqlCon_constraint_type of
+          SQL_raw_unique -> addColumnConstraint (V.head sqlCon_columns) Unique m
+          _ -> m
+
+--
+-- Useful combinators to add constraints for a column or table if already there.
+--
+
+addTableConstraint :: TableName
+                   -> TableConstraint 
+                   -> Map TableName (Set TableConstraint)
+                   -> Map TableName (Set TableConstraint)
+addTableConstraint tName cns =
+  M.alter (\case
+      Nothing -> Just $ S.singleton cns
+      Just ss -> Just $ S.insert cns ss) tName
+
+addColumnConstraint :: ColumnName
+                    -> ColumnConstraint 
+                    -> Map ColumnName (Set ColumnConstraint)
+                    -> Map ColumnName (Set ColumnConstraint)
+addColumnConstraint cName cns =
+  M.alter (\case
+      Nothing -> Just $ S.singleton cns
+      Just ss -> Just $ S.insert cns ss) cName
+

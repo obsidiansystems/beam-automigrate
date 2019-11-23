@@ -46,8 +46,15 @@ library
   ghc-options:         -Wall
   if flag(werror)
     ghc-options:       -Werror
+  if flag(ghcipretty)
+    build-depends:     pretty-simple
 
 flag werror
   description: Enable -Werror during development
+  default:     False
+  manual:      True
+
+flag ghcipretty
+  description: Enable pretty-show for pretty-printing purposes
   default:     False
   manual:      True
