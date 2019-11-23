@@ -19,7 +19,7 @@ import qualified Data.Map.Strict               as M
 import qualified Data.Set                      as S
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
-import           Data.List                      ( foldl', partition )
+import           Data.List                      ( partition )
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as TE
 import           Data.ByteString                ( ByteString )
@@ -88,15 +88,6 @@ tableColumnsQ = fromString $ unlines
   , "FROM pg_catalog.pg_attribute att WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f'"
   ]
 
--- | Returns the 'PrimaryKey's for /all/ tables.
-primaryKeysQ :: Pg.Query
-primaryKeysQ = fromString $ unlines
-  [ "SELECT c.relname, array_agg(a.attname ORDER BY k.n ASC) FROM pg_index i CROSS JOIN unnest(i.indkey) "
-  , "WITH ORDINALITY k(attid, n) JOIN pg_attribute a ON a.attnum=k.attid AND a.attrelid=i.indrelid JOIN "
-  , "pg_class c ON c.oid=i.indrelid WHERE c.relkind='r' and relname NOT LIKE 'beam_%' AND i.indisprimary "
-  , "GROUP BY relname, i.indrelid"
-  ]
-
 -- | Return all constraints for a given 'Table'.
 constraintsQ :: Pg.Query
 constraintsQ = fromString $ unlines
@@ -126,29 +117,34 @@ referenceActionQ = fromString $ unlines
 -- | Connects to a running PostgreSQL database and extract the relevant 'Schema' out of it.
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
-  pgTables <- Pg.query_ conn userTablesQ
-  pgPks    <- toPkLookupTable <$> Pg.query_ conn primaryKeysQ
-  tables   <- foldlM (getTable pgPks) mempty pgTables
+  allTables <- Pg.query_ conn userTablesQ
+  allConstraints <- foldlM (\(tConAcc, cConAcc) (_, tName) -> do
+      (tCon, cCon) <- getTableConstraints conn (TableName tName)
+      pure (tConAcc <> tCon, cConAcc <> cCon)
+      ) mempty allTables
+  tables   <- foldlM (getTable allConstraints) mempty allTables
   pure $ Schema tables
 
   where
-    getTable :: Map TableName (Set ColumnName) -> Tables -> (Pg.Oid, Text) -> IO Tables
-    getTable pkLookupTable allTables (oid, TableName -> tName) = do
+    getTable :: AllConstraints -> Tables -> (Pg.Oid, Text) -> IO Tables
+    getTable allConstraints allTables (oid, TableName -> tName) = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
-      _ <- getTableConstraints conn tName
       newTable  <-
-        Table (maybe noTableConstraints (S.singleton . PrimaryKey) (M.lookup tName pkLookupTable))
-          <$> foldlM getColumns mempty pgColumns
+        Table (fromMaybe noTableConstraints (M.lookup tName (fst allConstraints)))
+          <$> foldlM (getColumns (snd allConstraints)) mempty pgColumns
       pure $ M.insert tName newTable allTables
 
-    getColumns :: Columns -> (ByteString, Pg.Oid, Int, Bool, ByteString) -> IO Columns
-    getColumns c (attname, atttypid, atttypmod, attnotnull, format_type) = do
+    getColumns :: AllColumnConstraints -> Columns -> (ByteString, Pg.Oid, Int, Bool, ByteString) -> IO Columns
+    getColumns allConstraints c (attname, atttypid, atttypmod, attnotnull, format_type) = do
       let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
       case pgTypeToColumnType atttypid mbPrecision of
         Just cType -> do
-          let mbConstraints = if attnotnull then Just $ S.fromList [NotNull] else Nothing
-          let newColumn     = Column cType (fromMaybe noColumnConstraints mbConstraints)
-          pure $ M.insert (ColumnName (TE.decodeUtf8 attname)) newColumn c
+          let nullConstraint = 
+                  if attnotnull then S.fromList [NotNull] else mempty
+          let columnName = ColumnName (TE.decodeUtf8 attname)
+          let newColumn  = 
+                  Column cType (maybe noColumnConstraints (mappend nullConstraint) (M.lookup columnName allConstraints))
+          pure $ M.insert columnName newColumn c
         Nothing ->
           fail
             $  "Couldn't convert pgType "
@@ -156,17 +152,6 @@ getSchema conn = do
             <> " of field "
             <> show attname
             <> " into a valid ColumnType."
-    -- Builds a lookup table from a 'TableName' to the set of column names which constitutes a 'PrimaryKey' for
-    -- a particular table. Potentially large for big DBs (> 10k tables).
-    -- NOTE(adn) Currently the program is optimised for speed, not memory, and this is why this 'toPkLooupTable'
-    -- is passed around in 'getTableSchema' as part of a fold, which means it cannot be garbage-collected until
-    -- the fold has finished.
-    toPkLookupTable :: [(Text, V.Vector Text)] -> Map TableName (Set ColumnName)
-    toPkLookupTable pks = foldl' go mempty pks
-      where
-        go :: Map TableName (Set ColumnName) -> (Text, V.Vector Text) -> Map TableName (Set ColumnName)
-        go m (tName, columns) =
-          M.insert (TableName tName) (S.fromList . map ColumnName . V.toList $ columns) m
 
 --
 -- Postgres type mapping
@@ -219,6 +204,9 @@ pgTypeToColumnType oid width
 -- Constraints discovery
 --
 
+type AllConstraints = (Map TableName (Set TableConstraint), AllColumnConstraints)
+type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
+
 -- We consider table constraints primary & foreign keys constraints, as they can span
 -- multiple columns and are generally easier to process at the table-level.
 isTableConstraint :: SqlRawConstraint -> Bool
@@ -231,7 +219,7 @@ isTableConstraint (sqlCon_constraint_type -> ctype)
 -- etc).
 getTableConstraints :: Pg.Connection 
                     -> TableName 
-                    -> IO (Map TableName (Set TableConstraint), Map ColumnName (Set ColumnConstraint))
+                    -> IO AllConstraints
 getTableConstraints conn (tableName -> currentTable) = do
     allConstraints <- Pg.query conn constraintsQ (Pg.Only currentTable)
 
