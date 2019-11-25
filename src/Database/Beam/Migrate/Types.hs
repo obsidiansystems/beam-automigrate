@@ -49,7 +49,7 @@ noColumnConstraints = mempty
 type ConstraintName = Text
 
 data TableConstraint =
-      PrimaryKey (Set ColumnName)
+      PrimaryKey ConstraintName (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
     | ForeignKey (Set ColumnName) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
       -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'

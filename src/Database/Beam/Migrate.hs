@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
   ( fromDbSettings
+  , Migration
   , migrate
   , runMigration
   , printMigration
@@ -18,6 +19,7 @@ import           Control.Monad.IO.Class         ( liftIO
                                                 )
 import           Data.String                    ( fromString )
 import qualified Data.Set                      as S
+import qualified Data.Map.Strict               as M
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as TE
@@ -49,29 +51,6 @@ fromDbSettings :: (Generic (DatabaseSettings be db), GSchema (Rep (DatabaseSetti
                -> Schema
 fromDbSettings = gSchema . from
 
--- | Interpret a single 'Edit'.
--- NOTE(adn) Until we figure out whether or not we want to use Beam's Query
--- builder, this can for now yield the raw SQL fragment, for simplicity, which
--- can later be interpreted via 'Database.Beam.Query.CustomSQL'.
--- For now this is /very/ naive, we don't want to write custom, raw SQL fragments.
-evalEdit :: Edit -> Text
-evalEdit = \case
-  TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
-  TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
-  TableConstraintAdded   _tblName _cstr -> "TABLE_CONTRAINTS_ADDED TODO"
-  TableConstraintRemoved _tblName _cstr -> "TABLE_CONTRAINTS_REMOVED TODO"
-  ColumnAdded tblName colName _col ->
-    "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
-  ColumnRemoved tblName colName ->
-    "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
-  ColumnTypeChanged _tName _colName _old _new ->
-      "COLUMN TYPE CHANGE TODO"
-  ColumnConstraintAdded _tName _colName _cstr -> 
-      "COLUMN CONSTRAINTS ADDED TODO"
-  ColumnConstraintRemoved _tName _colName _cstr ->
-      "COLUMN CONSTRAINTS REMOVED TODO"
-
-
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
 
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
@@ -94,14 +73,20 @@ runMigration m = do
 
 toSqlSyntax :: Edit -> Pg.PgCommandSyntax
 toSqlSyntax = \case
-  TableAdded tblName _tbl -> 
-      ddlSyntax ("CREATE TABLE \"" <> tableName tblName <> "\" ()")
+  TableAdded tblName tbl -> 
+      ddlSyntax ("CREATE TABLE \"" <> tableName tblName 
+                                   <> "\" (" 
+                                   <> T.intercalate "," (map renderTableColumn (M.toList (tableColumns tbl)) <>
+                                                         map renderCreateTableConstraint (S.toList (tableConstraints tbl))
+                                                        )
+                                   <> ")"
+                )
   TableRemoved tblName    -> 
       ddlSyntax ("DROP TABLE \"" <> tableName tblName <> "\"")
   TableConstraintAdded  tblName cstr -> 
-      updateSyntax (alterTable tblName <> "ADD CONSTRAINT " <> renderTableConstraint cstr)
+      updateSyntax (alterTable tblName <> "ADD CONSTRAINT " <> renderAlterTableConstraint cstr)
   TableConstraintRemoved tblName cstr -> 
-      updateSyntax (alterTable tblName <> "DROP CONSTRAINT " <> renderTableConstraint cstr)
+      updateSyntax (alterTable tblName <> "DROP CONSTRAINT " <> renderAlterTableConstraint cstr)
   ColumnAdded tblName colName col ->
       updateSyntax (alterTable tblName <> "ADD COLUMN \"" 
                                        <> columnName colName 
@@ -125,9 +110,19 @@ toSqlSyntax = \case
       alterTable :: TableName -> Text
       alterTable (TableName tName) = "ALTER TABLE \"" <> tName <> "\" "
 
-      renderTableConstraint :: TableConstraint -> Text
-      renderTableConstraint = \case
-        Unique cName _columnName -> cName
+      renderTableColumn :: (ColumnName, Column) -> Text
+      renderTableColumn (colName, col) = columnName colName <> " " <> renderDataType (columnType col)
+
+      renderCreateTableConstraint :: TableConstraint -> Text
+      renderCreateTableConstraint = \case
+        Unique _ cols     -> "UNIQUE (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
+        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
+        _ -> error "renderTableConstraint: TODO"
+
+      renderAlterTableConstraint :: TableConstraint -> Text
+      renderAlterTableConstraint = \case
+        Unique cName _ -> cName
+        PrimaryKey cName _ -> cName
         _ -> error "renderTableConstraint: TODO"
 
       renderColumnConstraint :: ColumnConstraint -> Text

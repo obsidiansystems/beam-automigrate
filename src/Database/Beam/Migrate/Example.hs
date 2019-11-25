@@ -27,6 +27,7 @@ import           Database.Beam.Schema.Tables    ( primaryKey )
 
 import           Database.Beam.Migrate          ( Schema
                                                 , Diff
+                                                , Migration
                                                 , fromDbSettings
                                                 , diff
                                                 , runMigration
@@ -55,7 +56,6 @@ data FlowerT f = Flower
   { flowerID    :: Columnar f Int32
   , flowerName  :: Columnar f Text
   , flowerPrice :: Columnar f Scientific
-  , flowerAvailable :: Columnar f Bool
   }
   deriving (Generic, Beamable)
 
@@ -139,16 +139,15 @@ example = do
   getGroundhogSchema >>= print
 
 exampleShowMigration :: IO ()
-exampleShowMigration = do
+exampleShowMigration = withBeamTestDb printMigration
+
+withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
+withBeamTestDb action = do
   let connInfo = "host=localhost port=5432 dbname=beam-test-db"
-  bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn -> do
-    let mig = migrate conn hsSchema
-    printMigration mig
+  bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
+    Pg.withTransaction conn $ runBeamPostgresDebug putStrLn conn $ do
+      let mig = migrate conn hsSchema
+      action mig
 
 exampleAutoMigration :: IO ()
-exampleAutoMigration = do
-  let connInfo = "host=localhost port=5432 dbname=beam-test-db"
-  bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn -> do
-    Pg.withTransaction conn $ runBeamPostgresDebug putStrLn conn $ do
-      runMigration $ do
-        migrate conn hsSchema
+exampleAutoMigration = withBeamTestDb runMigration

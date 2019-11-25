@@ -257,7 +257,7 @@ getTableLevelConstraints conn currentTable = foldlM go mempty
         let columnSet = S.fromList . V.toList $ sqlCon_columns
         case sqlCon_constraint_type of
           SQL_raw_unique -> pure $ addTableConstraint currentTable (Unique sqlCon_name (S.fromList $ V.toList sqlCon_columns)) m
-          SQL_raw_pk -> pure $ addTableConstraint currentTable (PrimaryKey columnSet) m
+          SQL_raw_pk -> pure $ addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet) m
           SQL_raw_fk -> do
               -- Here we need to add two constraints: one for 'ForeignKey' and one for
               -- 'IsForeignKeyOf'.
@@ -270,7 +270,6 @@ getTableLevelConstraints conn currentTable = foldlM go mempty
                             (mkAction onDeleteAction, mkAction onUpdateAction)
               pure $ m & addTableConstraint currentTable (IsForeignKeyOf sqlCon_ref_origin columnSet) 
                    . addTableConstraint sqlCon_ref_origin (ForeignKey columnSet onDelete onUpdate)
-          _ -> pure m
 
     mkAction :: Text -> ReferenceAction
     mkAction c = case c of

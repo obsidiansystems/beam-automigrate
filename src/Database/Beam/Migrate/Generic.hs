@@ -73,7 +73,7 @@ instance ( IsDatabaseEntity be (TableEntity tbl)
   => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db (TableEntity tbl))) where
   gSchemaTableEntry (K1 entity) =
     let tName = entity ^. dbEntityDescriptor . dbEntityName
-        pks   = S.singleton (PrimaryKey (S.fromList $ pkFieldNames entity))
+        pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
         tbl   = gSchemaTable . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
     in  (TableName tName, tbl { tableConstraints = tableConstraints tbl <> pks })
 
