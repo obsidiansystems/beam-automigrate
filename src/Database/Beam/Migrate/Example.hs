@@ -55,6 +55,7 @@ data FlowerT f = Flower
   { flowerID    :: Columnar f Int32
   , flowerName  :: Columnar f Text
   , flowerPrice :: Columnar f Scientific
+  , flowerAvailable :: Columnar f Bool
   }
   deriving (Generic, Beamable)
 
@@ -148,8 +149,6 @@ exampleAutoMigration :: IO ()
 exampleAutoMigration = do
   let connInfo = "host=localhost port=5432 dbname=beam-test-db"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn -> do
-    let mig = migrate conn hsSchema
-    printMigration mig
     Pg.withTransaction conn $ runBeamPostgresDebug putStrLn conn $ do
       runMigration $ do
         migrate conn hsSchema

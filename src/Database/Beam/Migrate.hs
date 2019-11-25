@@ -17,7 +17,9 @@ import           Control.Monad.IO.Class         ( liftIO
                                                 , MonadIO
                                                 )
 import           Data.String                    ( fromString )
+import qualified Data.Set                      as S
 import           Data.Text                      ( Text )
+import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as TE
 
 import           GHC.Generics hiding (prec)
@@ -62,11 +64,11 @@ evalEdit = \case
     "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
   ColumnRemoved tblName colName ->
     "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
-  ColumnTypeChanged _colName _old _new ->
+  ColumnTypeChanged _tName _colName _old _new ->
       "COLUMN TYPE CHANGE TODO"
-  ColumnConstraintAdded _colName _cstr -> 
+  ColumnConstraintAdded _tName _colName _cstr -> 
       "COLUMN CONSTRAINTS ADDED TODO"
-  ColumnConstraintRemoved _colName _cstr ->
+  ColumnConstraintRemoved _tName _colName _cstr ->
       "COLUMN CONSTRAINTS REMOVED TODO"
 
 
@@ -88,10 +90,7 @@ runMigration m = do
   migs <- createMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right edits -> do
-        let pgSyntax = map toSqlSyntax edits
-        liftIO $ putStrLn (unlines $ map (displaySyntax . Pg.fromPgCommand) pgSyntax)
-        mapM_ runNoReturn pgSyntax
+    Right edits -> mapM_ runNoReturn (map toSqlSyntax edits)
 
 toSqlSyntax :: Edit -> Pg.PgCommandSyntax
 toSqlSyntax = \case
@@ -100,28 +99,41 @@ toSqlSyntax = \case
   TableRemoved tblName    -> 
       ddlSyntax ("DROP TABLE \"" <> tableName tblName <> "\"")
   TableConstraintAdded  tblName cstr -> 
-      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" ADD CONSTRAINT " <> renderTableConstraint cstr)
+      updateSyntax (alterTable tblName <> "ADD CONSTRAINT " <> renderTableConstraint cstr)
   TableConstraintRemoved tblName cstr -> 
-      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" DROP CONSTRAINT " <> renderTableConstraint cstr)
-  ColumnAdded tblName colName _col ->
-      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\"")
+      updateSyntax (alterTable tblName <> "DROP CONSTRAINT " <> renderTableConstraint cstr)
+  ColumnAdded tblName colName col ->
+      updateSyntax (alterTable tblName <> "ADD COLUMN \"" 
+                                       <> columnName colName 
+                                       <> "\" " 
+                                       <> renderDataType (columnType col)
+                                       <> " "
+                                       <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+                   )
   ColumnRemoved tblName colName ->
-      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\"")
-  ColumnTypeChanged colName _old new ->
-      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" TYPE " <> renderDataType new)
-  ColumnConstraintAdded colName cstr -> 
-      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" ADD CONSTRAINT " <> renderColumnConstraint cstr)
-  ColumnConstraintRemoved colName cstr ->
-      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" DROP CONSTRAINT " <> renderColumnConstraint cstr)
+      updateSyntax (alterTable tblName <> "DROP COLUMN \"" <> columnName colName <> "\"")
+  ColumnTypeChanged tblName colName _old new ->
+      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" TYPE " <> renderDataType new)
+  ColumnConstraintAdded tblName colName cstr -> 
+      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" SET " <> renderColumnConstraint cstr)
+  ColumnConstraintRemoved tblName colName cstr ->
+      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" DROP " <> renderColumnConstraint cstr)
   where
       ddlSyntax query    = Pg.PgCommandSyntax Pg.PgCommandTypeDdl (Pg.emit . TE.encodeUtf8 $ query <> ";")
       updateSyntax query = Pg.PgCommandSyntax Pg.PgCommandTypeDataUpdate (Pg.emit . TE.encodeUtf8 $ query <> ";")
 
+      alterTable :: TableName -> Text
+      alterTable (TableName tName) = "ALTER TABLE \"" <> tName <> "\" "
+
       renderTableConstraint :: TableConstraint -> Text
-      renderTableConstraint _ = "TODO"
+      renderTableConstraint = \case
+        Unique cName _columnName -> cName
+        _ -> error "renderTableConstraint: TODO"
 
       renderColumnConstraint :: ColumnConstraint -> Text
-      renderColumnConstraint _ = "TODO"
+      renderColumnConstraint = \case
+        NotNull -> "NOT NULL"
+        Default defValue -> "DEFAULT " <> defValue
 
       -- This function also overlaps with beam-migrate functionalities.
       renderDataType :: ColumnType -> Text

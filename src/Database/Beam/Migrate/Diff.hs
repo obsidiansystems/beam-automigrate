@@ -37,8 +37,8 @@ instance Diffable Tables where
 instance Diffable (TableName, Table) where
   diff (tName, t1) (_, t2) = diffTableReferenceImplementation tName (t1, t2)
 
-instance Diffable (ColumnName, Column) where
-  diff (cName, c1) (_, c2) = diffColumnReferenceImplementation cName (c1, c2)
+instance Diffable (TableName, (ColumnName, Column)) where
+  diff (tName, (cName, c1)) (_, (_, c2)) = diffColumnReferenceImplementation tName cName (c1, c2)
 
 --
 -- Reference implementation
@@ -81,20 +81,20 @@ diffTableReferenceImplementation tName (hsTable, dbTable) = do
   where
     go :: [Edit] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
     go e (cpair1@(hsName, _), cpair2@(dbName, _)) = assert (hsName == dbName) $ do
-      d <- diff cpair1 cpair2
+      d <- diff (tName, cpair1) (tName, cpair2)
       pure $ e <> d
 
-diffColumnReferenceImplementation :: ColumnName -> (Column, Column) -> Diff
-diffColumnReferenceImplementation colName (hsColumn, dbColumn) = do
+diffColumnReferenceImplementation :: TableName -> ColumnName -> (Column, Column) -> Diff
+diffColumnReferenceImplementation tName colName (hsColumn, dbColumn) = do
   let constraintsAdded   = S.difference (columnConstraints hsColumn) (columnConstraints dbColumn)
       constraintsRemoved = S.difference (columnConstraints dbColumn) (columnConstraints hsColumn)
   let colConstraintsAdded = do
         guard (not $ S.null constraintsAdded)
-        pure $ map (ColumnConstraintAdded colName) (S.toList constraintsAdded)
+        pure $ map (ColumnConstraintAdded tName colName) (S.toList constraintsAdded)
   let colConstraintsRemoved = do
         guard (not $ S.null constraintsRemoved)
-        pure $ map (ColumnConstraintRemoved colName) (S.toList constraintsRemoved)
+        pure $ map (ColumnConstraintRemoved tName colName) (S.toList constraintsRemoved)
   let typeChanged = do
         guard (columnType hsColumn /= columnType dbColumn)
-        pure [ColumnTypeChanged colName (columnType hsColumn) (columnType dbColumn)]
+        pure [ColumnTypeChanged tName colName (columnType dbColumn) (columnType hsColumn) ]
   pure $ join $ catMaybes [colConstraintsAdded, colConstraintsRemoved, typeChanged]

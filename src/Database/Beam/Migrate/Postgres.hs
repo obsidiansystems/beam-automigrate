@@ -221,7 +221,7 @@ type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
 -- multiple columns and are generally easier to process at the table-level.
 isTableConstraint :: SqlRawConstraint -> Bool
 isTableConstraint (sqlCon_constraint_type -> ctype)
-  | ctype == SQL_raw_pk || ctype == SQL_raw_fk = True
+  | ctype == SQL_raw_pk || ctype == SQL_raw_fk || ctype == SQL_raw_unique = True
   | otherwise = False
 
 -- | Given an input 'TableName', it returns a pair of the \"table-level\" constraints (for example primary
@@ -256,6 +256,7 @@ getTableLevelConstraints conn currentTable = foldlM go mempty
     go m SqlRawConstraint{..} = do
         let columnSet = S.fromList . V.toList $ sqlCon_columns
         case sqlCon_constraint_type of
+          SQL_raw_unique -> pure $ addTableConstraint currentTable (Unique sqlCon_name (S.fromList $ V.toList sqlCon_columns)) m
           SQL_raw_pk -> pure $ addTableConstraint currentTable (PrimaryKey columnSet) m
           SQL_raw_fk -> do
               -- Here we need to add two constraints: one for 'ForeignKey' and one for
@@ -290,7 +291,6 @@ getColumnLevelConstraints = foldlM go mempty
        -> IO (Map ColumnName (Set ColumnConstraint))
     go m SqlRawConstraint{..} = do
         pure $ case sqlCon_constraint_type of
-          SQL_raw_unique -> addColumnConstraint (V.head sqlCon_columns) Unique m
           _ -> m
 
 --

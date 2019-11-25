@@ -46,6 +46,8 @@ noTableConstraints = mempty
 noColumnConstraints :: Set ColumnConstraint
 noColumnConstraints = mempty
 
+type ConstraintName = Text
+
 data TableConstraint =
       PrimaryKey (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
@@ -56,11 +58,12 @@ data TableConstraint =
       -- ^ \"backward pointer\" to express the relation that the current table has some of its columns
       -- referenced in a 'ForeignKey' constraint. This is usually found in the 'tableConstraints' of the table
       -- where the foreign key \"points to\".
+    | Unique ConstraintName (Set ColumnName)
     deriving (Show, Eq, Ord)
 
 data ColumnConstraint =
       NotNull
-    | Unique
+    | Default Text {- the actual default -}
     deriving (Show, Eq, Ord)
 
 data ReferenceAction =
@@ -79,9 +82,9 @@ data Edit =
   | TableConstraintRemoved TableName TableConstraint
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
-  | ColumnTypeChanged ColumnName ColumnType {- old type -} ColumnType {- new type -}
-  | ColumnConstraintAdded   ColumnName ColumnConstraint
-  | ColumnConstraintRemoved ColumnName ColumnConstraint
+  | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
+  | ColumnConstraintAdded   TableName ColumnName ColumnConstraint
+  | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
   deriving (Show, Eq)
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
