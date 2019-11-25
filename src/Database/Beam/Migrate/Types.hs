@@ -75,13 +75,13 @@ data ReferenceAction =
 data Edit =
     TableAdded TableName Table
   | TableRemoved TableName
-  | TableConstraintsAdded   TableName (Set TableConstraint)
-  | TableConstraintsRemoved TableName (Set TableConstraint)
+  | TableConstraintAdded   TableName TableConstraint
+  | TableConstraintRemoved TableName TableConstraint
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
   | ColumnTypeChanged ColumnName ColumnType {- old type -} ColumnType {- new type -}
-  | ColumnConstraintsAdded   ColumnName (Set ColumnConstraint)
-  | ColumnConstraintsRemoved ColumnName (Set ColumnConstraint)
+  | ColumnConstraintAdded   ColumnName ColumnConstraint
+  | ColumnConstraintRemoved ColumnName ColumnConstraint
   deriving (Show, Eq)
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.

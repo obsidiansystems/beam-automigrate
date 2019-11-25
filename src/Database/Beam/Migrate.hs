@@ -16,10 +16,11 @@ import           Control.Monad.Except
 import           Control.Monad.IO.Class         ( liftIO
                                                 , MonadIO
                                                 )
+import           Data.String                    ( fromString )
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as TE
 
-import           GHC.Generics
+import           GHC.Generics hiding (prec)
 
 
 import           Database.Beam                  ( MonadBeam )
@@ -29,6 +30,7 @@ import           Database.Beam.Migrate.Generic as Exports
 import           Database.Beam.Migrate.Types   as Exports
 import           Database.Beam.Migrate.Diff    as Exports
 import           Database.Beam.Migrate.Postgres ( getSchema )
+import qualified Database.Beam.Backend.SQL.AST as AST
 
 import Database.Beam.Backend.SQL hiding (tableName)
 
@@ -54,17 +56,17 @@ evalEdit :: Edit -> Text
 evalEdit = \case
   TableAdded tblName _tbl -> "CREATE TABLE \"" <> tableName tblName <> "\" ()"
   TableRemoved tblName    -> "DROP TABLE \"" <> tableName tblName <> "\""
-  TableConstraintsAdded   _tblName _cstr -> "TABLE_CONTRAINTS_ADDED TODO"
-  TableConstraintsRemoved _tblName _cstr -> "TABLE_CONTRAINTS_REMOVED TODO"
+  TableConstraintAdded   _tblName _cstr -> "TABLE_CONTRAINTS_ADDED TODO"
+  TableConstraintRemoved _tblName _cstr -> "TABLE_CONTRAINTS_REMOVED TODO"
   ColumnAdded tblName colName _col ->
     "ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\""
   ColumnRemoved tblName colName ->
     "ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\""
   ColumnTypeChanged _colName _old _new ->
       "COLUMN TYPE CHANGE TODO"
-  ColumnConstraintsAdded _colName _cstr -> 
+  ColumnConstraintAdded _colName _cstr -> 
       "COLUMN CONSTRAINTS ADDED TODO"
-  ColumnConstraintsRemoved _colName _cstr ->
+  ColumnConstraintRemoved _colName _cstr ->
       "COLUMN CONSTRAINTS REMOVED TODO"
 
 
@@ -97,24 +99,85 @@ toSqlSyntax = \case
       ddlSyntax ("CREATE TABLE \"" <> tableName tblName <> "\" ()")
   TableRemoved tblName    -> 
       ddlSyntax ("DROP TABLE \"" <> tableName tblName <> "\"")
-  TableConstraintsAdded   _tblName _cstr -> 
-      updateSyntax ("TABLE_CONTRAINTS_ADDED TODO")
-  TableConstraintsRemoved _tblName _cstr -> 
-      updateSyntax ("TABLE_CONTRAINTS_REMOVED TODO")
+  TableConstraintAdded  tblName cstr -> 
+      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" ADD CONSTRAINT " <> renderTableConstraint cstr)
+  TableConstraintRemoved tblName cstr -> 
+      updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" DROP CONSTRAINT " <> renderTableConstraint cstr)
   ColumnAdded tblName colName _col ->
       updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" ADD COLUMN \"" <> columnName colName <> "\"")
   ColumnRemoved tblName colName ->
       updateSyntax ("ALTER TABLE \"" <> tableName tblName <> "\" DROP COLUMN \"" <> columnName colName <> "\"")
-  ColumnTypeChanged _colName _old _new ->
-      updateSyntax ("COLUMN TYPE CHANGE TODO")
-  ColumnConstraintsAdded _colName _cstr -> 
-      updateSyntax ("COLUMN CONSTRAINTS ADDED TODO")
-  ColumnConstraintsRemoved _colName _cstr ->
-      updateSyntax ("COLUMN CONSTRAINTS REMOVED TODO")
+  ColumnTypeChanged colName _old new ->
+      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" TYPE " <> renderDataType new)
+  ColumnConstraintAdded colName cstr -> 
+      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" ADD CONSTRAINT " <> renderColumnConstraint cstr)
+  ColumnConstraintRemoved colName cstr ->
+      updateSyntax ("ALTER COLUMN \"" <> columnName colName <> "\" DROP CONSTRAINT " <> renderColumnConstraint cstr)
   where
       ddlSyntax query    = Pg.PgCommandSyntax Pg.PgCommandTypeDdl (Pg.emit . TE.encodeUtf8 $ query <> ";")
       updateSyntax query = Pg.PgCommandSyntax Pg.PgCommandTypeDataUpdate (Pg.emit . TE.encodeUtf8 $ query <> ";")
 
+      renderTableConstraint :: TableConstraint -> Text
+      renderTableConstraint _ = "TODO"
+
+      renderColumnConstraint :: ColumnConstraint -> Text
+      renderColumnConstraint _ = "TODO"
+
+      -- This function also overlaps with beam-migrate functionalities.
+      renderDataType :: ColumnType -> Text
+      renderDataType = \case
+        AST.DataTypeChar varying prec charSet ->
+            let ty = if varying then "VARCHAR" else "CHAR"
+            in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
+        AST.DataTypeNationalChar varying prec -> 
+            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR" 
+            in ty <> sqlOptPrec prec
+        AST.DataTypeBit varying prec -> 
+            let ty = if varying then "BIT VARYING" else "BIT"
+            in ty <> sqlOptPrec prec
+        AST.DataTypeNumeric prec -> "NUMERIC" <> sqlOptNumericPrec prec
+        AST.DataTypeDecimal prec -> "DOUBLE" <> sqlOptNumericPrec prec
+        AST.DataTypeInteger -> "INT"
+        AST.DataTypeSmallInt -> "SMALLINT"
+        AST.DataTypeBigInt -> "BIGINT"
+        AST.DataTypeFloat prec -> "FLOAT" <> sqlOptPrec prec
+        AST.DataTypeReal -> "REAL"
+        AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
+        AST.DataTypeDate -> "DATE"
+        AST.DataTypeTime prec withTz ->
+          let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+          in ty <> sqlOptPrec prec
+        AST.DataTypeTimeStamp prec withTz ->
+          let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+          in ty <> sqlOptPrec prec
+        AST.DataTypeInterval _i -> error "DataTypeInterval not supported yet."
+        AST.DataTypeIntervalFromTo _from _to -> error "DataTypeIntervalFromTo not supported yet."
+        AST.DataTypeBoolean -> "BOOL"
+        AST.DataTypeBinaryLargeObject ->
+            error "DataTypeBinaryLargeObject not supported yet."
+        AST.DataTypeCharacterLargeObject ->
+            error "DataTypeCharacterLargeObject not supported yet."
+        AST.DataTypeArray _dt _int ->
+            error "DataTypeArray not supported yet."
+        AST.DataTypeRow _rows ->
+            error "DataTypeRow not supported yet."
+        AST.DataTypeDomain nm -> "\"" <> nm <> "\""
+
+
+-- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
+
+sqlOptPrec :: Maybe Word -> Text
+sqlOptPrec Nothing = mempty
+sqlOptPrec (Just x) = "(" <> fromString (show x) <> ")"
+
+sqlOptCharSet :: Maybe Text -> Text
+sqlOptCharSet Nothing = mempty
+sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
+
+sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
+sqlOptNumericPrec Nothing = mempty
+sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
+sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
 
 -- | Creates the migration but doesn't execute it.
 createMigration :: Monad m => Migration m -> m (Either DiffError [Edit])
