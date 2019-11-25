@@ -6,6 +6,7 @@ module Database.Beam.Migrate.Example where
 import           Data.Text                      ( Text )
 
 import           GHC.Generics
+import           Control.Exception
 
 import           Database.Beam.Postgres
 import           Database.Beam.Schema           ( Beamable
@@ -24,7 +25,7 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
-import           Database.Beam.Migrate          ( fromDbSettings, diff )
+import           Database.Beam.Migrate          ( Schema, Diff, fromDbSettings, diff )
 import           Database.Beam.Migrate.Postgres (getSchema)
 
 -- Needed only for the examples, (re)move eventually.
@@ -96,14 +97,34 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
+hsSchema :: Schema
+hsSchema = fromDbSettings flowerDB
+
+getDbSchema :: String -> IO Schema
+getDbSchema dbName = do 
+    bracket (connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = dbName })
+            close getSchema
+
+getFlowerDbSchema :: IO Schema
+getFlowerDbSchema = getDbSchema "beam-test-db"
+
+getSchemaDiff :: IO Diff
+getSchemaDiff = do
+    dbSchema <- getFlowerDbSchema
+    pure $ diff hsSchema dbSchema
+
+getGroundhogSchema :: IO Schema
+getGroundhogSchema = getDbSchema "groundhog-test-db"
+
 -- | Just a simple example demonstrating a possible workflow for a migration.
 example :: IO ()
 example = do
-    let hsSchema = fromDbSettings flowerDB
     print hsSchema
-    conn <- connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = "beam-test-db" }
-    dbSchema <- getSchema conn
+    dbSchema <- getFlowerDbSchema
     print dbSchema
     print $ dbSchema == hsSchema
     let schemaDiff = diff hsSchema dbSchema
     print schemaDiff
+    putStrLn "GROUNDHOG"
+    getGroundhogSchema >>= print
+

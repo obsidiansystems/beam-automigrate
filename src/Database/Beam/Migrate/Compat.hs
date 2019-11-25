@@ -14,7 +14,6 @@ import           Data.Word
 import           Database.Beam.Backend.SQL
 
 import           Database.Beam.Migrate.Types    ( ColumnType
-                                                , SchemaConstraint(..)
                                                 )
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
@@ -29,22 +28,24 @@ class HasDefaultSqlDataType ty where
                                        --   key or table, 'False' otherwise
                      -> ColumnType
 
-  -- | Provide arbitrary constraints on a field of the requested type. See
-  -- 'FieldCheck' for more information on the formatting of constraints.
-  defaultSqlDataTypeConstraints
-    :: Proxy ty -- ^ Concrete representation of the type
-    -> Bool     -- ^ 'True' if this field is embedded in a
-                --   foreign key, 'False' otherwise. For
-                --   example, @SERIAL@ types in postgres get a
-                --   @DEFAULT@ constraint, but @SERIAL@ types in
-                --   a foreign key do not.
-    -> [ SchemaConstraint ]
-  defaultSqlDataTypeConstraints _ _ = []
+
+-- FIXME(adn) Make this user-defined.
+
+--  -- | Provide arbitrary constraints on a field of the requested type. See
+--  -- 'FieldCheck' for more information on the formatting of constraints.
+--  defaultSqlDataTypeConstraints
+--    :: Proxy ty -- ^ Concrete representation of the type
+--    -> Bool     -- ^ 'True' if this field is embedded in a
+--                --   foreign key, 'False' otherwise. For
+--                --   example, @SERIAL@ types in postgres get a
+--                --   @DEFAULT@ constraint, but @SERIAL@ types in
+--                --   a foreign key do not.
+--    -> [ SchemaConstraint ]
+--  defaultSqlDataTypeConstraints _ _ = []
 
 
 instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
   defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
-  defaultSqlDataTypeConstraints _ = defaultSqlDataTypeConstraints (Proxy @ty)
 
 instance HasDefaultSqlDataType Int where
   defaultSqlDataType _ _ = intType

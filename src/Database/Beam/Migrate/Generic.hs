@@ -84,14 +84,14 @@ instance GSchemaTable x => GSchemaTable (C1 f x) where
   gSchemaTable (M1 x) = gSchemaTable x
 
 instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) where
-  gSchemaTable (a :*: b) = Table noSchemaConstraints (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
+  gSchemaTable (a :*: b) = Table noTableConstraints (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
 
 instance HasDefaultSqlDataType t => GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaTable (M1 (K1 e)) =
     -- TODO(adn) support constraints
     let colName = ColumnName $ e ^. Beam.fieldName
-    in  Table noSchemaConstraints
-          $ M.singleton colName (Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)
+    in  Table noTableConstraints
+          $ M.singleton colName (Column (defaultSqlDataType (Proxy @t) False) noColumnConstraints)
 
 instance (GSchemaColumnEntries a, GSchemaColumnEntries b) => GSchemaColumnEntries (a :*: b) where
   gSchemaColumnEntries (a :*: b) = gSchemaColumnEntries a <> gSchemaColumnEntries b
@@ -99,7 +99,7 @@ instance (GSchemaColumnEntries a, GSchemaColumnEntries b) => GSchemaColumnEntrie
 instance HasDefaultSqlDataType t => GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
   gSchemaColumnEntries (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName
-    in  [(colName, Column (defaultSqlDataType (Proxy @t) False) noSchemaConstraints)] -- TODO(adn) support constraints
+    in  [(colName, Column (defaultSqlDataType (Proxy @t) False) noColumnConstraints)] -- TODO(adn) support constraints
 
 instance ( GSchemaColumns (Rep (PrimaryKey f (Beam.TableField t)))
          , Generic (PrimaryKey f (Beam.TableField t))
@@ -124,4 +124,4 @@ instance GSchemaColumns x => GSchemaColumns (S1 f x) where
 instance HasDefaultSqlDataType ty
   => GSchemaColumns (K1 R (Beam.TableField e ty)) where
   gSchemaColumns (K1 _ty) = 
-      Column (defaultSqlDataType (Proxy @ty) False) noSchemaConstraints : []
+      Column (defaultSqlDataType (Proxy @ty) False) noColumnConstraints : []
