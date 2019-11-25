@@ -1,5 +1,6 @@
 module Database.Beam.Migrate.Types where
 
+import           Control.Exception
 import           Data.Map                       ( Map )
 import           Data.Set                       ( Set )
 import           Data.Text                      ( Text )
@@ -90,3 +91,5 @@ data DiffError =
     -- we can later on reify into the raw SQL queries users can try to run
     -- themselves.
     deriving (Show, Eq)
+
+instance Exception DiffError

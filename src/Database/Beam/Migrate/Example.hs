@@ -25,8 +25,18 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
-import           Database.Beam.Migrate          ( Schema, Diff, fromDbSettings, diff )
-import           Database.Beam.Migrate.Postgres (getSchema)
+import           Database.Beam.Migrate          ( Schema
+                                                , Diff
+                                                , fromDbSettings
+                                                , diff
+                                                , runMigration
+                                                , printMigration
+                                                , migrate
+                                                )
+import           Database.Beam.Migrate.Postgres ( getSchema )
+
+import qualified Database.PostgreSQL.Simple    as Pg
+import           Database.Beam.Postgres (runBeamPostgresDebug)
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
@@ -101,17 +111,16 @@ hsSchema :: Schema
 hsSchema = fromDbSettings flowerDB
 
 getDbSchema :: String -> IO Schema
-getDbSchema dbName = do 
-    bracket (connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = dbName })
-            close getSchema
+getDbSchema dbName = do
+  bracket (connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = dbName }) close getSchema
 
 getFlowerDbSchema :: IO Schema
 getFlowerDbSchema = getDbSchema "beam-test-db"
 
 getSchemaDiff :: IO Diff
 getSchemaDiff = do
-    dbSchema <- getFlowerDbSchema
-    pure $ diff hsSchema dbSchema
+  dbSchema <- getFlowerDbSchema
+  pure $ diff hsSchema dbSchema
 
 getGroundhogSchema :: IO Schema
 getGroundhogSchema = getDbSchema "groundhog-test-db"
@@ -119,12 +128,28 @@ getGroundhogSchema = getDbSchema "groundhog-test-db"
 -- | Just a simple example demonstrating a possible workflow for a migration.
 example :: IO ()
 example = do
-    print hsSchema
-    dbSchema <- getFlowerDbSchema
-    print dbSchema
-    print $ dbSchema == hsSchema
-    let schemaDiff = diff hsSchema dbSchema
-    print schemaDiff
-    putStrLn "GROUNDHOG"
-    getGroundhogSchema >>= print
+  print hsSchema
+  dbSchema <- getFlowerDbSchema
+  print dbSchema
+  print $ dbSchema == hsSchema
+  let schemaDiff = diff hsSchema dbSchema
+  print schemaDiff
+  putStrLn "GROUNDHOG"
+  getGroundhogSchema >>= print
 
+exampleShowMigration :: IO ()
+exampleShowMigration = do
+  let connInfo = "host=localhost port=5432 dbname=beam-test-db"
+  bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn -> do
+    let mig = migrate conn hsSchema
+    printMigration mig
+
+exampleAutoMigration :: IO ()
+exampleAutoMigration = do
+  let connInfo = "host=localhost port=5432 dbname=beam-test-db"
+  bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn -> do
+    let mig = migrate conn hsSchema
+    printMigration mig
+    Pg.withTransaction conn $ runBeamPostgresDebug putStrLn conn $ do
+      runMigration $ do
+        migrate conn hsSchema
