@@ -15,7 +15,7 @@ import qualified Database.Beam.Backend.SQL.AST as AST
 -- Types (sketched)
 --
 
-newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq)
+newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq, Generic)
 
 type Tables = Map TableName Table
 

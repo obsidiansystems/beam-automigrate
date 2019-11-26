@@ -6,6 +6,7 @@ module Database.Beam.Migrate
   , migrate
   , runMigration
   , printMigration
+  , createMigration
     -- * Handy re-exports
   , module Exports
   )
@@ -66,7 +67,7 @@ migrate conn hsSchema = do
 -- 'PgCommandSyntax' here.
 runMigration :: (MonadBeam Pg.Postgres m, MonadIO m) => Migration m -> m ()
 runMigration m = do
-  migs <- createMigration m
+  migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
     Right edits -> mapM_ runNoReturn (map toSqlSyntax edits)
@@ -186,13 +187,19 @@ sqlOptNumericPrec Nothing = mempty
 sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
 sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
 
--- | Creates the migration but doesn't execute it.
-createMigration :: Monad m => Migration m -> m (Either DiffError [Edit])
-createMigration m = do
+evalMigration :: Monad m => Migration m -> m (Either DiffError [Edit])
+evalMigration m = do
     (a, s) <- runStateT (runExceptT m) mempty
     case a of
       Left e    -> pure (Left e)
       Right ()  -> pure (Right s)
+
+-- | Create the migration from a 'Diff'.
+createMigration :: Monad m => Diff -> Migration m
+createMigration (Left e) = throwError e
+createMigration (Right edits) = ExceptT $ do
+    put edits
+    pure (Right ())
 
 
 printMigration :: MonadIO m => Migration m -> m ()
