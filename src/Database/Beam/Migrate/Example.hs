@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
@@ -45,18 +46,26 @@ import           Database.Beam.Migrate          ( Schema
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
-import           Database.Beam.Postgres (runBeamPostgresDebug)
+import           Database.Beam.Postgres (runBeamPostgresDebug, PgJSON(..))
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
                                                 , Int64
                                                 )
 import           Data.Time                      ( UTCTime )
-
+import           Data.Aeson.TH
 
 --
 -- Example
 --
+
+data MyJson = MyJson {
+    foo  :: Int
+  , bar  :: Maybe Bool
+  , quux :: Text
+  }
+
+deriveJSON defaultOptions ''MyJson
 
 
 data FlowerT f = Flower
@@ -64,6 +73,7 @@ data FlowerT f = Flower
   , flowerName       :: Columnar f Text
   , flowerPrice      :: Columnar (Beam.Nullable f) Double
   , flowerDiscounted :: Columnar f (Maybe Bool)
+  , flowerSchema     :: Columnar f (PgJSON MyJson)
   }
   deriving (Generic, Beamable)
 
@@ -74,10 +84,11 @@ data OrderT f = Order
   deriving (Generic, Beamable)
 
 data LineItemT f = LineItem
-  { lineItemOrderID  :: PrimaryKey OrderT (Beam.Nullable f)
-  , lineItemFlowerID :: PrimaryKey FlowerT f
-  , lineItemQuantity :: Columnar f Int64
-  , lineItemDiscount :: Columnar f (Maybe Bool)
+  { lineItemOrderID     :: PrimaryKey OrderT f
+  , lineItemFlowerID    :: PrimaryKey FlowerT f
+  , lineItemQuantity    :: Columnar f Int64
+  , lineItemDiscount    :: Columnar f (Maybe Bool)
+  , lineItemNullableRef :: PrimaryKey OrderT (Beam.Nullable f)
   }
   deriving (Generic, Beamable)
 
@@ -100,7 +111,7 @@ instance Beam.Table OrderT where
 
 instance Beam.Table LineItemT where
   data PrimaryKey LineItemT f =
-    LineItemID (PrimaryKey OrderT (Beam.Nullable f)) (PrimaryKey FlowerT f)
+    LineItemID (PrimaryKey OrderT f) (PrimaryKey FlowerT f)
     deriving (Generic, Beamable)
   primaryKey = LineItemID <$> lineItemOrderID <*> lineItemFlowerID
 
@@ -114,6 +125,8 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
   , dbLineItems = modifyTableFields tableModification { lineItemFlowerID = FlowerID "flower_id"
                                                       , lineItemOrderID  = OrderID "order_id"
                                                       , lineItemQuantity = fieldNamed "quantity"
+                                                      , lineItemNullableRef = 
+                                                          OrderID "external_nullable_ref"
                                                       }
   }
 
@@ -124,7 +137,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
   , dbLineItems = (addTableConstraints $ 
       S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
-                 , ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
+                 --, ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
                  ])
                <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
   }
