@@ -112,11 +112,11 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = withAnnotations flowerDB [
     onTable "flowers" [
-        onField "name"  [Default "foo"]
-      , onField "price" [Default "foo", NotNull]
+        onField "price" [Default "10.0"]
       ]
     onTable "line_items" [
-       ForeignKey "flowers" (S.fromList ["id"]) Cascade Restrict
+       foreignKey "flowers" ["id"] Cascade Restrict
+    ,  unique ["quantity"]
     ]
   ]
 -}

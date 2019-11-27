@@ -71,6 +71,23 @@ test-suite beam-migrate-prototype-tests
   default-language:     Haskell2010
   default-extensions:   OverloadedStrings
 
+executable beam-migrate-prototype-large-migration-test
+  hs-source-dirs: large-migration-test
+  main-is: Main.hs
+  other-modules:
+  build-depends:       base
+                     , beam-migrate-prototype
+                     , beam-postgres        >= 0.3     && < 0.6
+                     , bytestring
+                     , containers
+                     , QuickCheck             < 2.15.0.0
+                     , postgresql-simple   < 0.7.0.0
+                     , splitmix
+                     , time
+  default-language:     Haskell2010
+  default-extensions:   OverloadedStrings
+  ghc-options:       -Wall -O2 -rtsopts
+
 benchmark beam-migrate-prototype-bench
   default-language: Haskell2010
   type: exitcode-stdio-1.0
