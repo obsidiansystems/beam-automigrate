@@ -85,9 +85,11 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right edits -> mapM_ runNoReturn (map toSqlSyntax edits)
+    Right edits -> runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat $ map toSqlSyntax edits)
 
-toSqlSyntax :: Edit -> Pg.PgCommandSyntax
+-- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
+
+toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
   TableAdded tblName tbl -> 
       ddlSyntax ("CREATE TABLE \"" <> tableName tblName 
@@ -120,8 +122,8 @@ toSqlSyntax = \case
   ColumnConstraintRemoved tblName colName cstr ->
       updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" DROP " <> renderColumnConstraint cstr)
   where
-      ddlSyntax query    = Pg.PgCommandSyntax Pg.PgCommandTypeDdl (Pg.emit . TE.encodeUtf8 $ query <> ";")
-      updateSyntax query = Pg.PgCommandSyntax Pg.PgCommandTypeDataUpdate (Pg.emit . TE.encodeUtf8 $ query <> ";")
+      ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
+      updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 
       alterTable :: TableName -> Text
       alterTable (TableName tName) = "ALTER TABLE \"" <> tName <> "\" "
@@ -224,4 +226,4 @@ printMigration m = do
       Left e    -> liftIO $ throwIO e
       Right ()  -> do
         let pgSyntax = map toSqlSyntax edits
-        liftIO $ putStrLn (unlines $ map (displaySyntax . Pg.fromPgCommand) pgSyntax)
+        liftIO $ putStrLn (unlines $ map displaySyntax pgSyntax)
