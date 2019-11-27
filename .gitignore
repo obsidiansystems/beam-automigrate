@@ -3,3 +3,4 @@ dist-newstyle
 .ghc.environment*
 .vim
 hie.yaml
+*.prof

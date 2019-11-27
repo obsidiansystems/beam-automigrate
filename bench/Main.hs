@@ -71,7 +71,7 @@ tearDownDatabase () =
 main :: IO ()
 main = do
   putStrLn $ "Generating schema with 10_000 tables ..."
-  (hsSchema, dbSchema) <- predictableSchemas 2000
+  (hsSchema, dbSchema) <- predictableSchemas 10000
   putStrLn $ "Generated schema with " ++  show (M.size . schemaTables $ hsSchema) ++ " tables."
   bracket (setupDatabase dbSchema) tearDownDatabase $ \() ->
     defaultMain [

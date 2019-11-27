@@ -53,9 +53,10 @@ import           Data.Time                      ( UTCTime )
 
 
 data FlowerT f = Flower
-  { flowerID    :: Columnar f Int32
-  , flowerName  :: Columnar f Text
-  , flowerPrice :: Columnar f Scientific
+  { flowerID         :: Columnar f Int32
+  , flowerName       :: Columnar f Text
+  , flowerPrice      :: Columnar f Scientific
+  , flowerDiscounted :: Columnar (Beam.Nullable f) Bool
   }
   deriving (Generic, Beamable)
 

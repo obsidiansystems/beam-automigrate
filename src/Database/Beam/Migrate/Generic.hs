@@ -6,9 +6,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Database.Beam.Migrate.Generic where
 
-import           Database.Beam.Migrate.Util     ( pkAsColumnNames
-                                                , pkFieldNames
-                                                )
+import           Database.Beam.Migrate.Util     ( pkFieldNames )
 import           Database.Beam.Migrate.Types
 import           Data.Proxy
 import qualified Data.Map.Strict               as M
@@ -36,92 +34,86 @@ import           Database.Beam.Migrate.Compat
 class GSchema x where
     gSchema :: x p -> Schema
 
-class GSchemaTables x where
-    gSchemaTables :: x p -> Tables
+-- Table-specific classes
 
-class GSchemaTableEntry x where
-    gSchemaTableEntry :: x p -> (TableName, Table)
+class GTables x where
+    gTables :: x p -> Tables
 
-class GSchemaTable x where
-    gSchemaTable :: x p -> Table
+class GTableEntry x where
+    gTableEntry :: x p -> (TableName, Table)
 
--- | Due to the fact that 'PrimaryKey' expansion can give multiple ColumnName,
--- we return a [(ColumnName, Column)].
-class GSchemaColumnEntries x where
-    gSchemaColumnEntries :: x p -> [(ColumnName, Column)]
+class GTable x where
+    gTable :: x p -> Table
 
-class GSchemaColumns x where
-    gSchemaColumns :: x p -> [Column]
+-- Column-specific classes
+
+class GColumns x where
+    gColumns :: x p -> Columns
+
+class GColumnEntry x where
+    gColumnEntry :: x p -> (ColumnName, Column)
+
+class GColumn x where
+    gColumn :: x p -> Column
+
+--
+-- Deriving information about 'Schema's
+--
 
 instance GSchema x => GSchema (D1 f x) where
   gSchema (M1 x) = gSchema x
-instance (Constructor f, GSchemaTables x) => GSchema (C1 f x) where
-  gSchema (M1 x) = Schema { schemaTables = gSchemaTables x }
 
-instance (GSchemaTableEntry a, GSchemaTables b) => GSchemaTables (a :*: b) where
-  gSchemaTables (a :*: b) = uncurry M.singleton (gSchemaTableEntry a) <> gSchemaTables b
-instance GSchemaTableEntry (S1 f x) => GSchemaTables (S1 f x) where
-  gSchemaTables = uncurry M.singleton . gSchemaTableEntry
+instance (Constructor f, GTables x) => GSchema (C1 f x) where
+  gSchema (M1 x) = Schema { schemaTables = gTables x }
 
-instance GSchemaTableEntry x => GSchemaTableEntry (S1 f x) where
-  gSchemaTableEntry (M1 x) = gSchemaTableEntry x
+--
+-- Deriving information about 'Table's.
+--
+
+instance GTableEntry (S1 f x) => GTables (S1 f x) where
+  gTables = uncurry M.singleton . gTableEntry
+
+instance GTableEntry x => GTableEntry (S1 f x) where
+  gTableEntry (M1 x) = gTableEntry x
+
+instance (GTableEntry a, GTables b) => GTables (a :*: b) where
+  gTables (a :*: b) = uncurry M.singleton (gTableEntry a) <> gTables b
+
 instance ( IsDatabaseEntity be (TableEntity tbl)
-         , GSchemaTable (Rep (TableSettings tbl))
+         , GColumns (Rep (TableSettings tbl))
          , Generic (TableSettings tbl)
          , Beam.Table tbl
          )
-  => GSchemaTableEntry (K1 R (Beam.DatabaseEntity be db (TableEntity tbl))) where
-  gSchemaTableEntry (K1 entity) =
+  => GTableEntry (K1 R (Beam.DatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry (K1 entity) =
     let tName = entity ^. dbEntityDescriptor . dbEntityName
         pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-        tbl   = gSchemaTable . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-    in  (TableName tName, tbl { tableConstraints = tableConstraints tbl <> pks })
+        columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
+    in  (TableName tName, Table pks columns )
 
-instance GSchemaTable x => GSchemaTable (D1 f x) where
-  gSchemaTable (M1 x) = gSchemaTable x
+instance GColumns x => GColumns (D1 f x) where
+  gColumns (M1 x) = gColumns x
 
-instance GSchemaTable x => GSchemaTable (C1 f x) where
-  gSchemaTable (M1 x) = gSchemaTable x
+instance GColumns x => GColumns (C1 f x) where
+  gColumns (M1 x) = gColumns x
 
-instance (GSchemaColumnEntries a, GSchemaTable b) => GSchemaTable (a :*: b) where
-  gSchemaTable (a :*: b) = Table noTableConstraints (M.fromList (gSchemaColumnEntries a)) <> gSchemaTable b
+instance (GColumns a, GColumns b) => GColumns (a :*: b) where
+  gColumns (a :*: b) = gColumns a <> gColumns b
 
-instance HasDefaultSqlDataType t => GSchemaTable (S1 m (K1 R (Beam.TableField e t))) where
-  gSchemaTable (M1 (K1 e)) =
-    -- TODO(adn) support constraints
+
+--
+-- Column entries
+--
+
+instance HasDefaultSqlDataType t => GColumns (S1 m (K1 R (Beam.TableField e t))) where
+  gColumns (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName
-    in  Table noTableConstraints
-          $ M.singleton colName (Column (defaultSqlDataType (Proxy @t) False) noColumnConstraints)
+        col     = Column (defaultSqlDataType (Proxy @t) False) (S.singleton NotNull) -- TODO(adn) support constraints
+    in  M.singleton colName col
 
-instance (GSchemaColumnEntries a, GSchemaColumnEntries b) => GSchemaColumnEntries (a :*: b) where
-  gSchemaColumnEntries (a :*: b) = gSchemaColumnEntries a <> gSchemaColumnEntries b
-
-instance HasDefaultSqlDataType t => GSchemaColumnEntries (S1 m (K1 R (Beam.TableField e t))) where
-  gSchemaColumnEntries (M1 (K1 e)) =
-    let colName = ColumnName $ e ^. Beam.fieldName
-    in  [(colName, Column (defaultSqlDataType (Proxy @t) False) noColumnConstraints)] -- TODO(adn) support constraints
-
-instance ( GSchemaColumns (Rep (PrimaryKey f (Beam.TableField t)))
+instance ( GColumns (Rep (PrimaryKey f (Beam.TableField t)))
          , Generic (PrimaryKey f (Beam.TableField t))
          , Beamable (PrimaryKey f)
          )
-    => GSchemaColumnEntries (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
-  gSchemaColumnEntries (M1 (K1 e)) =
-    let colNames = pkAsColumnNames e
-        cols     = gSchemaColumns (from e)
-    in  zip colNames cols
-
-
-instance GSchemaColumns x => GSchemaColumns (D1 f x) where
-  gSchemaColumns (M1 x) = gSchemaColumns x
-
-instance GSchemaColumns x => GSchemaColumns (C1 f x) where
-  gSchemaColumns (M1 x) = gSchemaColumns x
-
-instance GSchemaColumns x => GSchemaColumns (S1 f x) where
-  gSchemaColumns (M1 x) = gSchemaColumns x
-
-instance HasDefaultSqlDataType ty
-  => GSchemaColumns (K1 R (Beam.TableField e ty)) where
-  gSchemaColumns (K1 _ty) = 
-      Column (defaultSqlDataType (Proxy @ty) False) noColumnConstraints : []
+    => GColumns (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
+  gColumns (M1 (K1 e)) = gColumns (from e)
