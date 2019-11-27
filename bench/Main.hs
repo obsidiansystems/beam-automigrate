@@ -75,7 +75,7 @@ main = do
   putStrLn $ "Generated schema with " ++  show (M.size . schemaTables $ hsSchema) ++ " tables."
   bracket (setupDatabase dbSchema) tearDownDatabase $ \() ->
     defaultMain [
-      bgroup "diff" [ bench "reference/10_000 tables avg. case (similar schema)"       $ nfIO (pgMigrate diff hsSchema)
+      bgroup "diff" [ bench "reference/10_000 tables avg. case (similar schema)"       $ nfIO (pgMigrate referenceDiff hsSchema)
                     , bench "efficient/10_000 tables avg. case (similar schema)"       $ nfIO (pgMigrate diff hsSchema)
                     , bench "reference/10_000 tables worst case (no previous schema)"  $ nfIO (pgMigrate referenceDiff hsSchema)
                     , bench "efficient/10_000 tables worst case (no previous schema)"  $ nfIO (pgMigrate diff hsSchema)
