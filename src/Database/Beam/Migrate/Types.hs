@@ -55,7 +55,7 @@ type ConstraintName = Text
 data TableConstraint =
       PrimaryKey ConstraintName (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
-    | ForeignKey (Set ColumnName) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
+    | ForeignKey TableName (Set ColumnName) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
       -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
       -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
     | IsForeignKeyOf TableName (Set ColumnName)

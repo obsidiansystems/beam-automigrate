@@ -153,7 +153,7 @@ getSchema conn = do
                   if attnotnull then S.fromList [NotNull] else mempty
           let columnName = ColumnName (TE.decodeUtf8 attname)
           let newColumn  = 
-                  Column cType (maybe noColumnConstraints (mappend nullConstraint) (M.lookup columnName allConstraints))
+                  Column cType (maybe nullConstraint (mappend nullConstraint) (M.lookup columnName allConstraints))
           pure $ M.insert columnName newColumn c
         Nothing ->
           fail
@@ -269,7 +269,7 @@ getTableLevelConstraints conn currentTable = foldlM go mempty
                         Just (_, onDeleteAction, onUpdateAction) -> 
                             (mkAction onDeleteAction, mkAction onUpdateAction)
               pure $ m & addTableConstraint currentTable (IsForeignKeyOf sqlCon_ref_origin columnSet) 
-                   . addTableConstraint sqlCon_ref_origin (ForeignKey columnSet onDelete onUpdate)
+                   . addTableConstraint sqlCon_ref_origin (ForeignKey sqlCon_ref_target columnSet onDelete onUpdate)
 
     mkAction :: Text -> ReferenceAction
     mkAction c = case c of

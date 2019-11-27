@@ -1,3 +1,10 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Database.Beam.Migrate.Compat where
@@ -12,9 +19,9 @@ import           Data.Time                      ( UTCTime )
 import           Data.Word
 
 import           Database.Beam.Backend.SQL
+import qualified Database.Beam                 as Beam
 
-import           Database.Beam.Migrate.Types    ( ColumnType
-                                                )
+import           Database.Beam.Migrate.Types
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
      without the extra complication of importing and using the library itself.
@@ -29,20 +36,49 @@ class HasDefaultSqlDataType ty where
                      -> ColumnType
 
 
--- FIXME(adn) Make this user-defined.
+class HasSchemaConstraints ty where
+  -- | Provide arbitrary constraints on a field of the requested type. See
+  -- 'FieldCheck' for more information on the formatting of constraints.
+  schemaConstraints :: Proxy ty
+                    -- ^ Concrete representation of the type
+                    -> [ SchemaConstraint ty ]
+  schemaConstraints _ = []
 
---  -- | Provide arbitrary constraints on a field of the requested type. See
---  -- 'FieldCheck' for more information on the formatting of constraints.
---  defaultSqlDataTypeConstraints
---    :: Proxy ty -- ^ Concrete representation of the type
---    -> Bool     -- ^ 'True' if this field is embedded in a
---                --   foreign key, 'False' otherwise. For
---                --   example, @SERIAL@ types in postgres get a
---                --   @DEFAULT@ constraint, but @SERIAL@ types in
---                --   a foreign key do not.
---    -> [ SchemaConstraint ]
---  defaultSqlDataTypeConstraints _ _ = []
+class HasSchemaConstraints' (nullary :: Bool) ty where
+  -- | Provide arbitrary constraints on a field of the requested type. See
+  -- 'FieldCheck' for more information on the formatting of constraints.
+  schemaConstraints' :: Proxy nullary -> Proxy ty -> [ SchemaConstraint ty ]
 
+type family SchemaConstraint (k :: *) where
+    SchemaConstraint (Beam.TableEntity e)  = TableConstraint
+    SchemaConstraint (Beam.TableField e t) = ColumnConstraint
+
+type family IsMaybe (k :: *) :: Bool where
+    IsMaybe (Maybe x)                     = 'True
+    IsMaybe (Beam.TableField t (Maybe x)) = 'True
+    IsMaybe (Beam.TableField t _)         = 'False
+    IsMaybe _                             = 'False
+
+instance HasSchemaConstraints' 'True (Beam.TableField e (Beam.TableField e t)) where
+  schemaConstraints' Proxy Proxy = []
+
+instance HasSchemaConstraints' 'False (Beam.TableField e (Beam.TableField e t)) where
+  schemaConstraints' Proxy Proxy = [NotNull]
+
+instance HasSchemaConstraints' 'True (Beam.TableField e (Maybe t)) where
+  schemaConstraints' Proxy Proxy = []
+
+instance HasSchemaConstraints' 'False (Beam.TableField e t) where
+  schemaConstraints' Proxy Proxy = [NotNull]
+
+instance ( IsMaybe a ~ nullary
+         , HasSchemaConstraints' nullary a
+         ) => HasSchemaConstraints a where
+  schemaConstraints = schemaConstraints' (Proxy :: Proxy nullary)
+
+--
+-- Sql datatype instances for the most common types.
+--
 
 instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
   defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)

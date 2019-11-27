@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
@@ -21,6 +23,7 @@ import           Control.Monad.IO.Class         ( liftIO
 import           Data.String                    ( fromString )
 import qualified Data.Set                      as S
 import qualified Data.Map.Strict               as M
+import           Data.Map (Map)
 import           Data.Text                      ( Text )
 import qualified Data.Text                     as T
 import qualified Data.Text.Encoding            as TE
@@ -45,6 +48,18 @@ import qualified Database.Beam.Postgres.Syntax as Pg
 --
 -- Potential API (sketched)
 --
+
+type AnnotatedDatabaseSettings be db = (DatabaseAnnotations, db)
+
+data SchemaIdentifier = TBL TableName
+                      | COL ColumnName
+                      deriving (Show, Eq, Ord)
+
+newtype DatabaseAnnotations = 
+    DatabaseAnnotations { getAnnotations :: Map SchemaIdentifier Annotation }
+
+type Annotation = ()
+
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
 fromDbSettings :: (Generic (DatabaseSettings be db), GSchema (Rep (DatabaseSettings be db)))

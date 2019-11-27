@@ -56,7 +56,6 @@ data FlowerT f = Flower
   { flowerID         :: Columnar f Int32
   , flowerName       :: Columnar f Text
   , flowerPrice      :: Columnar f Scientific
-  , flowerDiscounted :: Columnar (Beam.Nullable f) Bool
   }
   deriving (Generic, Beamable)
 
@@ -108,6 +107,19 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       , lineItemQuantity = fieldNamed "quantity"
                                                       }
   }
+
+{-
+annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
+annotatedDB = withAnnotations flowerDB [
+    onTable "flowers" [
+        onField "name"  [Default "foo"]
+      , onField "price" [Default "foo", NotNull]
+      ]
+    onTable "line_items" [
+       ForeignKey "flowers" (S.fromList ["id"]) Cascade Restrict
+    ]
+  ]
+-}
 
 hsSchema :: Schema
 hsSchema = fromDbSettings flowerDB
