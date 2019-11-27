@@ -15,15 +15,17 @@ extra-source-files:  CHANGELOG.md
 
 
 library
-  exposed-modules:     Database.Beam.Migrate
-  other-modules:
+  exposed-modules:
+                       Database.Beam.Migrate
                        Database.Beam.Migrate.Compat
                        Database.Beam.Migrate.Diff
-                       Database.Beam.Migrate.Example
                        Database.Beam.Migrate.Generic
                        Database.Beam.Migrate.Postgres
                        Database.Beam.Migrate.Types
                        Database.Beam.Migrate.Util
+                       Database.Beam.Migrate.Schema.Gen
+  other-modules:
+                       Database.Beam.Migrate.Example
 
   hs-source-dirs:      src
 
@@ -32,6 +34,8 @@ library
                      , beam-postgres        >= 0.3     && < 0.6
                      , bytestring           < 0.12.0.0
                      , containers           >= 0.5.9.2 && < 0.8.0.0
+                     , dlist
+                     , deepseq
                      , text                 >= 1.2.0.0 && < 1.3.0.0
                      , microlens 
                      , mtl
@@ -41,6 +45,8 @@ library
                      , time
                      , scientific
                      -- Needed only for the examples, (re)move eventually.
+                     , QuickCheck             < 2.15.0.0
+                     -- ^ Needed for schema generation
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings
   ghc-options:         -Wall
@@ -48,6 +54,39 @@ library
     ghc-options:       -Werror
   if flag(ghcipretty)
     build-depends:     pretty-simple
+
+test-suite beam-migrate-prototype-tests
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  other-modules:
+                       Test.Database.Beam.Migrate.Arbitrary
+  build-depends:       base
+                     , containers
+                     , QuickCheck             < 2.15.0.0
+                     , beam-migrate-prototype -any
+                     , text
+                     , tasty
+                     , tasty-quickcheck
+  default-language:     Haskell2010
+  default-extensions:   OverloadedStrings
+
+benchmark beam-migrate-prototype-bench
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  ghc-options:       -Wall -O2 -rtsopts
+  hs-source-dirs:    bench
+  main-is:           Main.hs
+  build-depends:     base
+                   , beam-migrate-prototype
+                   , beam-postgres        >= 0.3     && < 0.6
+                   , bytestring
+                   , criterion
+                   , containers
+                   , deepseq
+                   , QuickCheck             < 2.15.0.0
+                   , postgresql-simple   < 0.7.0.0
+                   , splitmix
 
 flag werror
   description: Enable -Werror during development
