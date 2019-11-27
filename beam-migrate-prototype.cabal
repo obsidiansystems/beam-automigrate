@@ -27,6 +27,7 @@ library
                        Database.Beam.Migrate.BenchUtil
   other-modules:
                        Database.Beam.Migrate.Example
+                       Database.Beam.Migrate.Example.ForeignKeys
 
   hs-source-dirs:      src
 
