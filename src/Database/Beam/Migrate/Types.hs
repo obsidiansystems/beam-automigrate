@@ -17,6 +17,8 @@ import qualified Database.Beam.Backend.SQL.AST as AST
 
 newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq, Generic)
 
+instance NFData Schema
+
 type Tables = Map TableName Table
 
 newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord, NFData)

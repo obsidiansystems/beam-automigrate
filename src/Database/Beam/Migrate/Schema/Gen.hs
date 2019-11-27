@@ -86,10 +86,10 @@ genSimilarSchemas = do
 similarTables :: Tables -> Gen Tables
 similarTables tbls = flip execStateT tbls $ do
   forM_ (M.toList tbls) $ \(tName, tbl) -> do
-    tableEditAction <- lift $ frequency [ (20, pure AddTable)
-                                        , (20, pure DropTable)
-                                        , (20, pure ModifyTable)
-                                        , (40, pure LeaveTableAlone)
+    tableEditAction <- lift $ frequency [ (1, pure AddTable)
+                                        , (1, pure DropTable)
+                                        , (1, pure ModifyTable)
+                                        , (15, pure LeaveTableAlone)
                                         ]
     case tableEditAction of
       AddTable -> do
@@ -107,10 +107,10 @@ similarTables tbls = flip execStateT tbls $ do
 similarTable :: Table -> Gen Table
 similarTable tbl = flip execStateT tbl $ do
   forM_ (M.toList . tableColumns $ tbl) $ \(cName, col) -> do
-    tableEditAction <- lift $ frequency [ (20, pure AddColumn)
-                                        , (20, pure DropColumn)
-                                        , (20, pure ModifyColumn)
-                                        , (40, pure LeaveColumnAlone)
+    tableEditAction <- lift $ frequency [ (1, pure AddColumn)
+                                        , (1, pure DropColumn)
+                                        , (1, pure ModifyColumn)
+                                        , (15, pure LeaveColumnAlone)
                                         ]
     case tableEditAction of
       AddColumn -> do
@@ -127,9 +127,9 @@ similarTable tbl = flip execStateT tbl $ do
 
 similarColumn :: Column -> Gen Column
 similarColumn col = do
-    editAction <- frequency [ (20, pure ChangeType)
-                            , (20, pure ChangeConstraints)
-                            , (60, pure NoChange)
+    editAction <- frequency [ (1, pure ChangeType)
+                            , (1, pure ChangeConstraints)
+                            , (15, pure NoChange)
                             ]
     case editAction of
       ChangeType -> pure $ col { columnType = AST.DataTypeBoolean }
