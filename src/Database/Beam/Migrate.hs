@@ -62,10 +62,10 @@ type Annotation = ()
 
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
-fromDbSettings :: (Generic (DatabaseSettings be db), GSchema (Rep (DatabaseSettings be db)))
+fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (DatabaseSettings be db)))
                => DatabaseSettings be db
                -> Schema
-fromDbSettings = gSchema . from
+fromDbSettings db = gSchema db (from db)
 
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
 
