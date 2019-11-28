@@ -9,6 +9,7 @@ import           GHC.Generics
 import           Control.Exception
 
 import           Database.Beam.Postgres
+import           Data.Set as S
 import           Database.Beam.Schema           ( Beamable
                                                 , Columnar
                                                 , Database
@@ -25,6 +26,8 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
+import           Database.Beam.Migrate.Annotated
+
 import           Database.Beam.Migrate          ( Schema
                                                 , Diff
                                                 , Migration
@@ -33,6 +36,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , runMigration
                                                 , printMigration
                                                 , migrate
+                                                , TableConstraint(..)
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -56,6 +60,7 @@ data FlowerT f = Flower
   { flowerID         :: Columnar f Int32
   , flowerName       :: Columnar f Text
   , flowerPrice      :: Columnar f Scientific
+  , flowerDiscounted :: Columnar f (Maybe Bool)
   }
   deriving (Generic, Beamable)
 
@@ -108,18 +113,21 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
-{-
+defaultAnnotatedDbSettings :: DatabaseSettings Postgres FlowerDB
+                           -> AnnotatedDatabaseSettings Postgres FlowerDB
+defaultAnnotatedDbSettings = undefined
+
+annotatedDB' :: AnnotatedDatabaseSettings Postgres FlowerDB
+annotatedDB' = defaultAnnotatedDbSettings flowerDB
+
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
-annotatedDB = withAnnotations flowerDB [
-    onTable "flowers" [
-        onField "price" [Default "10.0"]
-      ]
-    onTable "line_items" [
-       foreignKey "flowers" ["id"] Cascade Restrict
-    ,  unique ["quantity"]
-    ]
-  ]
--}
+annotatedDB = annotatedDB' `withDbModification` dbModification
+  { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
+               <> annotateTableFields tableModification { flowerPrice = undefined }
+  , dbLineItems = (addTableConstraints $ 
+      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])])
+               <> annotateTableFields tableModification { lineItemOrderID = undefined }
+  }
 
 hsSchema :: Schema
 hsSchema = fromDbSettings flowerDB
