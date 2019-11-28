@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -10,22 +11,81 @@
 module Database.Beam.Migrate.Compat where
 
 import           Data.Proxy
-import           Data.Text                      ( Text )
-import           Data.Scientific                ( Scientific )
-import           Data.Time.Calendar             ( Day )
-import           Data.Time                      ( TimeOfDay )
+import           Data.Kind
+import           Data.Text                                ( Text )
+import           Data.Scientific                          ( Scientific )
+import           Data.Time.Calendar                       ( Day )
+import           Data.Time                                ( TimeOfDay )
 import           Data.Int
-import           Data.Time                      ( UTCTime )
+import           Data.Time                                ( UTCTime )
 import           Data.Word
+import           Lens.Micro as Lens
 
 import           Database.Beam.Backend.SQL
-import qualified Database.Beam                 as Beam
+import qualified Database.Beam                           as Beam
+import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
+                                                          , DatabaseEntityDescriptor
+                                                          , TableEntity
+                                                          , DatabaseEntity
+                                                          , DatabaseEntityDefaultRequirements
+                                                          , DatabaseEntityRegularRequirements
+                                                          , dbEntityDescriptor
+                                                          )
 
 import           Database.Beam.Migrate.Types
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
      without the extra complication of importing and using the library itself.
 -}
+
+--
+-- Annotating a 'DatabaseSettings' with meta information.
+--
+
+type AnnotatedDatabaseSettings be db = db (AnnotatedDatabaseEntity be)
+
+data AnnotatedDatabaseEntity be (db :: (* -> *) -> *) entityType where
+  AnnotatedDatabaseEntity :: (IsAnnotatedDatabaseEntity be entityType, IsDatabaseEntity be entityType)
+                          => AnnotatedDatabaseEntityDescriptor be entityType
+                          -> DatabaseEntity be db entityType
+                          -> AnnotatedDatabaseEntity be db entityType
+
+class IsAnnotatedDatabaseEntity be entityType where
+  data AnnotatedDatabaseEntityDescriptor be entityType :: *
+  type AnnotatedDatabaseEntityDefaultRequirements be entityType :: Constraint
+  type AnnotatedDatabaseEntityRegularRequirements be entityType :: Constraint
+
+instance IsDatabaseEntity be (TableEntity tbl) => IsAnnotatedDatabaseEntity be (TableEntity tbl) where
+  data AnnotatedDatabaseEntityDescriptor be (TableEntity tbl) where
+    AnnotatedDatabaseTable
+      :: Beam.Table tbl =>
+       { dbAnnotatedSchema :: TableSchema tbl }
+      -> AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)
+  type AnnotatedDatabaseEntityDefaultRequirements be (TableEntity tbl) =
+      DatabaseEntityDefaultRequirements be (TableEntity tbl)
+  type AnnotatedDatabaseEntityRegularRequirements be (TableEntity tbl) =
+      DatabaseEntityRegularRequirements be (TableEntity tbl)
+
+lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
+lowerEntityDescriptor = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e ^. dbEntityDescriptor)
+
+deannotate :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntity be db entityType)
+deannotate = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e)
+
+-- | A table schema.
+type TableSchema tbl =
+    tbl (TableFieldSchema tbl)
+
+-- | A schema for a field within a given table
+data TableFieldSchema (table :: (* -> *) -> *) ty
+    = TableFieldSchema Text (FieldSchema ty)
+
+data FieldSchema ty where
+  FieldSchema :: FieldSchema ty
+
+--
+-- Specifying SQL data types and constraints
+--
 
 class HasDefaultSqlDataType ty where
 

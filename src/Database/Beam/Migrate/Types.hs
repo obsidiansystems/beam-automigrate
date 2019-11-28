@@ -87,6 +87,10 @@ data ReferenceAction =
 
 instance NFData ReferenceAction
 
+--
+-- Modifying the 'Schema'
+--
+
 -- | A possible list of edits on a 'Schema'.
 data Edit =
     TableAdded TableName Table

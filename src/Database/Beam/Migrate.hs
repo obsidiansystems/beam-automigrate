@@ -50,18 +50,6 @@ import qualified Database.Beam.Postgres.Syntax as Pg
 -- Potential API (sketched)
 --
 
-type AnnotatedDatabaseSettings be db = (DatabaseAnnotations, db)
-
-data SchemaIdentifier = TBL TableName
-                      | COL ColumnName
-                      deriving (Show, Eq, Ord)
-
-newtype DatabaseAnnotations =
-    DatabaseAnnotations { getAnnotations :: Map SchemaIdentifier Annotation }
-
-type Annotation = ()
-
-
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
 fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (DatabaseSettings be db)))
                => DatabaseSettings be db
