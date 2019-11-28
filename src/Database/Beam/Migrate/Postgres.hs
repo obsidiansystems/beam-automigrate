@@ -7,41 +7,35 @@ module Database.Beam.Migrate.Postgres
   )
 where
 
-import           Data.Function
 import           Data.String
-import           Data.Maybe                     ( fromMaybe
-                                                , listToMaybe
-                                                )
-import           Data.Bits                      ( (.&.)
-                                                , shiftR
-                                                )
-import           Data.Foldable                  ( foldlM )
-import qualified Data.Vector                   as V
-import qualified Data.Map.Strict               as M
-import qualified Data.Set                      as S
-import           Data.Map                       ( Map )
-import           Data.Set                       ( Set )
-import           Data.List                      ( partition )
-import           Data.Text                      ( Text )
-import qualified Data.Text.Encoding            as TE
-import qualified Data.Text                     as T
-import           Data.ByteString                ( ByteString )
+import           Control.Monad.State
+import           Data.Maybe                               ( fromMaybe )
+import           Data.Bits                                ( (.&.)
+                                                          , shiftR
+                                                          )
+import           Data.Foldable                            ( foldlM )
+import           Data.List                                ( foldl' )
+import qualified Data.Vector                             as V
+import qualified Data.Map.Strict                         as M
+import qualified Data.Set                                as S
+import           Data.Map                                 ( Map )
+import           Data.Set                                 ( Set )
+import           Data.Text                                ( Text )
+import qualified Data.Text.Encoding                      as TE
+import qualified Data.Text                               as T
+import           Data.ByteString                          ( ByteString )
 
-import           Database.Beam.Backend.SQL
-                                         hiding ( tableName )
-import qualified Database.PostgreSQL.Simple    as Pg
-import           Database.PostgreSQL.Simple.FromRow
-                                                ( FromRow(..)
-                                                , field
-                                                )
-import           Database.PostgreSQL.Simple.FromField
-                                                ( FromField(..)
-                                                , fromField
-                                                )
-import qualified Database.PostgreSQL.Simple.Types
-                                               as Pg
+import           Database.Beam.Backend.SQL         hiding ( tableName )
+import qualified Database.PostgreSQL.Simple              as Pg
+import           Database.PostgreSQL.Simple.FromRow       ( FromRow(..)
+                                                          , field
+                                                          )
+import           Database.PostgreSQL.Simple.FromField     ( FromField(..)
+                                                          , fromField
+                                                          )
+import qualified Database.PostgreSQL.Simple.Types        as Pg
 import qualified Database.PostgreSQL.Simple.TypeInfo.Static
-                                               as Pg
+                                                         as Pg
 
 import           Database.Beam.Migrate.Types
 
@@ -98,19 +92,19 @@ tableColumnsQ = fromString $ unlines
   , "FROM pg_catalog.pg_attribute att WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f'"
   ]
 
--- | Return all constraints for a given 'Table'.
+-- | Return all constraints for /all/ 'Table's.
 constraintsQ :: Pg.Query
 constraintsQ = fromString $ unlines
   [ "SELECT tc.constraint_name, tc.table_name as ref_origin, u.table_name as ref_target, "
   , "array_agg(column_name)::text[] as column_names, constraint_type FROM information_schema.table_constraints tc "
   , "JOIN information_schema.constraint_column_usage u ON tc.constraint_catalog=u.constraint_catalog AND "
-  , "tc.constraint_schema=u.constraint_schema AND tc.constraint_name=u.constraint_name WHERE u.table_name=? "
+  , "tc.constraint_schema=u.constraint_schema AND tc.constraint_name=u.constraint_name "
   , "GROUP BY tc.constraint_name, ref_origin, ref_target, constraint_type"
   ]
 
--- | Return all \"action types\" for a given constraint, for example 'ON DELETE RESTRICT'.
-referenceActionQ :: Pg.Query
-referenceActionQ = fromString $ unlines
+-- | Return all \"action types\" for /all/ the constraints.
+referenceActionsQ :: Pg.Query
+referenceActionsQ = fromString $ unlines
   [ "SELECT c.conname, c. confdeltype, c.confupdtype FROM "
   , "(SELECT r.conrelid, r.confrelid, unnest(r.conkey) AS conkey, unnest(r.confkey) AS confkey, r.conname, r.confupdtype, r.confdeltype "
   , "FROM pg_catalog.pg_constraint r WHERE r.contype = 'f') AS c "
@@ -120,19 +114,14 @@ referenceActionQ = fromString $ unlines
   , "INNER JOIN pg_attribute a_child ON a_child.attnum = c.conkey AND a_child.attrelid = c.conrelid "
   , "INNER JOIN pg_class cl_child ON cl_child.oid = c.conrelid "
   , "INNER JOIN pg_namespace sch_child ON sch_child.oid = cl_child.relnamespace "
-  , "WHERE sch_child.nspname = current_schema() AND cl_child.relname = ? AND c.conname = ?"
-  , "ORDER BY c.conname "
+  , "WHERE sch_child.nspname = current_schema() ORDER BY c.conname "
   ]
 
 -- | Connects to a running PostgreSQL database and extract the relevant 'Schema' out of it.
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
-  allTables <- Pg.query_ conn userTablesQ
-  allConstraints <- foldlM (\(tConAcc, cConAcc) (_, tName) -> do
-      (tCon, cCon) <- getTableConstraints conn (TableName tName)
-      pure (tConAcc <> tCon, cConAcc <> cCon)
-      ) mempty allTables
-  tables   <- foldlM (getTable allConstraints) mempty allTables
+  allConstraints <- getAllConstraints conn
+  tables   <- Pg.fold_ conn userTablesQ mempty (getTable allConstraints)
   pure $ Schema tables
 
   where
@@ -214,83 +203,60 @@ pgTypeToColumnType oid width
 -- Constraints discovery
 --
 
-type AllConstraints = (Map TableName (Set TableConstraint), AllColumnConstraints)
+type AllTableConstraints = Map TableName (Set TableConstraint)
+type AllConstraints = (AllTableConstraints, AllColumnConstraints)
 type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
 
--- We consider table constraints primary & foreign keys constraints, as they can span
--- multiple columns and are generally easier to process at the table-level.
-isTableConstraint :: SqlRawConstraint -> Bool
-isTableConstraint (sqlCon_constraint_type -> ctype)
-  | ctype == SQL_raw_pk || ctype == SQL_raw_fk || ctype == SQL_raw_unique = True
-  | otherwise = False
-
--- | Given an input 'TableName', it returns a pair of the \"table-level\" constraints (for example primary
--- keys or foreign keys spanning multiple columns) and \"column-level\" constraints (e.g. 'UNIQUE, 'NOT NULL',
--- etc).
--- NOTE(adinapoli) This pair of collections can get very large for a large number of tables (> 10k), so we 
--- might want to optimise things further down the line.
-getTableConstraints :: Pg.Connection 
-                    -> TableName 
-                    -> IO AllConstraints
-getTableConstraints conn (tableName -> currentTable) = do
-    allConstraints <- Pg.query conn constraintsQ (Pg.Only currentTable)
-
-    let (tableLevelRaw, columnLevelRaw) = partition isTableConstraint allConstraints
-
-    columnLevel <- getColumnLevelConstraints columnLevelRaw
-    tableLevel  <- getTableLevelConstraints  conn (TableName currentTable) tableLevelRaw
-
-    pure (tableLevel, columnLevel)
-
-
-getTableLevelConstraints :: Pg.Connection
-                         -> TableName 
-                         -- ^ The 'Table' we are currently processing.
-                         -> [SqlRawConstraint] 
-                         -> IO (Map TableName (Set TableConstraint))
-getTableLevelConstraints conn currentTable = foldlM go mempty
+getAllConstraints :: Pg.Connection -> IO AllConstraints
+getAllConstraints conn = do
+    allActions <- Pg.query_ conn referenceActionsQ
+    allConstraints <- Pg.query_ conn constraintsQ
+    pure $ foldl' (addConstraint $ mkActions allActions) mempty allConstraints
   where
-    go :: Map TableName (Set TableConstraint)
-       -> SqlRawConstraint
-       -> IO (Map TableName (Set TableConstraint))
-    go m SqlRawConstraint{..} = do
-        let columnSet = S.fromList . V.toList $ sqlCon_columns
-        case sqlCon_constraint_type of
-          SQL_raw_unique -> pure $ addTableConstraint currentTable (Unique sqlCon_name (S.fromList $ V.toList sqlCon_columns)) m
-          SQL_raw_pk -> pure $ addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet) m
-          SQL_raw_fk -> do
-              -- Here we need to add two constraints: one for 'ForeignKey' and one for
-              -- 'IsForeignKeyOf'.
-              (actions :: [(Text, Text, Text)]) 
-                <- Pg.query conn referenceActionQ (tableName sqlCon_ref_origin, sqlCon_name)
-              let (onDelete, onUpdate) = 
-                      case listToMaybe actions of
-                        Nothing -> (NoAction, NoAction)
-                        Just (_, onDeleteAction, onUpdateAction) -> 
-                            (mkAction onDeleteAction, mkAction onUpdateAction)
-              pure $ m & addTableConstraint currentTable (IsForeignKeyOf sqlCon_ref_origin columnSet) 
-                   . addTableConstraint sqlCon_ref_origin (ForeignKey sqlCon_ref_target columnSet onDelete onUpdate)
-
-    mkAction :: Text -> ReferenceAction
-    mkAction c = case c of
-      "a" -> NoAction
-      "r" -> Restrict
-      "c" -> Cascade
-      "n" -> SetNull
-      "d" -> SetDefault
-      _ -> error . T.unpack $ "unknown reference action type: " <> c
+      addConstraint :: ReferenceActions -> AllConstraints -> SqlRawConstraint -> AllConstraints
+      addConstraint actions st SqlRawConstraint{..} = flip execState st $ do
+          let currentTable = sqlCon_ref_origin
+          let columnSet = S.fromList . V.toList $ sqlCon_columns
+          case sqlCon_constraint_type of
+            SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name (S.fromList $ V.toList sqlCon_columns))
+            SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
+            SQL_raw_fk -> do
+                -- Here we need to add two constraints: one for 'ForeignKey' and one for
+                -- 'IsForeignKeyOf'.
+                let (onDelete, onUpdate) = 
+                        case M.lookup sqlCon_name (getActions actions) of
+                          Nothing -> (NoAction, NoAction)
+                          Just a  -> (actionOnDelete a, actionOnUpdate a)
+                addTableConstraint sqlCon_ref_target (IsForeignKeyOf sqlCon_ref_origin columnSet) 
+                addTableConstraint currentTable (ForeignKey sqlCon_ref_target columnSet onDelete onUpdate)
 
 
-getColumnLevelConstraints :: [SqlRawConstraint]
-                          -> IO (Map ColumnName (Set ColumnConstraint))
-getColumnLevelConstraints = foldlM go mempty 
-  where
-    go :: Map ColumnName (Set ColumnConstraint)
-       -> SqlRawConstraint 
-       -> IO (Map ColumnName (Set ColumnConstraint))
-    go m SqlRawConstraint{..} = do
-        pure $ case sqlCon_constraint_type of
-          _ -> m
+newtype ReferenceActions = ReferenceActions { getActions :: Map Text Actions }
+newtype RefEntry = RefEntry { unRefEntry :: (Text, ReferenceAction, ReferenceAction) }
+
+mkActions :: [RefEntry] -> ReferenceActions
+mkActions = ReferenceActions . M.fromList . map ((\(a,b,c) -> (a, Actions b c)) . unRefEntry)
+
+instance Pg.FromRow RefEntry where
+  fromRow = fmap RefEntry ((,,) <$> field 
+                                <*> (fmap mkAction field) 
+                                <*> (fmap mkAction field))
+
+data Actions = Actions {
+    actionOnDelete :: ReferenceAction
+  , actionOnUpdate :: ReferenceAction
+  }
+
+
+mkAction :: Text -> ReferenceAction
+mkAction c = case c of
+  "a" -> NoAction
+  "r" -> Restrict
+  "c" -> Cascade
+  "n" -> SetNull
+  "d" -> SetDefault
+  _ -> error . T.unpack $ "unknown reference action type: " <> c
+
 
 --
 -- Useful combinators to add constraints for a column or table if already there.
@@ -298,19 +264,21 @@ getColumnLevelConstraints = foldlM go mempty
 
 addTableConstraint :: TableName
                    -> TableConstraint 
-                   -> Map TableName (Set TableConstraint)
-                   -> Map TableName (Set TableConstraint)
+                   -> State AllConstraints ()
 addTableConstraint tName cns =
-  M.alter (\case
-      Nothing -> Just $ S.singleton cns
-      Just ss -> Just $ S.insert cns ss) tName
+  modify' (\(tcon, ccon) -> (M.alter (\case
+                               Nothing -> Just $ S.singleton cns
+                               Just ss -> Just $ S.insert cns ss) tName tcon
+                            , ccon)
+          )
 
 addColumnConstraint :: ColumnName
                     -> ColumnConstraint 
-                    -> Map ColumnName (Set ColumnConstraint)
-                    -> Map ColumnName (Set ColumnConstraint)
+                    -> State AllConstraints ()
 addColumnConstraint cName cns =
-  M.alter (\case
-      Nothing -> Just $ S.singleton cns
-      Just ss -> Just $ S.insert cns ss) cName
+  modify' (\(tcon, ccon) -> (tcon
+                            , M.alter (\case
+                              Nothing -> Just $ S.singleton cns
+                              Just ss -> Just $ S.insert cns ss) cName ccon)
+          )
 

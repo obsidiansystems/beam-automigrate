@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts     #-}
@@ -135,13 +136,27 @@ toSqlSyntax = \case
       renderCreateTableConstraint = \case
         Unique _ cols     -> "UNIQUE (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
         PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
-        _ -> error "renderTableConstraint: TODO"
+        ForeignKey (tableName -> tName) cols onDelete onUpdate ->
+            -- FIXME(and) this is wrong for now.
+            "REFERENCES \"" <> tName 
+                          <> "\"(" <> T.intercalate"," (map columnName $ S.toList cols) <> ") " 
+                          <> renderAction "ON DELETE" onDelete 
+                          <> " "
+                          <> renderAction "ON UPDATE" onUpdate
+        IsForeignKeyOf _tName _cols -> mempty
 
       renderAlterTableConstraint :: TableConstraint -> Text
       renderAlterTableConstraint = \case
         Unique cName _ -> cName
         PrimaryKey cName _ -> cName
-        _ -> error "renderTableConstraint: TODO"
+        _ -> error "renderAlterTableConstraint: TODO"
+
+      renderAction actionPrefix = \case
+        NoAction   -> mempty
+        Cascade    -> actionPrefix <> " " <> "CASCADE"
+        Restrict   -> actionPrefix <> " " <> "RESTRICT"
+        SetNull    -> actionPrefix <> " " <> "SET NULL"
+        SetDefault -> actionPrefix <> " " <> "SET DEFAULT"
 
       renderColumnConstraint :: ColumnConstraint -> Text
       renderColumnConstraint = \case

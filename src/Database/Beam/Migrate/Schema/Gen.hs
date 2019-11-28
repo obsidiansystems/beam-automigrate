@@ -12,6 +12,7 @@ import           Data.Foldable                  ( foldlM )
 import           Data.Set                       ( Set )
 import           Data.Text                      ( Text )
 import qualified Data.Set                      as S
+import qualified Data.List                     as L
 import qualified Data.Map.Strict               as M
 import qualified Data.Text                     as T
 
@@ -29,8 +30,18 @@ genTableName = genName TableName
 genColumnName :: Gen ColumnName
 genColumnName = genName ColumnName
 
-genTableConstraints :: Tables -> Gen (Set TableConstraint)
-genTableConstraints _allTables = pure mempty
+-- | TODO(adn) Generating a 'Unique' constraint is not hard, but at the same time when we /diff/ two
+-- schemas, if we delete any column which is referenced as part of this constraint, we also need to drop
+-- the constraint, and this is currently not something supported by the diff algorithm.
+genUniqueConstraint :: Columns -> Gen (Set TableConstraint)
+genUniqueConstraint allCols = do
+  if length allCols > 3 
+     then do
+       --let cols = M.keys allCols
+       --colNum <- choose (1, 2)
+       --columns <- shuffle cols
+       pure mempty -- $ S.singleton (Unique "test_unique" (S.fromList $ take colNum columns))
+     else pure mempty 
 
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
@@ -46,8 +57,9 @@ genColumns = do
 
 -- | Generate a new 'Table' using the already existing tables to populate the constraints.
 genTable :: Tables -> Gen Table
-genTable currentTables = do
-    Table <$> genTableConstraints currentTables <*> genColumns
+genTable _currentTables = do
+    cols <- genColumns
+    Table <$> genUniqueConstraint cols <*> pure cols
 
 genSchema :: Gen Schema
 genSchema = sized $ \tableNum -> do
