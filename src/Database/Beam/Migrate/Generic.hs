@@ -90,9 +90,8 @@ instance GTableEntry be db (S1 f x) => GTables be db (S1 f x) where
 instance GTableEntry be db x => GTableEntry be db (S1 f x) where
   gTableEntry db (M1 x) = gTableEntry db x
 
--- TODO: Check this instance
-instance (GTableEntry be db a, GTables be db b) => GTables be db (a :*: b) where
-  gTables db (a :*: b) = uncurry M.singleton (gTableEntry db a) <> gTables db b
+instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
+  gTables db (a :*: b) = gTables db a <> gTables db b
 
 instance ( IsDatabaseEntity be (TableEntity tbl)
          , GColumns (Rep (TableSettings tbl))
@@ -172,6 +171,9 @@ class GTableLookupSettings (tbl :: TableKind) x where
 class GTableLookupTables (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
   gTableLookupTables :: Proxy tbl -> x p -> k p -> (TableName, [ColumnName])
 
+class GTableLookupExpectFailTables (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
+  gTableLookupTablesExpectFail :: Proxy tbl -> (TableName, [ColumnName]) -> x p -> k p -> (TableName, [ColumnName])
+
 instance
   (GTableLookupSettings tbl x)
   => GTableLookupSettings tbl (D1 f x) where
@@ -193,6 +195,16 @@ instance
   gTableLookupTables tbl (a :*: b) k = gTableLookupTables tbl a (b :*: k)
 
 instance
+  (GTableLookupExpectFailTables tbl x k)
+  => GTableLookupExpectFailTables tbl (S1 f x) k where
+  gTableLookupTablesExpectFail tbl r (M1 x) k = gTableLookupTablesExpectFail tbl r x k
+
+instance
+  ( GTableLookupExpectFailTables tbl a (b :*: k)
+  ) => GTableLookupExpectFailTables tbl (a :*: b) k where
+  gTableLookupTablesExpectFail tbl r (a :*: b) k = gTableLookupTablesExpectFail tbl r a (b :*: k)
+
+instance
   ( GTableLookupTable (TestTableEqual tbl tbl') tbl k
   , Beamable tbl'
   ) =>
@@ -203,6 +215,14 @@ instance
     in
       gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) (Proxy @tbl) (TableName tName, []) k
 
+instance
+  ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') tbl k
+  , Beamable tbl'
+  ) =>
+  GTableLookupExpectFailTables tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
+  gTableLookupTablesExpectFail tbl r (K1 _entity) k =
+    gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) tbl r k
+
 type family TestTableEqual (tbl1 :: TableKind) (tbl2 :: TableKind) :: Bool where
   TestTableEqual tbl tbl = True
   TestTableEqual _   _   = False
@@ -210,11 +230,26 @@ type family TestTableEqual (tbl1 :: TableKind) (tbl2 :: TableKind) :: Bool where
 class GTableLookupTable (b :: Bool) (tbl :: TableKind) (k :: Type -> Type) where
   gTableLookupTable :: Proxy b -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
 
-instance GTableLookupTable True tbl k where
+class GTableLookupTableExpectFail (b :: Bool) (tbl :: TableKind) (k :: Type -> Type) where
+  gTableLookupTableExpectFail :: Proxy b -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
+
+instance GTableLookupTable True tbl U1 where
   gTableLookupTable _ _ r _ = r
+
+instance TypeError (Text "lookup ambiguous") => GTableLookupTableExpectFail True tbl k where
+  gTableLookupTableExpectFail _ _ _ _ = error "impossible"
+
+instance (GTableLookupExpectFailTables tbl k ks) => GTableLookupTable True tbl (k :*: ks) where
+  gTableLookupTable _ tbl r (k :*: ks) = gTableLookupTablesExpectFail tbl r k ks
 
 instance TypeError (Text "lookup failed") => GTableLookupTable False tbl U1 where
   gTableLookupTable _ _ _ _ = error "impossible"
+
+instance GTableLookupTableExpectFail False tbl U1 where
+  gTableLookupTableExpectFail _ _ r _ = r
+
+instance (GTableLookupExpectFailTables tbl k ks) => GTableLookupTableExpectFail False tbl (k :*: ks) where
+  gTableLookupTableExpectFail _ tbl r (k :*: ks) = gTableLookupTablesExpectFail tbl r k ks
 
 instance GTableLookupTables tbl k ks => GTableLookupTable False tbl (k :*: ks) where
   gTableLookupTable _ tbl _ (k :*: ks) =
