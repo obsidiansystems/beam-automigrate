@@ -1,4 +1,4 @@
-image: kosmikus/ubuntu-ghc:18.10-8.6.5
+image: kosmikus/ubuntu-ghc-postgres:18.10-8.6.5-10
 
 stages:
   - prepare
