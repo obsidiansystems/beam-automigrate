@@ -105,11 +105,11 @@ instance (GColumns a, GColumns b) => GColumns (a :*: b) where
 -- Column entries
 --
 
-instance (HasSchemaConstraints (Beam.TableField e t), HasDefaultSqlDataType t) 
+instance (HasSchemaConstraints (Beam.TableField e t), HasDefaultSqlDataType t)
   => GColumns (S1 m (K1 R (Beam.TableField e t))) where
   gColumns (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName
-        col     = Column (defaultSqlDataType (Proxy @t) False) 
+        col     = Column (defaultSqlDataType (Proxy @t) False)
                          (S.fromList (schemaConstraints (Proxy @(Beam.TableField e t))))
     in  M.singleton colName col
 
