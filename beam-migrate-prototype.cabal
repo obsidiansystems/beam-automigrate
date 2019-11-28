@@ -24,6 +24,7 @@ library
                        Database.Beam.Migrate.Types
                        Database.Beam.Migrate.Util
                        Database.Beam.Migrate.Schema.Gen
+                       Database.Beam.Migrate.BenchUtil
   other-modules:
                        Database.Beam.Migrate.Example
 
@@ -46,6 +47,7 @@ library
                      , scientific
                      -- Needed only for the examples, (re)move eventually.
                      , QuickCheck             < 2.15.0.0
+                     , splitmix
                      -- ^ Needed for schema generation
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings
