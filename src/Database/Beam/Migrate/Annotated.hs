@@ -24,7 +24,6 @@ import qualified Data.Set as S
 import           Data.Monoid (Endo(..))
 
 import qualified Database.Beam                           as Beam
-import           Database.Beam.Migrate.Compat
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
@@ -34,7 +33,6 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityRegularRequirements
                                                           , dbEntityDescriptor
                                                           , FieldModification(..)
-                                                          , TableField
                                                           , EntityModification(..)
                                                           )
 --

@@ -11,16 +11,17 @@ import           Database.Beam.Postgres
 import           Database.Beam.Schema           ( Beamable
                                                 , Columnar
                                                 , Database
-                                                , DatabaseSettings
-                                                , defaultDbSettings
                                                 , PrimaryKey
                                                 , TableEntity
+                                                , defaultDbSettings
                                                 )
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
 import           Database.Beam.Migrate          ( Schema
-                                                , fromDbSettings
+                                                , fromAnnotatedDbSettings
+                                                , defaultAnnotatedDbSettings
+                                                , AnnotatedDatabaseSettings
                                                 )
 
 
@@ -60,8 +61,8 @@ instance Beam.Table WeatherT where
   primaryKey = WeatherID . wtId
 
 -- Modify the field names to be compliant with William Yao's format.
-forecastDB :: DatabaseSettings Postgres ForecastDB
-forecastDB = defaultDbSettings
+forecastDB :: AnnotatedDatabaseSettings Postgres ForecastDB
+forecastDB = defaultAnnotatedDbSettings defaultDbSettings
 
 hsSchema :: Schema
-hsSchema = fromDbSettings forecastDB
+hsSchema = fromAnnotatedDbSettings forecastDB

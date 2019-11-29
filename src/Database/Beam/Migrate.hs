@@ -6,8 +6,7 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
-  ( fromDbSettings
-  , fromAnnotatedDbSettings
+  ( fromAnnotatedDbSettings
   , defaultAnnotatedDbSettings
   , Migration
   , migrate
@@ -67,6 +66,7 @@ fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (Databas
 fromDbSettings db = gSchema db (from db)
 
 
+-- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
 defaultAnnotatedDbSettings :: forall be db. 
                            ( Generic (db (DatabaseEntity be db))
                            , Generic (db (AnnotatedDatabaseEntity be db))
@@ -94,6 +94,7 @@ defaultAnnotatedDbSettings db = runIdentity $
         pure $ AnnotatedDatabaseEntity dbAnnotatedEntityAuto (DatabaseEntity edesc)
 
 
+-- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
 fromAnnotatedDbSettings :: ( Generic (AnnotatedDatabaseSettings be db)
                            , GSchema (Rep (AnnotatedDatabaseSettings be db)))
                         => AnnotatedDatabaseSettings be db 
@@ -101,6 +102,7 @@ fromAnnotatedDbSettings :: ( Generic (AnnotatedDatabaseSettings be db)
 fromAnnotatedDbSettings = gSchema . from
 
 
+-- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
 
 
