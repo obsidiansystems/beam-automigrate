@@ -6,7 +6,8 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
-  ( fromAnnotatedDbSettings
+  ( fromDbSettings
+  , fromAnnotatedDbSettings
   , defaultAnnotatedDbSettings
   , Migration
   , migrate
@@ -25,6 +26,7 @@ import           Control.Monad.Except
 import           Control.Monad.IO.Class                   ( liftIO
                                                           , MonadIO
                                                           )
+import           Lens.Micro                               ( (^.) )
 import           Data.Proxy
 import           Data.String                              ( fromString )
 import qualified Data.Set                                as S
@@ -93,14 +95,40 @@ defaultAnnotatedDbSettings db = runIdentity $
     annotate (DatabaseEntity edesc) _ = 
         pure $ AnnotatedDatabaseEntity dbAnnotatedEntityAuto (DatabaseEntity edesc)
 
+deAnnotateDatabase :: forall be db. 
+                   ( Database be db 
+                   , Generic (db (DatabaseEntity be db))
+                   , Generic (db (AnnotatedDatabaseEntity be db))
+                   , GZipDatabase be (AnnotatedDatabaseEntity be db)
+                                     (AnnotatedDatabaseEntity be db)
+                                     (DatabaseEntity be db)
+                                     (Rep (db (AnnotatedDatabaseEntity be db)))
+                                     (Rep (db (AnnotatedDatabaseEntity be db)))
+                                     (Rep (db (DatabaseEntity be db)))
+                   )
+                   => AnnotatedDatabaseSettings be db 
+                   -> DatabaseSettings be db
+deAnnotateDatabase db = 
+    runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
-fromAnnotatedDbSettings :: ( Generic (AnnotatedDatabaseSettings be db)
-                           , GSchema (Rep (AnnotatedDatabaseSettings be db)))
+fromAnnotatedDbSettings :: ( Database be db
+                           , Generic (db (DatabaseEntity be db))
+                           , Generic (db (AnnotatedDatabaseEntity be db))
+                           , GZipDatabase be (AnnotatedDatabaseEntity be db)
+                                             (AnnotatedDatabaseEntity be db)
+                                             (DatabaseEntity be db)
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                                             (Rep (db (DatabaseEntity be db)))
+                           , Generic (AnnotatedDatabaseSettings be db)
+                           , GSchema be db (Rep (AnnotatedDatabaseSettings be db))
+                           )
                         => AnnotatedDatabaseSettings be db 
                         -> Schema
-fromAnnotatedDbSettings = gSchema . from
-
+fromAnnotatedDbSettings annDb = 
+    let db = deAnnotateDatabase annDb
+    in gSchema db (from annDb)
 
 -- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()

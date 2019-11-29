@@ -311,8 +311,8 @@ instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :
 --
 
 instance ( Beam.Table tbl, GColumns (Rep (TableSettings tbl)), Generic (TableSettings tbl) )
-  => GTableEntry (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry (K1 annotatedEntity) =
+  => GTableEntry be db (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry _db (K1 annotatedEntity) =
       let entity = annotatedEntity ^. deannotate
           tName = entity ^. dbEntityDescriptor . dbEntityName
           pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))

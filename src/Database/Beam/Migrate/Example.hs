@@ -32,6 +32,7 @@ import           Database.Beam.Migrate.Annotated
 import           Database.Beam.Migrate          ( Schema
                                                 , Diff
                                                 , Migration
+                                                , fromDbSettings
                                                 , fromAnnotatedDbSettings
                                                 , defaultAnnotatedDbSettings
                                                 , diff
@@ -126,7 +127,10 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   }
 
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings annotatedDB
+hsSchema = fromDbSettings flowerDB
+
+annotatedHsSchema :: Schema
+annotatedHsSchema = fromAnnotatedDbSettings annotatedDB
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do
