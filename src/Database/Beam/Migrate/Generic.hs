@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -30,9 +32,11 @@ import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
                                                 , dbEntityDescriptor
                                                 , dbEntityName
                                                 , dbTableSettings
+                                                , DatabaseEntity(..)
                                                 )
 
 import           Database.Beam.Migrate.Compat
+import           Database.Beam.Migrate.Annotated
 
 -- | To make kind signatures more readable.
 type DatabaseKind = (Type -> Type) -> Type
@@ -40,7 +44,9 @@ type DatabaseKind = (Type -> Type) -> Type
 -- | To make kind signatures more readable.
 type TableKind    = (Type -> Type) -> Type
 
-{- Machinery to derive a 'Schema' from a 'DatabaseSettings'. -}
+--
+--- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
+--
 
 class GSchema be db x where
     gSchema :: Beam.DatabaseSettings be db -> x p -> Schema
@@ -134,8 +140,8 @@ instance (HasSchemaConstraints (Beam.TableField e t), HasDefaultSqlDataType t)
   => GColumns (S1 m (K1 R (Beam.TableField e t))) where
   gColumns (M1 (K1 e)) =
     let colName = ColumnName $ e ^. Beam.fieldName
-        col     = Column (defaultSqlDataType (Proxy @t) False)
-                         (S.fromList (schemaConstraints (Proxy @(Beam.TableField e t))))
+        col     = Column (defaultSqlDataType (Proxy @t) False) 
+                         (schemaConstraints (Proxy @(Beam.TableField e t)))
     in  M.singleton colName col
 
 instance ( GColumns (Rep (PrimaryKey tbl f))

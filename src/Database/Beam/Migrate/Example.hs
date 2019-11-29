@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE TypeFamilies         #-}
@@ -32,6 +33,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , Diff
                                                 , Migration
                                                 , fromDbSettings
+                                                , defaultAnnotatedDbSettings
                                                 , diff
                                                 , runMigration
                                                 , printMigration
@@ -113,15 +115,9 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
-defaultAnnotatedDbSettings :: DatabaseSettings Postgres FlowerDB
-                           -> AnnotatedDatabaseSettings Postgres FlowerDB
-defaultAnnotatedDbSettings = undefined
-
-annotatedDB' :: AnnotatedDatabaseSettings Postgres FlowerDB
-annotatedDB' = defaultAnnotatedDbSettings flowerDB
 
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
-annotatedDB = annotatedDB' `withDbModification` dbModification
+annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = undefined }
   , dbLineItems = (addTableConstraints $ 
