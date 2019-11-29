@@ -96,6 +96,9 @@ instance ( IsMaybe a ~ nullary
 -- Sql datatype instances for the most common types.
 --
 
+instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Beam.TableField e ty) where
+  defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
+
 instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
   defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
 

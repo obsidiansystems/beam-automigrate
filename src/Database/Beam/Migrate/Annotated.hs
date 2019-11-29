@@ -1,3 +1,4 @@
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeOperators #-}
@@ -19,12 +20,14 @@ import qualified Lens.Micro as Lens
 import           Lens.Micro                               ( SimpleGetter, (^.) )
 import           GHC.Generics                            as Generic
 import qualified Data.Text as T
+import           Data.Text                                ( Text )
 import           Data.Set (Set)
 import qualified Data.Set as S
 import           Data.Monoid (Endo(..))
 
 import qualified Database.Beam                           as Beam
 import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.Compat
 import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
                                                           , TableEntity
@@ -97,7 +100,8 @@ class IsDatabaseEntity be entityType => IsAnnotatedDatabaseEntity be entityType 
   type AnnotatedDatabaseEntityRegularRequirements be entityType :: Constraint
 
   dbAnnotatedEntityAuto :: AnnotatedDatabaseEntityRegularRequirements be entityType 
-                        => AnnotatedDatabaseEntityDescriptor be entityType
+                        => DatabaseEntityDescriptor be entityType
+                        -> AnnotatedDatabaseEntityDescriptor be entityType
 
 instance IsDatabaseEntity be (TableEntity tbl)
          => IsAnnotatedDatabaseEntity be (TableEntity tbl) where
@@ -113,7 +117,7 @@ instance IsDatabaseEntity be (TableEntity tbl)
   type AnnotatedDatabaseEntityRegularRequirements be (TableEntity tbl) =
       (DatabaseEntityRegularRequirements be (TableEntity tbl))
 
-  dbAnnotatedEntityAuto = AnnotatedDatabaseTable undefined mempty
+  dbAnnotatedEntityAuto _ = AnnotatedDatabaseTable undefined mempty
 
 -- | A 'SimpleGetter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
 lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
@@ -133,12 +137,30 @@ type TableSchema tbl =
 data TableFieldSchema (table :: (* -> *) -> *) ty where
     TableFieldSchema 
       :: 
-      { tableFieldSchema :: FieldSchema ty } 
+      { tableFieldName :: Text
+      , tableFieldSchema :: FieldSchema ty } 
       -> TableFieldSchema table ty
 
 data FieldSchema ty where
-  FieldSchema :: Set ColumnConstraint
+  FieldSchema :: ColumnType
+              -> Set ColumnConstraint
               -> FieldSchema ty
+
+deriving instance Show (FieldSchema ty)
+
+-- | Instantiate a field in a table with the default type.
+defaultFieldSchema :: forall ty. ( SchemaConstraint ty ~ ColumnConstraint
+                                 , HasSchemaConstraints ty
+                                 , HasDefaultSqlDataType ty
+                                 ) 
+                   => FieldSchema ty
+defaultFieldSchema = FieldSchema (defaultSqlDataType (Proxy @ty) False) (schemaConstraints (Proxy @ty))
+
+
+--
+-- Annotating 'Table's and 'Field's after the default 'AnnotatedDatabaseSettings' has been instantiated.
+--
+
 
 annotateTableFields :: tbl (FieldModification (TableFieldSchema tbl)) 
                     -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
@@ -159,4 +181,6 @@ addTableConstraints con =
 defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)
 defaultsTo tyVal = FieldModification $ \old -> 
     case tableFieldSchema old of 
-      FieldSchema c -> old { tableFieldSchema = FieldSchema $ S.singleton (Default $ T.pack $ show tyVal) <> c }
+      FieldSchema ty c -> old { 
+          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.pack $ show tyVal) <> c 
+        }

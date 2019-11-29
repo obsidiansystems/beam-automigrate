@@ -93,7 +93,7 @@ defaultAnnotatedDbSettings db = runIdentity $
              -> AnnotatedDatabaseEntity be db ty 
              -> m (AnnotatedDatabaseEntity be db ty)
     annotate (DatabaseEntity edesc) _ = 
-        pure $ AnnotatedDatabaseEntity dbAnnotatedEntityAuto (DatabaseEntity edesc)
+        pure $ AnnotatedDatabaseEntity (dbAnnotatedEntityAuto edesc) (DatabaseEntity edesc)
 
 deAnnotateDatabase :: forall be db. 
                    ( Database be db 

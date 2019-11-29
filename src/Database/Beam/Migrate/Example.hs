@@ -40,6 +40,8 @@ import           Database.Beam.Migrate          ( Schema
                                                 , printMigration
                                                 , migrate
                                                 , TableConstraint(..)
+                                                , TableName(..)
+                                                , ReferenceAction(..)
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -122,15 +124,17 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
   , dbLineItems = (addTableConstraints $ 
-      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"]) ])
+      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
+                 -- , ForeignKey "lineItemOrderID_fkey" (TableName "orders2") mempty NoAction NoAction
+                 ])
                <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
   }
 
 hsSchema :: Schema
 hsSchema = fromDbSettings flowerDB
 
-annotatedHsSchema :: Schema
-annotatedHsSchema = fromAnnotatedDbSettings annotatedDB
+hsAnnotatedSchema :: Schema
+hsAnnotatedSchema = fromAnnotatedDbSettings annotatedDB
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do
