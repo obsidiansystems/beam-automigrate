@@ -95,9 +95,9 @@ toSqlSyntax = \case
   TableAdded tblName tbl -> 
       ddlSyntax ("CREATE TABLE \"" <> tableName tblName 
                                    <> "\" (" 
-                                   <> T.intercalate "," (map renderTableColumn (M.toList (tableColumns tbl)) <>
-                                                         map renderCreateTableConstraint (S.toList (tableConstraints tbl))
-                                                        )
+                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)) <>
+                                                          filter (not . T.null) (map renderCreateTableConstraint (S.toList (tableConstraints tbl)))
+                                                         )
                                    <> ")"
                 )
   TableRemoved tblName    -> 
@@ -134,15 +134,17 @@ toSqlSyntax = \case
 
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
-        Unique _ cols     -> "UNIQUE (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
-        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
-        ForeignKey (tableName -> tName) cols onDelete onUpdate ->
-            -- FIXME(and) this is wrong for now.
-            "REFERENCES \"" <> tName 
-                          <> "\"(" <> T.intercalate"," (map columnName $ S.toList cols) <> ") " 
-                          <> renderAction "ON DELETE" onDelete 
-                          <> " "
-                          <> renderAction "ON UPDATE" onUpdate
+        Unique _ cols     -> "UNIQUE (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
+        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
+        ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
+            let (fkCols, referenced) = (map (columnName . fst) colPair, map (columnName . snd) colPair)
+            in "CONSTRAINT \"" <> fname 
+                               <> "\" FOREIGN KEY (" 
+                               <> T.intercalate ", " fkCols
+                               <> ") REFERENCES \"" <> tName 
+                               <> "\"(" <> T.intercalate ", " referenced <> ")" 
+                               <> renderAction "ON DELETE" onDelete 
+                               <> renderAction "ON UPDATE" onUpdate
         IsForeignKeyOf _tName _cols -> mempty
 
       renderAlterTableConstraint :: TableConstraint -> Text
@@ -153,10 +155,10 @@ toSqlSyntax = \case
 
       renderAction actionPrefix = \case
         NoAction   -> mempty
-        Cascade    -> actionPrefix <> " " <> "CASCADE"
-        Restrict   -> actionPrefix <> " " <> "RESTRICT"
-        SetNull    -> actionPrefix <> " " <> "SET NULL"
-        SetDefault -> actionPrefix <> " " <> "SET DEFAULT"
+        Cascade    -> " " <> actionPrefix <> " " <> "CASCADE "
+        Restrict   -> " " <> actionPrefix <> " " <> "RESTRICT "
+        SetNull    -> " " <> actionPrefix <> " " <> "SET NULL "
+        SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
 
       renderColumnConstraint :: ColumnConstraint -> Text
       renderColumnConstraint = \case
