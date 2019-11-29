@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts     #-}
@@ -85,16 +86,18 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right edits -> mapM_ runNoReturn (map toSqlSyntax edits)
+    Right edits -> runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat $ map toSqlSyntax edits)
 
-toSqlSyntax :: Edit -> Pg.PgCommandSyntax
+-- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
+
+toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
-  TableAdded tblName tbl ->
-      ddlSyntax ("CREATE TABLE \"" <> tableName tblName
-                                   <> "\" ("
-                                   <> T.intercalate "," (map renderTableColumn (M.toList (tableColumns tbl)) <>
-                                                         map renderCreateTableConstraint (S.toList (tableConstraints tbl))
-                                                        )
+  TableAdded tblName tbl -> 
+      ddlSyntax ("CREATE TABLE \"" <> tableName tblName 
+                                   <> "\" (" 
+                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)) <>
+                                                          filter (not . T.null) (map renderCreateTableConstraint (S.toList (tableConstraints tbl)))
+                                                         )
                                    <> ")"
                 )
   TableRemoved tblName    ->
@@ -120,8 +123,8 @@ toSqlSyntax = \case
   ColumnConstraintRemoved tblName colName cstr ->
       updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" DROP " <> renderColumnConstraint cstr)
   where
-      ddlSyntax query    = Pg.PgCommandSyntax Pg.PgCommandTypeDdl (Pg.emit . TE.encodeUtf8 $ query <> ";")
-      updateSyntax query = Pg.PgCommandSyntax Pg.PgCommandTypeDataUpdate (Pg.emit . TE.encodeUtf8 $ query <> ";")
+      ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
+      updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 
       alterTable :: TableName -> Text
       alterTable (TableName tName) = "ALTER TABLE \"" <> tName <> "\" "
@@ -131,15 +134,31 @@ toSqlSyntax = \case
 
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
-        Unique _ cols     -> "UNIQUE (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
-        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate "," (map columnName (S.toList cols)) <> ")"
-        _ -> error "renderTableConstraint: TODO"
+        Unique _ cols     -> "UNIQUE (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
+        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
+        ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
+            let (fkCols, referenced) = (map (columnName . fst) colPair, map (columnName . snd) colPair)
+            in "CONSTRAINT \"" <> fname 
+                               <> "\" FOREIGN KEY (" 
+                               <> T.intercalate ", " fkCols
+                               <> ") REFERENCES \"" <> tName 
+                               <> "\"(" <> T.intercalate ", " referenced <> ")" 
+                               <> renderAction "ON DELETE" onDelete 
+                               <> renderAction "ON UPDATE" onUpdate
+        IsForeignKeyOf _tName _cols -> mempty
 
       renderAlterTableConstraint :: TableConstraint -> Text
       renderAlterTableConstraint = \case
         Unique cName _ -> cName
         PrimaryKey cName _ -> cName
-        _ -> error "renderTableConstraint: TODO"
+        _ -> error "renderAlterTableConstraint: TODO"
+
+      renderAction actionPrefix = \case
+        NoAction   -> mempty
+        Cascade    -> " " <> actionPrefix <> " " <> "CASCADE "
+        Restrict   -> " " <> actionPrefix <> " " <> "RESTRICT "
+        SetNull    -> " " <> actionPrefix <> " " <> "SET NULL "
+        SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
 
       renderColumnConstraint :: ColumnConstraint -> Text
       renderColumnConstraint = \case
@@ -224,4 +243,4 @@ printMigration m = do
       Left e    -> liftIO $ throwIO e
       Right ()  -> do
         let pgSyntax = map toSqlSyntax edits
-        liftIO $ putStrLn (unlines $ map (displaySyntax . Pg.fromPgCommand) pgSyntax)
+        liftIO $ putStrLn (unlines $ map displaySyntax pgSyntax)

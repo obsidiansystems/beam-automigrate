@@ -1,0 +1,40 @@
+image: kosmikus/ubuntu-ghc-postgres:18.04-8.6.5-10
+
+stages:
+  - prepare
+  - build
+  - test
+
+.common:
+  before_script:
+    - cabal --version
+    - ghc --version
+    - mkdir -pv $HOME/.cabal
+    - mkdir -pv $PWD/cabal
+    - for dir in packages store; do
+      mkdir -pv $PWD/cabal/$dir && rm -rf $HOME/.cabal/$dir && ln -s $PWD/cabal/$dir $HOME/.cabal/$dir;
+      done
+  cache:
+    key: "cabal"
+    paths:
+      - ./cabal
+      - ./dist-newstyle
+
+deps:
+  extends: .common
+  stage: prepare
+  script:
+    - cabal v2-update
+    - cabal v2-build --only-dependencies all
+
+build:
+  extends: .common
+  stage: build
+  script:
+    - cabal v2-build all
+
+test:
+  extends: .common
+  stage: test
+  script:
+    - cabal v2-test all

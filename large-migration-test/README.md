@@ -7,7 +7,7 @@ the performs a full migration. On my laptop I get:
 Generating schema with 10_000 tables ...
 Generated schema with 10000 tables.
 Starting the migration..
-Total time (seconds): 636
+Total time (seconds): 190
 ```
 
-It seems the total time **including applying the full migration** is around 10 minutes.
+It seems the total time **including applying the full migration** is around 3 minutes.
