@@ -43,35 +43,48 @@ import           Database.Beam.Migrate.Types
 -- Necessary types to make working with the underlying raw SQL a bit more pleasant
 --
 
-data SqlRawConstraintType = 
+data SqlRawOtherConstraintType = 
     SQL_raw_pk
   | SQL_raw_unique
-  | SQL_raw_fk
   deriving (Show, Eq)
 
-data SqlRawConstraint = SqlRawConstraint
-    { sqlCon_name :: Text
-    , sqlCon_ref_origin :: TableName
-    , sqlCon_ref_target :: TableName
-    , sqlCon_columns    :: V.Vector ColumnName
-    , sqlCon_constraint_type :: SqlRawConstraintType
+data SqlOtherConstraint = SqlOtherConstraint
+    { sqlCon_table :: TableName
+    , sqlCon_constraint_type :: SqlRawOtherConstraintType
+    , sqlCon_fk_colums :: V.Vector ColumnName
+    , sqlCon_name :: Text
     } deriving (Show, Eq)
 
-instance Pg.FromRow SqlRawConstraint where
-  fromRow = SqlRawConstraint <$> field 
-                             <*> (fmap TableName field) 
-                             <*> (fmap TableName field) 
-                             <*> (fmap (V.map ColumnName) field) 
-                             <*> field
+instance Pg.FromRow SqlOtherConstraint where
+  fromRow = SqlOtherConstraint <$> (fmap TableName field)
+                               <*> field
+                               <*> (fmap (V.map ColumnName) field) 
+                               <*> field
 
-instance FromField SqlRawConstraintType where
+data SqlForeignConstraint = SqlForeignConstraint
+    { sqlFk_foreign_table   :: TableName
+    , sqlFk_primary_table   :: TableName
+    , sqlFk_fk_columns      :: V.Vector ColumnName
+    -- ^ The columns in the /foreign/ table.
+    , sqlFk_pk_columns      :: V.Vector ColumnName
+    -- ^ The columns in the /current/ table.
+    , sqlFk_name            :: Text
+    } deriving (Show, Eq)
+
+instance Pg.FromRow SqlForeignConstraint where
+  fromRow = SqlForeignConstraint <$> (fmap TableName field)
+                                 <*> (fmap TableName field) 
+                                 <*> (fmap (V.map ColumnName) field) 
+                                 <*> (fmap (V.map ColumnName) field) 
+                                 <*> field
+
+instance FromField SqlRawOtherConstraintType where
   fromField f dat = do
       t <- fromField f dat
       case t of
         "PRIMARY KEY" -> pure SQL_raw_pk
         "UNIQUE"      -> pure SQL_raw_unique
-        "FOREIGN KEY" -> pure SQL_raw_fk
-        _ -> fail ("Uknown costraint type: " <> t)
+        _ -> fail ("Unexpected costraint type: " <> t)
 
 --
 -- Postgres queries to extract the schema out of the DB
@@ -92,14 +105,51 @@ tableColumnsQ = fromString $ unlines
   , "FROM pg_catalog.pg_attribute att WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f'"
   ]
 
--- | Return all constraints for /all/ 'Table's.
-constraintsQ :: Pg.Query
-constraintsQ = fromString $ unlines
-  [ "SELECT tc.constraint_name, tc.table_name as ref_origin, u.table_name as ref_target, "
-  , "array_agg(column_name)::text[] as column_names, constraint_type FROM information_schema.table_constraints tc "
-  , "JOIN information_schema.constraint_column_usage u ON tc.constraint_catalog=u.constraint_catalog AND "
-  , "tc.constraint_schema=u.constraint_schema AND tc.constraint_name=u.constraint_name "
-  , "GROUP BY tc.constraint_name, ref_origin, ref_target, constraint_type"
+-- | Return all foreign key constraints for /all/ 'Table's.
+
+foreignKeysQ :: Pg.Query
+foreignKeysQ = fromString $ unlines
+  [ "SELECT kcu.table_name as foreign_table,"
+  , "       rel_kcu.table_name as primary_table,"
+  , "       array_agg(kcu.column_name)::text[] as fk_columns,"
+  , "       array_agg(rel_kcu.column_name)::text[] as pk_columns,"
+  , "       kcu.constraint_name as cname"
+  , "FROM information_schema.table_constraints tco"
+  , "JOIN information_schema.key_column_usage kcu"
+  , "          on tco.constraint_schema = kcu.constraint_schema"
+  , "          and tco.constraint_name = kcu.constraint_name"
+  , "JOIN information_schema.referential_constraints rco"
+  , "          on tco.constraint_schema = rco.constraint_schema"
+  , "          and tco.constraint_name = rco.constraint_name"
+  , "JOIN information_schema.key_column_usage rel_kcu"
+  , "          on rco.unique_constraint_schema = rel_kcu.constraint_schema"
+  , "          and rco.unique_constraint_name = rel_kcu.constraint_name"
+  , "          and kcu.ordinal_position = rel_kcu.ordinal_position"
+  , "GROUP BY foreign_table, primary_table, cname"
+  , "ORDER BY primary_table"
+  ]
+
+-- | Return /all other constraints that are not FKs/ (i.e. 'PRIMARY KEY', 'UNIQUE', etc) for all the tables.
+otherConstraintsQ :: Pg.Query
+otherConstraintsQ = fromString $ unlines
+  [ "SELECT kcu.table_name as foreign_table,"
+  , "       tco.constraint_type as ctype,"
+  , "       array_agg(kcu.column_name)::text[] as fk_columns,"
+  , "       kcu.constraint_name as cname"
+  , "FROM information_schema.table_constraints tco"
+  , "RIGHT JOIN information_schema.key_column_usage kcu"
+  , "           on tco.constraint_schema = kcu.constraint_schema"
+  , "           and tco.constraint_name = kcu.constraint_name"
+  , "LEFT JOIN  information_schema.referential_constraints rco"
+  , "           on tco.constraint_schema = rco.constraint_schema"
+  , "           and tco.constraint_name = rco.constraint_name"
+  , "LEFT JOIN  information_schema.key_column_usage rel_kcu"
+  , "           on rco.unique_constraint_schema = rel_kcu.constraint_schema"
+  , "           and rco.unique_constraint_name = rel_kcu.constraint_name"
+  , "           and kcu.ordinal_position = rel_kcu.ordinal_position"
+  , "WHERE tco.constraint_type = 'PRIMARY KEY' OR tco.constraint_type = 'UNIQUE'"
+  , "GROUP BY foreign_table, ctype, cname"
+  , "ORDER BY ctype"
   ]
 
 -- | Return all \"action types\" for /all/ the constraints.
@@ -121,7 +171,7 @@ referenceActionsQ = fromString $ unlines
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
   allConstraints <- getAllConstraints conn
-  tables   <- Pg.fold_ conn userTablesQ mempty (getTable allConstraints)
+  tables         <- Pg.fold_ conn userTablesQ mempty (getTable allConstraints)
   pure $ Schema tables
 
   where
@@ -209,26 +259,35 @@ type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
 
 getAllConstraints :: Pg.Connection -> IO AllConstraints
 getAllConstraints conn = do
-    allActions <- Pg.query_ conn referenceActionsQ
-    allConstraints <- Pg.query_ conn constraintsQ
-    pure $ foldl' (addConstraint $ mkActions allActions) mempty allConstraints
+    allActions <- mkActions <$> Pg.query_ conn referenceActionsQ
+    allForeignKeys <- Pg.fold_ conn foreignKeysQ mempty (\acc -> pure . addFkConstraint allActions acc)
+    Pg.fold_ conn otherConstraintsQ allForeignKeys (\acc -> pure . addOtherConstraint acc)
   where
-      addConstraint :: ReferenceActions -> AllConstraints -> SqlRawConstraint -> AllConstraints
-      addConstraint actions st SqlRawConstraint{..} = flip execState st $ do
-          let currentTable = sqlCon_ref_origin
-          let columnSet = S.fromList . V.toList $ sqlCon_columns
+      addFkConstraint :: ReferenceActions 
+                      -> AllConstraints 
+                      -> SqlForeignConstraint
+                      -> AllConstraints
+      addFkConstraint actions st SqlForeignConstraint{..} = flip execState st $ do
+        let currentTable = sqlFk_foreign_table
+        let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
+        -- Here we need to add two constraints: one for 'ForeignKey' and one for
+        -- 'IsForeignKeyOf'.
+        let (onDelete, onUpdate) = 
+                case M.lookup sqlFk_name (getActions actions) of
+                  Nothing -> (NoAction, NoAction)
+                  Just a  -> (actionOnDelete a, actionOnUpdate a)
+        addTableConstraint sqlFk_primary_table (IsForeignKeyOf sqlFk_foreign_table columnSet) 
+        addTableConstraint currentTable (ForeignKey sqlFk_name sqlFk_primary_table columnSet onDelete onUpdate)
+
+      addOtherConstraint :: AllConstraints 
+                         -> SqlOtherConstraint
+                         -> AllConstraints
+      addOtherConstraint st SqlOtherConstraint{..} = flip execState st $ do
+          let currentTable = sqlCon_table
+          let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
           case sqlCon_constraint_type of
-            SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name (S.fromList $ V.toList sqlCon_columns))
+            SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name columnSet)
             SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
-            SQL_raw_fk -> do
-                -- Here we need to add two constraints: one for 'ForeignKey' and one for
-                -- 'IsForeignKeyOf'.
-                let (onDelete, onUpdate) = 
-                        case M.lookup sqlCon_name (getActions actions) of
-                          Nothing -> (NoAction, NoAction)
-                          Just a  -> (actionOnDelete a, actionOnUpdate a)
-                addTableConstraint sqlCon_ref_target (IsForeignKeyOf sqlCon_ref_origin columnSet) 
-                addTableConstraint currentTable (ForeignKey sqlCon_ref_target columnSet onDelete onUpdate)
 
 
 newtype ReferenceActions = ReferenceActions { getActions :: Map Text Actions }

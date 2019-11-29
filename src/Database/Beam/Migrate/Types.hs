@@ -57,10 +57,11 @@ type ConstraintName = Text
 data TableConstraint =
       PrimaryKey ConstraintName (Set ColumnName)
       -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
-    | ForeignKey TableName (Set ColumnName) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
+    | ForeignKey ConstraintName TableName (Set (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
       -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
       -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
-    | IsForeignKeyOf TableName (Set ColumnName)
+      -- The set stores a (fk_column, pk_column) correspondence.
+    | IsForeignKeyOf TableName (Set (ColumnName, ColumnName))
       -- ^ \"backward pointer\" to express the relation that the current table has some of its columns
       -- referenced in a 'ForeignKey' constraint. This is usually found in the 'tableConstraints' of the table
       -- where the foreign key \"points to\".
