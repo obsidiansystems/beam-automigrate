@@ -66,6 +66,7 @@ fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (Databas
                -> Schema
 fromDbSettings db = gSchema db (from db)
 
+
 defaultAnnotatedDbSettings :: forall be db. 
                            ( Generic (db (DatabaseEntity be db))
                            , Generic (db (AnnotatedDatabaseEntity be db))
@@ -91,6 +92,7 @@ defaultAnnotatedDbSettings db = runIdentity $
              -> m (AnnotatedDatabaseEntity be db ty)
     annotate (DatabaseEntity edesc) _ = 
         pure $ AnnotatedDatabaseEntity dbAnnotatedEntityAuto (DatabaseEntity edesc)
+
 
 fromAnnotatedDbSettings :: ( Generic (AnnotatedDatabaseSettings be db)
                            , GSchema (Rep (AnnotatedDatabaseSettings be db)))

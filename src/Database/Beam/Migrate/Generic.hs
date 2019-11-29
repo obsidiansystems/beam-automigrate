@@ -306,3 +306,16 @@ instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :
   gTableLookupTable _ sel tbl _ (k :*: ks) =
     gTableLookupTables sel tbl k ks
 
+--
+-- Generic machinery for an 'AnnotatedDatabaseSettings'
+--
+
+instance ( Beam.Table tbl, GColumns (Rep (TableSettings tbl)), Generic (TableSettings tbl) )
+  => GTableEntry (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry (K1 annotatedEntity) =
+      let entity = annotatedEntity ^. deannotate
+          tName = entity ^. dbEntityDescriptor . dbEntityName
+          pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
+          cons  = dbAnnotatedConstraints (annotatedEntity ^. annotatedDescriptor)
+          columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
+    in  (TableName tName, Table (pks <> cons) columns )

@@ -120,6 +120,9 @@ instance IsDatabaseEntity be (TableEntity tbl)
 lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
 lowerEntityDescriptor = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e ^. dbEntityDescriptor)
 
+annotatedDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (AnnotatedDatabaseEntityDescriptor be entityType)
+annotatedDescriptor = Lens.to (\(AnnotatedDatabaseEntity e _) -> e)
+
 deannotate :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntity be db entityType)
 deannotate = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e)
 
