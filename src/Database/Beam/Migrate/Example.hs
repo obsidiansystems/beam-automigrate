@@ -66,7 +66,7 @@ data OrderT f = Order
   deriving (Generic, Beamable)
 
 data LineItemT f = LineItem
-  { lineItemOrderID  :: PrimaryKey OrderT f
+  { lineItemOrderID  :: PrimaryKey OrderT (Beam.Nullable f)
   , lineItemFlowerID :: PrimaryKey FlowerT f
   , lineItemQuantity :: Columnar f Int64
   }
@@ -91,7 +91,7 @@ instance Beam.Table OrderT where
 
 instance Beam.Table LineItemT where
   data PrimaryKey LineItemT f =
-    LineItemID (PrimaryKey OrderT f) (PrimaryKey FlowerT f)
+    LineItemID (PrimaryKey OrderT (Beam.Nullable f)) (PrimaryKey FlowerT f)
     deriving (Generic, Beamable)
   primaryKey = LineItemID <$> lineItemOrderID <*> lineItemFlowerID
 

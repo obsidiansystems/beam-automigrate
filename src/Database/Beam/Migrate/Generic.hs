@@ -34,6 +34,12 @@ import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
 
 import           Database.Beam.Migrate.Compat
 
+-- | To make kind signatures more readable.
+type DatabaseKind = (Type -> Type) -> Type
+
+-- | To make kind signatures more readable.
+type TableKind    = (Type -> Type) -> Type
+
 {- Machinery to derive a 'Schema' from a 'DatabaseSettings'. -}
 
 class GSchema be db x where
@@ -56,19 +62,13 @@ class GColumns x where
     gColumns :: x p -> Columns
 
 class GTableConstraintColumns be db x where
-    gTableConstraintsColumns :: Beam.DatabaseSettings be db -> [ColumnName] -> x p -> S.Set TableConstraint
+    gTableConstraintsColumns :: Beam.DatabaseSettings be db -> x p -> S.Set TableConstraint
 
 class GColumnEntry x where
     gColumnEntry :: x p -> (ColumnName, Column)
 
-class GTableConstraintColumnEntry be db x where
-    gTableConstraintsEntry :: Beam.DatabaseSettings be db -> [ColumnName] -> x p -> S.Set TableConstraint
-
 class GColumn x where
     gColumn :: x p -> Column
-
-class GTableConstraintColumn be db x where
-    gTableConstraintsColumn :: Beam.DatabaseSettings be db -> [ColumnName] -> x p -> S.Set TableConstraint
 
 --
 -- Deriving information about 'Schema's
@@ -104,27 +104,26 @@ instance ( IsDatabaseEntity be (TableEntity tbl)
     let tName = entity ^. dbEntityDescriptor . dbEntityName
         pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
         columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-        cNames  = M.keys columns
-        constraints = gTableConstraintsColumns db cNames . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
+        constraints = gTableConstraintsColumns db . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
     in  (TableName tName, Table (S.union pks constraints) columns)
 
 instance GColumns x => GColumns (D1 f x) where
   gColumns (M1 x) = gColumns x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (D1 f x) where
-  gTableConstraintsColumns db cnames (M1 x) = gTableConstraintsColumns db cnames x
+  gTableConstraintsColumns db (M1 x) = gTableConstraintsColumns db x
 
 instance GColumns x => GColumns (C1 f x) where
   gColumns (M1 x) = gColumns x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (C1 f x) where
-  gTableConstraintsColumns db cnames (M1 x) = gTableConstraintsColumns db cnames x
+  gTableConstraintsColumns db (M1 x) = gTableConstraintsColumns db x
 
 instance (GColumns a, GColumns b) => GColumns (a :*: b) where
   gColumns (a :*: b) = gColumns a <> gColumns b
 
 instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => GTableConstraintColumns be db (a :*: b) where
-  gTableConstraintsColumns db cnames (a :*: b) = S.union (gTableConstraintsColumns db cnames a) (gTableConstraintsColumns db cnames b)
+  gTableConstraintsColumns db (a :*: b) = S.union (gTableConstraintsColumns db a) (gTableConstraintsColumns db b)
 
 
 --
@@ -139,153 +138,154 @@ instance (HasSchemaConstraints (Beam.TableField e t), HasDefaultSqlDataType t)
                          (S.fromList (schemaConstraints (Proxy @(Beam.TableField e t))))
     in  M.singleton colName col
 
-instance GTableConstraintColumns be db (S1 m (K1 R (Beam.TableField e t))) where
-  gTableConstraintsColumns _db _cnames (M1 (K1 _)) = S.empty
-    -- e :: Beam.TableField e t
-
--- TODO: It seems problematic to dictate the functor to be 'Beam.TableField t' here.
-instance ( GColumns (Rep (PrimaryKey f (Beam.TableField t)))
-         , Generic (PrimaryKey f (Beam.TableField t))
-         , Beamable (PrimaryKey f)
+instance ( GColumns (Rep (PrimaryKey tbl f))
+         , Generic (PrimaryKey tbl f)
+         , Beamable (PrimaryKey tbl)
          )
-    => GColumns (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
+    => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
   gColumns (M1 (K1 e)) = gColumns (from e)
 
-instance ( Generic (Beam.DatabaseSettings be db)
-         , GTableLookupSettings f (Rep (Beam.DatabaseSettings be db))
-         ) => GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey f (Beam.TableField t)))) where
-  gTableConstraintsColumns db cnames (M1 (K1 _e)) =
-    -- e :: PrimaryKey f (Beam.TableField t)
-    S.singleton (ForeignKey (fst (gTableLookupSettings (Proxy @f) (from db))) (S.fromList cnames) {- TODO -} NoAction NoAction) -- unclear what the default should be
-    -- | ForeignKey TableName (Set ColumnName) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
+instance GTableConstraintColumns be db (S1 m (K1 R (Beam.TableField e t))) where
+  gTableConstraintsColumns _db (M1 (K1 _)) = S.empty
 
-type DatabaseKind = (Type -> Type) -> Type
-type TableKind = (Type -> Type) -> Type
+instance ( Generic (Beam.DatabaseSettings be db)
+         , Generic (PrimaryKey tbl f)
+         , GColumns (Rep (PrimaryKey tbl f))
+         , GTableLookupSettings sel tbl (Rep (Beam.DatabaseSettings be db))
+         , m ~ MetaSel sel su ss ds
+         ) => GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f))) where
+  gTableConstraintsColumns db (M1 (K1 e)) =
+    S.singleton
+      (ForeignKey
+        (fst (gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)))
+        (S.fromList cnames)
+        NoAction -- what should the default be?
+        NoAction -- what should the default be?
+      )
+    where
+      cnames :: [ColumnName]
+      cnames = M.keys (gColumns (from e))
 
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
 
-class GTableLookupSettings (tbl :: TableKind) x where
-  gTableLookupSettings :: Proxy tbl -> x p -> (TableName, [ColumnName])
+-- | Lookup a table in the given DB settings.
+--
+-- The selector name is only provided for error messages.
+--
+-- Only returns if the table type is unique.
+--
+class GTableLookupSettings (sel :: Maybe Symbol) (tbl :: TableKind) x where
+  gTableLookupSettings :: Proxy sel -> Proxy tbl -> x p -> (TableName, [ColumnName])
 
-class GTableLookupTables (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
-  gTableLookupTables :: Proxy tbl -> x p -> k p -> (TableName, [ColumnName])
+-- | Helper class that takes an additional continuation parameter 'k'.
+--
+-- We treat 'k' as a type-level stack with 'U1' being the empty stack and
+-- ':*:' used right-associatively to place items onto the stack.
+--
+-- The reason we do not use a type-level list here is that we also need
+-- a term-level representation of the continuation, and we already have
+-- suitable inhabitants for 'U1' and ':*:'.
+--
+class GTableLookupTables (sel :: Maybe Symbol) (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
+  gTableLookupTables :: Proxy sel -> Proxy tbl -> x p -> k p -> (TableName, [ColumnName])
 
-class GTableLookupExpectFailTables (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
-  gTableLookupTablesExpectFail :: Proxy tbl -> (TableName, [ColumnName]) -> x p -> k p -> (TableName, [ColumnName])
-
-instance
-  (GTableLookupSettings tbl x)
-  => GTableLookupSettings tbl (D1 f x) where
-  gTableLookupSettings tbl (M1 x) = gTableLookupSettings tbl x -- (TableName "foo", [])
-
-instance
-  (GTableLookupTables tbl x U1)
-  => GTableLookupSettings tbl (C1 f x) where
-  gTableLookupSettings tbl (M1 x) = gTableLookupTables tbl x U1
-
-instance
-  (GTableLookupTables tbl x k)
-  => GTableLookupTables tbl (S1 f x) k where
-  gTableLookupTables tbl (M1 x) k = gTableLookupTables tbl x k
-
-instance
-  ( GTableLookupTables tbl a (b :*: k)
-  ) => GTableLookupTables tbl (a :*: b) k where
-  gTableLookupTables tbl (a :*: b) k = gTableLookupTables tbl a (b :*: k)
+-- | We use this function to continue searching once we've already found
+-- a match, and to abort if we find a second match.
+--
+class GTableLookupTablesExpectFail (sel :: Maybe Symbol) (tbl :: TableKind) (x :: Type -> Type) (k :: Type -> Type) where
+  gTableLookupTablesExpectFail :: Proxy sel -> Proxy tbl -> (TableName, [ColumnName]) -> x p -> k p -> (TableName, [ColumnName])
 
 instance
-  (GTableLookupExpectFailTables tbl x k)
-  => GTableLookupExpectFailTables tbl (S1 f x) k where
-  gTableLookupTablesExpectFail tbl r (M1 x) k = gTableLookupTablesExpectFail tbl r x k
+  (GTableLookupSettings sel tbl x)
+  => GTableLookupSettings sel tbl (D1 f x) where
+  gTableLookupSettings sel tbl (M1 x) = gTableLookupSettings sel tbl x
 
 instance
-  ( GTableLookupExpectFailTables tbl a (b :*: k)
-  ) => GTableLookupExpectFailTables tbl (a :*: b) k where
-  gTableLookupTablesExpectFail tbl r (a :*: b) k = gTableLookupTablesExpectFail tbl r a (b :*: k)
+  (GTableLookupTables sel tbl x U1)
+  => GTableLookupSettings sel tbl (C1 f x) where
+  gTableLookupSettings sel tbl (M1 x) = gTableLookupTables sel tbl x U1
 
 instance
-  ( GTableLookupTable (TestTableEqual tbl tbl') tbl k
+  (GTableLookupTables sel tbl x k)
+  => GTableLookupTables sel tbl (S1 f x) k where
+  gTableLookupTables sel tbl (M1 x) k = gTableLookupTables sel tbl x k
+
+instance
+  ( GTableLookupTables sel tbl a (b :*: k)
+  ) => GTableLookupTables sel tbl (a :*: b) k where
+  gTableLookupTables sel tbl (a :*: b) k = gTableLookupTables sel tbl a (b :*: k)
+
+instance
+  (GTableLookupTablesExpectFail sel tbl x k)
+  => GTableLookupTablesExpectFail sel tbl (S1 f x) k where
+  gTableLookupTablesExpectFail sel tbl r (M1 x) k = gTableLookupTablesExpectFail sel tbl r x k
+
+instance
+  ( GTableLookupTablesExpectFail sel tbl a (b :*: k)
+  ) => GTableLookupTablesExpectFail sel tbl (a :*: b) k where
+  gTableLookupTablesExpectFail sel tbl r (a :*: b) k = gTableLookupTablesExpectFail sel tbl r a (b :*: k)
+
+instance
+  ( GTableLookupTable (TestTableEqual tbl tbl') sel tbl k
   , Beamable tbl'
   ) =>
-  GTableLookupTables tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
-  gTableLookupTables _tbl (K1 entity) k =
+  GTableLookupTables sel tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
+  gTableLookupTables sel tbl (K1 entity) k =
     let
       tName = entity ^. dbEntityDescriptor . dbEntityName
     in
-      gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) (Proxy @tbl) (TableName tName, []) k
+      gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tName, []) k
 
 instance
-  ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') tbl k
+  ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') sel tbl k
   , Beamable tbl'
   ) =>
-  GTableLookupExpectFailTables tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
-  gTableLookupTablesExpectFail tbl r (K1 _entity) k =
-    gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) tbl r k
+  GTableLookupTablesExpectFail sel tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
+  gTableLookupTablesExpectFail sel tbl r (K1 _entity) k =
+    gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) sel tbl r k
 
 type family TestTableEqual (tbl1 :: TableKind) (tbl2 :: TableKind) :: Bool where
   TestTableEqual tbl tbl = True
   TestTableEqual _   _   = False
 
-class GTableLookupTable (b :: Bool) (tbl :: TableKind) (k :: Type -> Type) where
-  gTableLookupTable :: Proxy b -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
+class GTableLookupTable (b :: Bool) (sel :: Maybe Symbol) (tbl :: TableKind) (k :: Type -> Type) where
+  gTableLookupTable :: Proxy b -> Proxy sel -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
 
-class GTableLookupTableExpectFail (b :: Bool) (tbl :: TableKind) (k :: Type -> Type) where
-  gTableLookupTableExpectFail :: Proxy b -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
+class GTableLookupTableExpectFail (b :: Bool) (sel :: Maybe Symbol) (tbl :: TableKind) (k :: Type -> Type) where
+  gTableLookupTableExpectFail :: Proxy b -> Proxy sel -> Proxy tbl -> (TableName, [ColumnName]) -> k p -> (TableName, [ColumnName])
 
-instance GTableLookupTable True tbl U1 where
-  gTableLookupTable _ _ r _ = r
+instance GTableLookupTable True sel tbl U1 where
+  gTableLookupTable _ _ _ r _ = r
 
-instance TypeError (Text "lookup ambiguous") => GTableLookupTableExpectFail True tbl k where
-  gTableLookupTableExpectFail _ _ _ _ = error "impossible"
+type LookupAmbiguous (sel :: Maybe Symbol) (tbl :: TableKind) =
+  Text "Could not derive foreign key constraint for " :<>: ShowField sel :<>: Text "," :$$:
+  Text "because there are several tables of type `" :<>: ShowType tbl :<>: Text "' in the schema."
 
-instance (GTableLookupExpectFailTables tbl k ks) => GTableLookupTable True tbl (k :*: ks) where
-  gTableLookupTable _ tbl r (k :*: ks) = gTableLookupTablesExpectFail tbl r k ks
+type LookupFailed (sel :: Maybe Symbol) (tbl :: TableKind) =
+  Text "Could not derive foreign key constraint for " :<>: ShowField sel :<>: Text "," :$$:
+  Text "because there are no tables of type `" :<>: ShowType tbl :<>: Text "' in the schema."
 
-instance TypeError (Text "lookup failed") => GTableLookupTable False tbl U1 where
+type family ShowField (sel :: Maybe Symbol) :: ErrorMessage where
+  ShowField Nothing    = Text "unnamed field"
+  ShowField (Just sel) = Text "field `" :<>: Text sel :<>: Text "'"
+
+instance TypeError (LookupAmbiguous sel tbl) => GTableLookupTableExpectFail True sel tbl k where
+  gTableLookupTableExpectFail _ _ _ _ _ = error "impossible"
+
+instance (GTableLookupTablesExpectFail sel tbl k ks) => GTableLookupTable True sel tbl (k :*: ks) where
+  gTableLookupTable _ sel tbl r (k :*: ks) = gTableLookupTablesExpectFail sel tbl r k ks
+
+instance TypeError (LookupFailed sel tbl) => GTableLookupTable False sel tbl U1 where
   gTableLookupTable _ _ _ _ = error "impossible"
 
-instance GTableLookupTableExpectFail False tbl U1 where
-  gTableLookupTableExpectFail _ _ r _ = r
+instance GTableLookupTableExpectFail False sel tbl U1 where
+  gTableLookupTableExpectFail _ _ _ r _ = r
 
-instance (GTableLookupExpectFailTables tbl k ks) => GTableLookupTableExpectFail False tbl (k :*: ks) where
-  gTableLookupTableExpectFail _ tbl r (k :*: ks) = gTableLookupTablesExpectFail tbl r k ks
+instance (GTableLookupTablesExpectFail sel tbl k ks) => GTableLookupTableExpectFail False sel tbl (k :*: ks) where
+  gTableLookupTableExpectFail _ sel tbl r (k :*: ks) = gTableLookupTablesExpectFail sel tbl r k ks
 
-instance GTableLookupTables tbl k ks => GTableLookupTable False tbl (k :*: ks) where
-  gTableLookupTable _ tbl _ (k :*: ks) =
-    gTableLookupTables tbl k ks
+instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :*: ks) where
+  gTableLookupTable _ sel tbl _ (k :*: ks) =
+    gTableLookupTables sel tbl k ks
 
--- type family TableLookup  (tbl :: Type -> Type) (db :: (Type -> Type) -> Type) :: [
-
-{-
-data ForeignKeyConstraint =
-  ForeignKeyConstraint TableName [ColumnName] TableName
-
--- | To be applied to DatabaseSettings.
-class GDiscoverForeignKeys x where
-    gDiscoverForeignKeysSettings :: x p -> [ForeignKeyConstraint]
-
--- Table-specific classes
-
--- | To be applied to the tables type.
-class GDiscoverForeignKeysTables x where
-    gDiscoverForeignKeysTables :: x p -> [ForeignKeyConstraint]
-
-class GDiscoverForeignKeysTableEntry x where
-    gDiscoverForeignKeysTableEntry :: x p -> [ForeignKeyConstraint]
-
-class GDiscoverForeignKeysTable x where
-    gDiscoverForeignKeysTable :: x p -> [ForeignKeyConstraint]
-
--- Column-specific classes
-
-class GDiscoverForeignKeysColumns x where
-    gDiscoverForeignKeysColumns :: x p -> [ForeignKeyConstraint]
-
-class GColumnEntry x where
-    gColumnEntry :: x p -> (ColumnName, Column)
-
-class GColumn x where
-    gColumn :: x p -> Column
-
--}
