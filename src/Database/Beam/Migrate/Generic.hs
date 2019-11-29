@@ -62,7 +62,7 @@ class GColumns x where
     gColumns :: x p -> Columns
 
 class GTableConstraintColumns be db x where
-    gTableConstraintsColumns :: Beam.DatabaseSettings be db -> x p -> S.Set TableConstraint
+    gTableConstraintsColumns :: Beam.DatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
 
 class GColumnEntry x where
     gColumnEntry :: x p -> (ColumnName, Column)
@@ -104,26 +104,26 @@ instance ( IsDatabaseEntity be (TableEntity tbl)
     let tName = entity ^. dbEntityDescriptor . dbEntityName
         pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
         columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-        constraints = gTableConstraintsColumns db . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
+        constraints = gTableConstraintsColumns db (TableName tName) . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
     in  (TableName tName, Table (S.union pks constraints) columns)
 
 instance GColumns x => GColumns (D1 f x) where
   gColumns (M1 x) = gColumns x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (D1 f x) where
-  gTableConstraintsColumns db (M1 x) = gTableConstraintsColumns db x
+  gTableConstraintsColumns db tbl (M1 x) = gTableConstraintsColumns db tbl x
 
 instance GColumns x => GColumns (C1 f x) where
   gColumns (M1 x) = gColumns x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (C1 f x) where
-  gTableConstraintsColumns db (M1 x) = gTableConstraintsColumns db x
+  gTableConstraintsColumns db tbl (M1 x) = gTableConstraintsColumns db tbl x
 
 instance (GColumns a, GColumns b) => GColumns (a :*: b) where
   gColumns (a :*: b) = gColumns a <> gColumns b
 
 instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => GTableConstraintColumns be db (a :*: b) where
-  gTableConstraintsColumns db (a :*: b) = S.union (gTableConstraintsColumns db a) (gTableConstraintsColumns db b)
+  gTableConstraintsColumns db tbl (a :*: b) = S.union (gTableConstraintsColumns db tbl a) (gTableConstraintsColumns db tbl b)
 
 
 --
@@ -146,7 +146,7 @@ instance ( GColumns (Rep (PrimaryKey tbl f))
   gColumns (M1 (K1 e)) = gColumns (from e)
 
 instance GTableConstraintColumns be db (S1 m (K1 R (Beam.TableField e t))) where
-  gTableConstraintsColumns _db (M1 (K1 _)) = S.empty
+  gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
 
 instance ( Generic (Beam.DatabaseSettings be db)
          , Generic (PrimaryKey tbl f)
@@ -154,26 +154,35 @@ instance ( Generic (Beam.DatabaseSettings be db)
          , GTableLookupSettings sel tbl (Rep (Beam.DatabaseSettings be db))
          , m ~ MetaSel sel su ss ds
          ) => GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f))) where
-  gTableConstraintsColumns db (M1 (K1 e)) =
-    S.singleton
-      (ForeignKey
-        (fst (gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)))
-        (S.fromList cnames)
-        NoAction -- what should the default be?
-        NoAction -- what should the default be?
-      )
+  gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
+    case cnames of
+      [] -> S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
+      ColumnName cname : _ ->
+        S.singleton
+          (ForeignKey
+            (tname <> "_" <> cname <> "_fkey")
+            reftname
+            (S.fromList (zip cnames refcnames))
+            NoAction -- TODO: what should the default be?
+            NoAction -- TODO: what should the default be?
+          )
     where
       cnames :: [ColumnName]
       cnames = M.keys (gColumns (from e))
 
+      reftname :: TableName
+      refcnames :: [ColumnName]
+      (reftname, refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
 
--- | Lookup a table in the given DB settings.
+-- | Lookup a table by type in the given DB settings.
 --
 -- The selector name is only provided for error messages.
 --
 -- Only returns if the table type is unique.
+-- Returns the table name and the column names of its primary key.
 --
 class GTableLookupSettings (sel :: Maybe Symbol) (tbl :: TableKind) x where
   gTableLookupSettings :: Proxy sel -> Proxy tbl -> x p -> (TableName, [ColumnName])
@@ -229,13 +238,15 @@ instance
 instance
   ( GTableLookupTable (TestTableEqual tbl tbl') sel tbl k
   , Beamable tbl'
+  , Beam.Table tbl'
   ) =>
   GTableLookupTables sel tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
   gTableLookupTables sel tbl (K1 entity) k =
     let
-      tName = entity ^. dbEntityDescriptor . dbEntityName
+      tname = entity ^. dbEntityDescriptor . dbEntityName
+      cnames = pkFieldNames entity
     in
-      gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tName, []) k
+      gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tname, cnames) k
 
 instance
   ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') sel tbl k
