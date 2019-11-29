@@ -56,17 +56,17 @@ data SchemaIdentifier = TBL TableName
                       | COL ColumnName
                       deriving (Show, Eq, Ord)
 
-newtype DatabaseAnnotations = 
+newtype DatabaseAnnotations =
     DatabaseAnnotations { getAnnotations :: Map SchemaIdentifier Annotation }
 
 type Annotation = ()
 
 
 -- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
-fromDbSettings :: (Generic (DatabaseSettings be db), GSchema (Rep (DatabaseSettings be db)))
+fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (DatabaseSettings be db)))
                => DatabaseSettings be db
                -> Schema
-fromDbSettings = gSchema . from
+fromDbSettings db = gSchema db (from db)
 
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
 
@@ -100,16 +100,16 @@ toSqlSyntax = \case
                                                          )
                                    <> ")"
                 )
-  TableRemoved tblName    -> 
+  TableRemoved tblName    ->
       ddlSyntax ("DROP TABLE \"" <> tableName tblName <> "\"")
-  TableConstraintAdded  tblName cstr -> 
+  TableConstraintAdded  tblName cstr ->
       updateSyntax (alterTable tblName <> "ADD CONSTRAINT " <> renderAlterTableConstraint cstr)
-  TableConstraintRemoved tblName cstr -> 
+  TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> "DROP CONSTRAINT " <> renderAlterTableConstraint cstr)
   ColumnAdded tblName colName col ->
-      updateSyntax (alterTable tblName <> "ADD COLUMN \"" 
-                                       <> columnName colName 
-                                       <> "\" " 
+      updateSyntax (alterTable tblName <> "ADD COLUMN \""
+                                       <> columnName colName
+                                       <> "\" "
                                        <> renderDataType (columnType col)
                                        <> " "
                                        <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
@@ -118,7 +118,7 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> "DROP COLUMN \"" <> columnName colName <> "\"")
   ColumnTypeChanged tblName colName _old new ->
       updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" TYPE " <> renderDataType new)
-  ColumnConstraintAdded tblName colName cstr -> 
+  ColumnConstraintAdded tblName colName cstr ->
       updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" SET " <> renderColumnConstraint cstr)
   ColumnConstraintRemoved tblName colName cstr ->
       updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" DROP " <> renderColumnConstraint cstr)
@@ -171,10 +171,10 @@ toSqlSyntax = \case
         AST.DataTypeChar varying prec charSet ->
             let ty = if varying then "VARCHAR" else "CHAR"
             in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
-        AST.DataTypeNationalChar varying prec -> 
-            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR" 
+        AST.DataTypeNationalChar varying prec ->
+            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
             in ty <> sqlOptPrec prec
-        AST.DataTypeBit varying prec -> 
+        AST.DataTypeBit varying prec ->
             let ty = if varying then "BIT VARYING" else "BIT"
             in ty <> sqlOptPrec prec
         AST.DataTypeNumeric prec -> "NUMERIC" <> sqlOptNumericPrec prec
