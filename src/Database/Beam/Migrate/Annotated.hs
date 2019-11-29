@@ -115,6 +115,7 @@ instance IsDatabaseEntity be (TableEntity tbl)
 
   dbAnnotatedEntityAuto = AnnotatedDatabaseTable undefined mempty
 
+-- | A 'SimpleGetter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
 lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
 lowerEntityDescriptor = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e ^. dbEntityDescriptor)
 
