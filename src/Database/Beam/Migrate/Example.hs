@@ -124,7 +124,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
   , dbLineItems = (addTableConstraints $ 
       S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
-                 --, ForeignKey "lineItemOrderID_fkey" (TableName "orders2") mempty NoAction NoAction
+                 , ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
                  ])
                <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
   }

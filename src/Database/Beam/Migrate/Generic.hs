@@ -1,3 +1,7 @@
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -25,17 +29,12 @@ import           GHC.TypeLits
 import           Database.Beam.Schema           ( Beamable
                                                 , PrimaryKey
                                                 , TableEntity
-                                                , TableSettings
                                                 )
 import qualified Database.Beam.Schema          as Beam
-import           Database.Beam.Schema.Tables    ( IsDatabaseEntity
-                                                , dbEntityDescriptor
+import           Database.Beam.Schema.Tables    ( dbEntityDescriptor
                                                 , dbEntityName
-                                                , dbTableSettings
-                                                , DatabaseEntity(..)
                                                 )
 
-import           Database.Beam.Migrate.Compat
 import           Database.Beam.Migrate.Annotated
 
 -- | To make kind signatures more readable.
@@ -98,6 +97,10 @@ instance GTableEntry be db x => GTableEntry be db (S1 f x) where
 
 instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
   gTables db (a :*: b) = gTables db a <> gTables db b
+
+-- test starts
+
+-- test ends
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , GColumns (Rep (TableSchema tbl))
@@ -178,6 +181,7 @@ instance ( Generic (AnnotatedDatabaseSettings be db)
       refcnames :: [ColumnName]
       (reftname, refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
 
+
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
 
@@ -250,8 +254,7 @@ instance
       entity = annEntity ^. deannotate
       tname  = entity ^. dbEntityDescriptor . dbEntityName
       cnames = pkFieldNames entity
-    in
-      gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tname, cnames) k
+    in gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tname, cnames) k
 
 instance
   ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') sel tbl k
