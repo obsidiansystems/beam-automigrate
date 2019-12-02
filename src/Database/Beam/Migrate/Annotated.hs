@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -26,6 +27,7 @@ import qualified Data.Set as S
 import           Data.Monoid (Endo(..))
 
 import qualified Database.Beam                           as Beam
+import           Database.Beam.Schema.Tables              ( PrimaryKey )
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Migrate.Compat
 import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
@@ -35,9 +37,11 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDefaultRequirements
                                                           , DatabaseEntityRegularRequirements
                                                           , dbEntityDescriptor
+                                                          , dbTableSettings
                                                           , FieldModification(..)
                                                           , EntityModification(..)
                                                           )
+
 --
 -- Annotating a 'DatabaseSettings' with meta information.
 --
@@ -86,6 +90,10 @@ instance (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequir
   gZipDatabase _ combine ~(K1 x) ~(K1 y) =
     K1 <$> combine x y
 
+--
+-- An annotated Database settings.
+--
+
 type AnnotatedDatabaseSettings be db = db (AnnotatedDatabaseEntity be db)
 
 data AnnotatedDatabaseEntity be (db :: (* -> *) -> *) entityType where
@@ -115,9 +123,13 @@ instance IsDatabaseEntity be (TableEntity tbl)
   type AnnotatedDatabaseEntityDefaultRequirements be (TableEntity tbl) =
       (DatabaseEntityDefaultRequirements be (TableEntity tbl))
   type AnnotatedDatabaseEntityRegularRequirements be (TableEntity tbl) =
-      (DatabaseEntityRegularRequirements be (TableEntity tbl))
+      (DatabaseEntityRegularRequirements be (TableEntity tbl)
+      , GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ())
+      , Generic (TableSchema tbl)
+      , Generic (Beam.TableSettings tbl)
+      )
 
-  dbAnnotatedEntityAuto _ = AnnotatedDatabaseTable undefined mempty
+  dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) mempty
 
 -- | A 'SimpleGetter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
 lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
@@ -134,12 +146,12 @@ type TableSchema tbl =
     tbl (TableFieldSchema tbl)
 
 -- | A schema for a field within a given table
-data TableFieldSchema (table :: (* -> *) -> *) ty where
+data TableFieldSchema (tbl :: (* -> *) -> *) ty where
     TableFieldSchema 
       :: 
       { tableFieldName :: Text
       , tableFieldSchema :: FieldSchema ty } 
-      -> TableFieldSchema table ty
+      -> TableFieldSchema tbl ty
 
 data FieldSchema ty where
   FieldSchema :: ColumnType
@@ -148,14 +160,74 @@ data FieldSchema ty where
 
 deriving instance Show (FieldSchema ty)
 
--- | Instantiate a field in a table with the default type.
-defaultFieldSchema :: forall ty. ( SchemaConstraint ty ~ ColumnConstraint
-                                 , HasSchemaConstraints ty
-                                 , HasDefaultSqlDataType ty
-                                 ) 
-                   => FieldSchema ty
-defaultFieldSchema = FieldSchema (defaultSqlDataType (Proxy @ty) False) (schemaConstraints (Proxy @ty))
+--
+-- Deriving a 'TableSchema'.
+--
 
+class GDefaultTableSchema x y where
+    gDefTblSchema :: Proxy x -> y -> x
+
+instance GDefaultTableSchema (x p) (y p) => GDefaultTableSchema (D1 f x p) (D1 f y p) where
+    gDefTblSchema (Proxy :: Proxy (D1 f x p)) (M1 y) = 
+        M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
+
+instance GDefaultTableSchema (x p) (y p) => GDefaultTableSchema (C1 f x p) (C1 f y p) where
+    gDefTblSchema (Proxy :: Proxy (C1 f x p)) (M1 y) = 
+        M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
+
+instance (GDefaultTableSchema (a p) (c p), GDefaultTableSchema (b p) (d p)) 
+    => GDefaultTableSchema ((a :*: b) p) ((c :*: d) p) where
+    gDefTblSchema (Proxy :: Proxy ((a :*: b) p)) (c :*: d) = 
+        gDefTblSchema (Proxy :: Proxy (a p)) c :*: 
+        gDefTblSchema (Proxy :: Proxy (b p)) d
+
+instance ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint
+         , HasSchemaConstraints (Beam.TableField tbl ty), HasDefaultSqlDataType ty
+         )
+    => GDefaultTableSchema (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)
+                           (S1 f (K1 Generic.R (Beam.TableField tbl ty)) p) where
+    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)) (M1 (K1 fName)) = M1 (K1 s)
+      where s = TableFieldSchema (fName ^. Beam.fieldName) defaultFieldSchema
+            defaultFieldSchema = FieldSchema (defaultSqlDataType (Proxy @ty) False)
+                                             (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
+
+-- | Instance for 'PrimaryKey's going from one table into another.
+instance ( Generic (PrimaryKey tbl1 (Beam.TableField tbl2))
+         , Generic (PrimaryKey tbl1 (TableFieldSchema tbl2))
+         , GDefaultTableSchema (Rep (PrimaryKey tbl1 (TableFieldSchema tbl2)) ())
+                               (Rep (PrimaryKey tbl1 (Beam.TableField tbl2)) ())
+         )
+    => GDefaultTableSchema (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())
+                           (S1 f (K1 Generic.R (PrimaryKey tbl1 (Beam.TableField tbl2))) ()) where
+    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) = 
+      M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
+
+-- | Instance for things like 'Nullable (TableFieldSchema tbl)'.
+instance ( Generic (PrimaryKey tbl1 (g (Beam.TableField tbl2)))
+         , Generic (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))
+         , GDefaultTableSchema (Rep (PrimaryKey tbl1 (g (TableFieldSchema tbl2))) ())
+                               (Rep (PrimaryKey tbl1 (g (Beam.TableField tbl2))) ())
+         )
+    => GDefaultTableSchema (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)
+                           (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (Beam.TableField tbl2)))) p) where
+    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)) (M1 (K1 fName)) = 
+      M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
+
+defaultTableSchema :: forall tbl. 
+                   ( GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ())
+                   , Generic (TableSchema tbl)
+                   , Generic (Beam.TableSettings tbl)
+                   )
+                   => Beam.TableSettings tbl 
+                   -> TableSchema tbl
+defaultTableSchema tSettings = 
+    to $ gDefTblSchema (Proxy :: Proxy (Rep (TableSchema tbl) ())) (from' tSettings)
+
+from' :: Generic a => a -> Rep a ()
+from' = from
+
+to' :: Generic a => Rep a () -> a
+to' = to
 
 --
 -- Annotating 'Table's and 'Field's after the default 'AnnotatedDatabaseSettings' has been instantiated.
