@@ -6,9 +6,11 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
-  ( fromDbSettings
-  , fromAnnotatedDbSettings
+  ( fromAnnotatedDbSettings
   , defaultAnnotatedDbSettings
+  -- * Converting from an annotated to a simple 'DatabaseSettings'
+  , deAnnotateDatabase
+  -- * Migrations
   , Migration
   , migrate
   , runMigration
@@ -60,13 +62,6 @@ import qualified Database.Beam.Postgres.Syntax           as Pg
 --
 -- Potential API (sketched)
 --
-
--- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
-fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (DatabaseSettings be db)))
-               => DatabaseSettings be db
-               -> Schema
-fromDbSettings db = gSchema db (from db)
-
 
 -- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
 defaultAnnotatedDbSettings :: forall be db. 
@@ -126,9 +121,7 @@ fromAnnotatedDbSettings :: ( Database be db
                            )
                         => AnnotatedDatabaseSettings be db 
                         -> Schema
-fromAnnotatedDbSettings annDb = 
-    let db = deAnnotateDatabase annDb
-    in gSchema db (from annDb)
+fromAnnotatedDbSettings db = gSchema db (from db)
 
 -- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()

@@ -49,18 +49,18 @@ type TableKind    = (Type -> Type) -> Type
 --
 
 class GSchema be db x where
-    gSchema :: Beam.DatabaseSettings be db -> x p -> Schema
+    gSchema :: AnnotatedDatabaseSettings be db -> x p -> Schema
 
 -- Table-specific classes
 
 class GTables be db x where
-    gTables :: Beam.DatabaseSettings be db -> x p -> Tables
+    gTables :: AnnotatedDatabaseSettings be db -> x p -> Tables
 
 class GTableEntry be db x where
-    gTableEntry :: Beam.DatabaseSettings be db -> x p -> (TableName, Table)
+    gTableEntry :: AnnotatedDatabaseSettings be db -> x p -> (TableName, Table)
 
 class GTable be db x where
-    gTable :: Beam.DatabaseSettings be db -> x p -> Table
+    gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
 
 -- Column-specific classes
 
@@ -68,7 +68,7 @@ class GColumns x where
     gColumns :: x p -> Columns
 
 class GTableConstraintColumns be db x where
-    gTableConstraintsColumns :: Beam.DatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
+    gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
 
 class GColumnEntry x where
     gColumnEntry :: x p -> (ColumnName, Column)
@@ -99,19 +99,21 @@ instance GTableEntry be db x => GTableEntry be db (S1 f x) where
 instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
   gTables db (a :*: b) = gTables db a <> gTables db b
 
-instance ( IsDatabaseEntity be (TableEntity tbl)
-         , GColumns (Rep (TableSettings tbl))
-         , Generic (TableSettings tbl)
+instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
+         , GColumns (Rep (TableSchema tbl))
+         , Generic (TableSchema tbl)
          , Beam.Table tbl
-         , GTableConstraintColumns be db (Rep (TableSettings tbl))
+         , GTableConstraintColumns be db (Rep (TableSchema tbl))
          )
-  => GTableEntry be db (K1 R (Beam.DatabaseEntity be' db' (TableEntity tbl))) where
-  gTableEntry db (K1 entity) =
-    let tName = entity ^. dbEntityDescriptor . dbEntityName
+  => GTableEntry be db (K1 R (AnnotatedDatabaseEntity be' db' (TableEntity tbl))) where
+  gTableEntry db (K1 annEntity) =
+    let entity = annEntity ^. deannotate
+        tName = entity ^. dbEntityDescriptor . dbEntityName
         pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-        columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-        constraints = gTableConstraintsColumns db (TableName tName) . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-    in  (TableName tName, Table (S.union pks constraints) columns)
+        columns = gColumns . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+        annotatedCons  = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
+        discoveredCons = gTableConstraintsColumns db (TableName tName) . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+    in  (TableName tName, Table (pks <> annotatedCons <> discoveredCons) columns)
 
 instance GColumns x => GColumns (D1 f x) where
   gColumns (M1 x) = gColumns x
@@ -136,13 +138,9 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
-instance (HasSchemaConstraints (Beam.TableField e t), HasDefaultSqlDataType t)
-  => GColumns (S1 m (K1 R (Beam.TableField e t))) where
-  gColumns (M1 (K1 e)) =
-    let colName = ColumnName $ e ^. Beam.fieldName
-        col     = Column (defaultSqlDataType (Proxy @t) False) 
-                         (schemaConstraints (Proxy @(Beam.TableField e t)))
-    in  M.singleton colName col
+instance GColumns (S1 m (K1 R (TableFieldSchema tbl ty))) where
+  gColumns (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
+    M.singleton (ColumnName name) (Column ty constr)
 
 instance ( GColumns (Rep (PrimaryKey tbl f))
          , Generic (PrimaryKey tbl f)
@@ -151,13 +149,13 @@ instance ( GColumns (Rep (PrimaryKey tbl f))
     => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
   gColumns (M1 (K1 e)) = gColumns (from e)
 
-instance GTableConstraintColumns be db (S1 m (K1 R (Beam.TableField e t))) where
+instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
 
-instance ( Generic (Beam.DatabaseSettings be db)
+instance ( Generic (AnnotatedDatabaseSettings be db)
          , Generic (PrimaryKey tbl f)
          , GColumns (Rep (PrimaryKey tbl f))
-         , GTableLookupSettings sel tbl (Rep (Beam.DatabaseSettings be db))
+         , GTableLookupSettings sel tbl (Rep (AnnotatedDatabaseSettings be db))
          , m ~ MetaSel sel su ss ds
          ) => GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f))) where
   gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
@@ -246,10 +244,11 @@ instance
   , Beamable tbl'
   , Beam.Table tbl'
   ) =>
-  GTableLookupTables sel tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
-  gTableLookupTables sel tbl (K1 entity) k =
+  GTableLookupTables sel tbl (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl'))) k where
+  gTableLookupTables sel tbl (K1 annEntity) k =
     let
-      tname = entity ^. dbEntityDescriptor . dbEntityName
+      entity = annEntity ^. deannotate
+      tname  = entity ^. dbEntityDescriptor . dbEntityName
       cnames = pkFieldNames entity
     in
       gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tname, cnames) k
@@ -258,7 +257,7 @@ instance
   ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') sel tbl k
   , Beamable tbl'
   ) =>
-  GTableLookupTablesExpectFail sel tbl (K1 R (Beam.DatabaseEntity be db (TableEntity tbl'))) k where
+  GTableLookupTablesExpectFail sel tbl (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl'))) k where
   gTableLookupTablesExpectFail sel tbl r (K1 _entity) k =
     gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) sel tbl r k
 
@@ -305,22 +304,3 @@ instance (GTableLookupTablesExpectFail sel tbl k ks) => GTableLookupTableExpectF
 instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :*: ks) where
   gTableLookupTable _ sel tbl _ (k :*: ks) =
     gTableLookupTables sel tbl k ks
-
---
--- Generic machinery for an 'AnnotatedDatabaseSettings'
---
-
-instance ( Beam.Table tbl
-         , GColumns (Rep (TableSettings tbl))
-         , Generic (TableSettings tbl) 
-         , GTableConstraintColumns be db (Rep (TableSettings tbl))
-         )
-  => GTableEntry be db (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry db (K1 annotatedEntity) =
-      let entity         = annotatedEntity ^. deannotate
-          tName          = entity ^. dbEntityDescriptor . dbEntityName
-          pks            = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-          annotatedCons  = dbAnnotatedConstraints (annotatedEntity ^. annotatedDescriptor)
-          discoveredCons = gTableConstraintsColumns db (TableName tName) . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-          columns = gColumns . from $ (dbTableSettings $ entity ^. dbEntityDescriptor)
-    in  (TableName tName, Table (pks <> annotatedCons <> discoveredCons) columns )
