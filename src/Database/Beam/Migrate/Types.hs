@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 module Database.Beam.Migrate.Types where
 
+import           Data.List.NonEmpty (NonEmpty)
 import           Control.Exception
 import           Control.DeepSeq
 import           GHC.Generics
@@ -31,7 +32,7 @@ instance NFData Schema
 type Enumerations = Map EnumerationName Enumeration
 
 newtype EnumerationName = EnumerationName { enumName :: Text } deriving (Show, Eq, Ord, Generic)
-newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, Eq, Ord, Generic)
+newtype Enumeration     = Enumeration { enumValues :: NonEmpty Text } deriving (Show, Eq, Ord, Generic)
 
 instance NFData EnumerationName
 instance NFData Enumeration
@@ -143,8 +144,12 @@ data Edit =
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
   | ColumnConstraintAdded   TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
-  | EnumTypeCreated Text {- type name -} [Text] {- values -}
+  | EnumTypeAdded       EnumerationName Enumeration
+  | EnumTypeRemoved     EnumerationName
+  | EnumTypeValueAdded  EnumerationName Text {- added values -} InsertionOrder Text {- insertion point -}
   deriving (Show, Eq)
+
+data InsertionOrder = Before | After deriving (Show, Eq)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Edit where
@@ -164,7 +169,9 @@ data DiffError =
     -- ^ The diff couldn't be completed. TODO(adn) We need extra information
     -- we can later on reify into the raw SQL queries users can try to run
     -- themselves.
-    deriving (Show, Generic, Eq)
+  | ValuesRemovedFromEnum EnumerationName [Text]
+  -- ^ Postgres doesn't support removing values from an enum.
+  deriving (Show, Generic, Eq)
 
 instance Exception DiffError
 instance NFData DiffError

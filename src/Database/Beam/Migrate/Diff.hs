@@ -1,3 +1,4 @@
+{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
@@ -14,6 +15,9 @@ module Database.Beam.Migrate.Diff
   , diffColumn
   , diffTables
   , diffTable
+
+  , computeEnumEdit
+  , appendAfter
   )
 where
 
@@ -21,7 +25,12 @@ import           Data.DList                               ( DList )
 import qualified Data.DList                              as D
 import           Data.Maybe
 import           Data.Text                                ( Text )
-import           Data.List                                ( foldl' )
+import           Data.List                                ( foldl'
+                                                          , (\\)
+                                                          )
+import qualified Data.List                               as L
+import qualified Data.List.NonEmpty                      as NE
+import           Data.List.NonEmpty                       ( NonEmpty )
 import           Control.Monad
 import           Control.Exception                        ( assert )
 import           Data.Map.Merge.Strict                    ( mergeA
@@ -51,10 +60,14 @@ class Diffable a where
 -- | Computes the diff between two 'Schema's, either failing with a 'DiffError'
 -- or returning the list of 'Edit's necessary to turn the first into the second.
 instance Diffable Schema where
-  diff hsSchema = diff (schemaTables hsSchema) . schemaTables
+  diff hsSchema dbSchema = diff (schemaTables hsSchema) (schemaTables dbSchema) <>
+                           diff (schemaEnumerations hsSchema) (schemaEnumerations dbSchema)
 
 instance Diffable Tables where
   diff t1 = fmap D.toList . diffTables t1
+
+instance Diffable Enumerations where
+  diff t1 = fmap D.toList . diffEnums t1
 
 --
 -- Reference implementation
@@ -125,6 +138,45 @@ diffColumnReferenceImplementation tName colName hsColumn dbColumn = do
 --
 -- Actual implementation
 --
+
+diffEnums :: Enumerations -> Enumerations -> DiffA DList
+diffEnums hsEnums dbEnums =
+  M.foldl' D.append mempty <$> mergeA whenEnumsAdded whenEnumsRemoved whenBoth hsEnums dbEnums
+  where
+    whenEnumsAdded :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList Edit)
+    whenEnumsAdded = traverseMissing (\k v -> Right . D.singleton $ EnumTypeAdded k v)
+
+    whenEnumsRemoved :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList Edit)
+    whenEnumsRemoved = traverseMissing (\k _ -> Right . D.singleton $ EnumTypeRemoved k)
+
+    whenBoth :: WhenMatched (Either DiffError) EnumerationName Enumeration Enumeration (DList Edit)
+    whenBoth          = zipWithAMatched (\k x -> diffEnumeration k x)
+
+diffEnumeration :: EnumerationName -> Enumeration -> Enumeration -> DiffA DList
+diffEnumeration eName (Enumeration (NE.toList -> hsEnum)) (Enumeration (NE.toList -> dbEnum)) = do
+  let valuesRemoved = dbEnum \\ hsEnum
+
+  case L.null valuesRemoved of
+    False -> Left  $ ValuesRemovedFromEnum eName valuesRemoved
+    True  -> Right $ D.fromList (computeEnumEdit hsEnum dbEnum)
+
+computeEnumEdit :: [Text] -> [Text] -> [Edit]
+computeEnumEdit []  []        = mempty
+computeEnumEdit []  (_:_)     = mempty
+computeEnumEdit (x:xs) []     = appendAfter xs x
+computeEnumEdit (x:xs) [y]    = 
+    if x == y then appendAfter xs y
+              else (EnumTypeValueAdded (EnumerationName "todo") x Before y) : computeEnumEdit xs [y]
+computeEnumEdit (x:xs) (y:ys) =
+    if x == y then computeEnumEdit xs ys
+              else (EnumTypeValueAdded (EnumerationName "todo") x Before y) : computeEnumEdit xs (y:ys)
+
+appendAfter :: [Text] -> Text -> [Edit]
+appendAfter []  _    = mempty    
+appendAfter [l] z    = [EnumTypeValueAdded (EnumerationName "todo") l After z]
+appendAfter (l:ls) z = EnumTypeValueAdded (EnumerationName "todo") l After z : appendAfter ls l
+
+
 
 diffTables :: Tables -> Tables -> DiffA DList
 diffTables hsTables dbTables =

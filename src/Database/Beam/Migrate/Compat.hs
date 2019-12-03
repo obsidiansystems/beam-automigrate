@@ -21,6 +21,7 @@ import           Data.Word
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
 import qualified Data.Text                               as T
+import qualified Data.List.NonEmpty                      as NE
 import qualified Data.Map.Strict                         as M
 
 import           Database.Beam.Backend.SQL
@@ -114,7 +115,7 @@ instance ( IsMaybe a ~ nullary
 instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (PgEnum a) where
   schemaEnums' Proxy Proxy = M.singleton ty vals
     where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
-          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+          vals = Enumeration $ NE.fromList $ map (T.pack . show) ([minBound .. maxBound] :: [a])
 
 instance IsEnumeration' 'False a where
   schemaEnums' Proxy Proxy = mempty

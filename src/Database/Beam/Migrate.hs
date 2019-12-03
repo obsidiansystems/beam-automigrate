@@ -35,6 +35,7 @@ import           Data.Proxy
 import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
 import qualified Data.List                               as L
+import qualified Data.List.NonEmpty                      as NE
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
@@ -201,7 +202,7 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-  EnumTypeCreated tyName vals -> createTypeSyntax tyName vals
+  EnumTypeAdded tyName vals -> createTypeSyntax tyName vals
   ColumnAdded tblName colName col ->
       updateSyntax (alterTable tblName 
                                 <> "ADD COLUMN "
@@ -279,8 +280,8 @@ toSqlSyntax = \case
         NotNull -> "NOT NULL"
         Default defValue -> "DEFAULT " <> defValue
 
-      createTypeSyntax :: Text -> [Text] -> Pg.PgSyntax
-      createTypeSyntax ty vals = Pg.emit $ toS $
+      createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
+      createTypeSyntax (EnumerationName ty) (Enumeration (NE.toList -> vals)) = Pg.emit $ toS $
           "CREATE TYPE " <> sqlEscaped ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
       -- This function also overlaps with beam-migrate functionalities.
