@@ -151,8 +151,34 @@ instance HasDefaultSqlDataType Bool where
 instance HasDefaultSqlDataType UTCTime where
   defaultSqlDataType _ _ = SqlStdType $ timestampType Nothing False
 
+--
+-- support for json types
+--
+
 instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSON a) where
   defaultSqlDataType _ _ = PgSpecificType PgJson
 
 instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
   defaultSqlDataType _ _ = PgSpecificType PgJsonB
+
+--
+-- support for pg range types
+--
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt4Range a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeInt4
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt8Range a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeInt8
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgNumRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeNum
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeTs
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsTzRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeTsTz
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeDate

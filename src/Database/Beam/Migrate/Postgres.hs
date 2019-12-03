@@ -246,9 +246,23 @@ pgTypeToColumnType oid width
   | Pg.typoid Pg.timestamptz == oid
   = Just (SqlStdType $ timestampType Nothing True)
   | Pg.typoid Pg.json == oid
+  -- json types
   = Just (PgSpecificType PgJson)
   | Pg.typoid Pg.jsonb == oid
   = Just (PgSpecificType PgJsonB)
+  -- range types
+  | Pg.typoid Pg.int4range == oid
+  = Just (PgSpecificType PgRangeInt4)
+  | Pg.typoid Pg.int8range == oid
+  = Just (PgSpecificType PgRangeInt8)
+  | Pg.typoid Pg.numrange == oid
+  = Just (PgSpecificType PgRangeNum)
+  | Pg.typoid Pg.tsrange == oid
+  = Just (PgSpecificType PgRangeTs)
+  | Pg.typoid Pg.tstzrange == oid
+  = Just (PgSpecificType PgRangeTsTz)
+  | Pg.typoid Pg.daterange == oid
+  = Just (PgSpecificType PgRangeDate)
   | otherwise 
   = Nothing
 

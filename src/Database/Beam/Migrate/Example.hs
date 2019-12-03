@@ -47,6 +47,7 @@ import           Database.Beam.Migrate.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
 import           Database.Beam.Postgres (runBeamPostgresDebug, PgJSON(..))
+import qualified Database.Beam.Postgres as Pg
 
 -- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
@@ -79,8 +80,9 @@ data FlowerT f = Flower
   deriving (Generic, Beamable)
 
 data OrderT f = Order
-  { orderID   :: Columnar f Int32
-  , orderTime :: Columnar f UTCTime
+  { orderID       :: Columnar f Int32
+  , orderTime     :: Columnar f UTCTime
+  , orderValidity :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
   }
   deriving (Generic, Beamable)
 

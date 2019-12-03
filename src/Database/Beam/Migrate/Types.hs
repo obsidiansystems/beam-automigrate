@@ -68,11 +68,15 @@ data ColumnType =
   | PgSpecificType PgDataType
   deriving (Show, Eq)
 
-data PgDataType where
-    PgJson  :: PgDataType
-    PgJsonB :: PgDataType
-    --PgJsonB :: forall a. (Typeable a, FromJSON a, ToJSON a) => a -> PgDataType
-    --PgRange :: forall a n. (HasSqlValueSyntax PgValueSyntax a, Pg.PgIsRange n) => Pg.PgRange n a -> PgDataType
+data PgDataType =
+    PgJson
+  | PgJsonB
+  | PgRangeInt4
+  | PgRangeInt8
+  | PgRangeNum
+  | PgRangeTs
+  | PgRangeTsTz
+  | PgRangeDate
 
 deriving instance Show PgDataType
 deriving instance Eq PgDataType

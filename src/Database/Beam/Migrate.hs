@@ -32,6 +32,7 @@ import           Control.Monad.IO.Class                   ( liftIO
                                                           )
 import           Lens.Micro                               ( (^.) )
 import           Data.Proxy
+import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
 import qualified Data.List                               as L
 import qualified Data.Set                                as S
@@ -315,8 +316,16 @@ toSqlSyntax = \case
         SqlStdType (AST.DataTypeRow _rows) ->
             error "DataTypeRow not supported yet."
         SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+        -- Json types
         PgSpecificType PgJson  -> "JSON"
         PgSpecificType PgJsonB -> "JSONB"
+        -- Range types
+        PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
+        PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
+        PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
+        PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
+        PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
+        PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.

@@ -50,6 +50,7 @@ library
                      -- Needed only for the examples, (re)move eventually.
                      , QuickCheck             < 2.15.0.0
                      , splitmix
+                     , string-conv
                      -- ^ Needed for schema generation
                      , aeson < 1.5.0.0
                      -- ^ needed for the pgJSON ad pgJSONb types
