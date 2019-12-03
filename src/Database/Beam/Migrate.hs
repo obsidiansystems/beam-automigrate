@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -30,7 +32,9 @@ import           Control.Monad.IO.Class                   ( liftIO
                                                           )
 import           Lens.Micro                               ( (^.) )
 import           Data.Proxy
+import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
+import qualified Data.List                               as L
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
@@ -123,9 +127,42 @@ fromAnnotatedDbSettings :: ( Database be db
                         -> Schema
 fromAnnotatedDbSettings db = gSchema db (from db)
 
+data SequencedEdits = SequencedEdits {
+    seCreationsOrDeletions :: [Edit]
+  , seAlterations :: [Edit]
+  }
+
+-- | Partion edits in "additions" and "removals" operations, to make sure we do not try to
+-- reference something which hasn't been created yet.
+-- FIXME(adn) Until we fix #1 properly, we also filter 'IsForeignKeyOf' entries.
+toSequencedEdits :: [Edit] -> SequencedEdits
+toSequencedEdits edits =
+    let (seCreationsOrDeletions, alterations) = partitionEdits edits
+        in SequencedEdits { seCreationsOrDeletions, seAlterations = filter (not . isForeignKeyOf) alterations }
+  where
+    partitionEdits :: [Edit] -> ([Edit], [Edit])
+    partitionEdits = L.partition isCreationOrDeletion
+      where
+          isCreationOrDeletion :: Edit -> Bool
+          isCreationOrDeletion = \case
+            TableAdded _ _ -> True
+            TableRemoved _ -> True
+            ColumnAdded _ _ _ -> True
+            ColumnRemoved _ _ -> True
+            _                 -> False
+
+    isForeignKeyOf :: Edit -> Bool
+    isForeignKeyOf = \case
+      TableConstraintAdded   _ IsForeignKeyOf{} -> True
+      TableConstraintRemoved _ IsForeignKeyOf{} -> True
+      _ -> False
+
+editsToPgSyntax :: SequencedEdits -> [Pg.PgSyntax]
+editsToPgSyntax SequencedEdits{seCreationsOrDeletions, seAlterations} =
+  map toSqlSyntax (seCreationsOrDeletions <> seAlterations)
+
 -- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
-
 
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
@@ -143,72 +180,90 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right edits -> runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat $ map toSqlSyntax edits)
+    Right (toSequencedEdits -> edits) -> 
+      runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
 
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
   TableAdded tblName tbl -> 
-      ddlSyntax ("CREATE TABLE \"" <> tableName tblName 
-                                   <> "\" (" 
+      ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
+                                   <> " (" 
                                    <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)) <>
                                                           filter (not . T.null) (map renderCreateTableConstraint (S.toList (tableConstraints tbl)))
                                                          )
                                    <> ")"
                 )
   TableRemoved tblName    ->
-      ddlSyntax ("DROP TABLE \"" <> tableName tblName <> "\"")
+      ddlSyntax ("DROP TABLE " <> sqlEscaped (tableName tblName))
   TableConstraintAdded  tblName cstr ->
-      updateSyntax (alterTable tblName <> "ADD CONSTRAINT " <> renderAlterTableConstraint cstr)
+      updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
-      updateSyntax (alterTable tblName <> "DROP CONSTRAINT " <> renderAlterTableConstraint cstr)
+      updateSyntax (alterTable tblName <> renderDropConstraint cstr)
   ColumnAdded tblName colName col ->
-      updateSyntax (alterTable tblName <> "ADD COLUMN \""
-                                       <> columnName colName
-                                       <> "\" "
+      updateSyntax (alterTable tblName <> "ADD COLUMN "
+                                       <> sqlEscaped (columnName colName)
+                                       <> " "
                                        <> renderDataType (columnType col)
                                        <> " "
                                        <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
                    )
   ColumnRemoved tblName colName ->
-      updateSyntax (alterTable tblName <> "DROP COLUMN \"" <> columnName colName <> "\"")
+      updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
   ColumnTypeChanged tblName colName _old new ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" TYPE " <> renderDataType new)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " TYPE " <> renderDataType new)
   ColumnConstraintAdded tblName colName cstr ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" SET " <> renderColumnConstraint cstr)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " SET " <> renderColumnConstraint cstr)
   ColumnConstraintRemoved tblName colName cstr ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN \"" <> columnName colName <> "\" DROP " <> renderColumnConstraint cstr)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " DROP " <> renderColumnConstraint cstr)
   where
       ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 
       alterTable :: TableName -> Text
-      alterTable (TableName tName) = "ALTER TABLE \"" <> tName <> "\" "
+      alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " " 
 
       renderTableColumn :: (ColumnName, Column) -> Text
       renderTableColumn (colName, col) = columnName colName <> " " <> renderDataType (columnType col)
 
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
-        Unique _ cols     -> "UNIQUE (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
-        PrimaryKey _ cols -> "PRIMARY KEY (" <> T.intercalate ", " (map columnName (S.toList cols)) <> ")"
+        Unique fname cols -> 
+            conKeyword <> sqlEscaped fname 
+                       <> " UNIQUE (" 
+                       <> T.intercalate ", " (map columnName (S.toList cols)) 
+                       <> ")"
+        PrimaryKey fname cols -> 
+            conKeyword <> sqlEscaped fname 
+                       <> "PRIMARY KEY (" 
+                       <> T.intercalate ", " (map columnName (S.toList cols)) 
+                       <> ")"
         ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
             let (fkCols, referenced) = (map (columnName . fst) colPair, map (columnName . snd) colPair)
-            in "CONSTRAINT \"" <> fname 
-                               <> "\" FOREIGN KEY (" 
-                               <> T.intercalate ", " fkCols
-                               <> ") REFERENCES \"" <> tName 
-                               <> "\"(" <> T.intercalate ", " referenced <> ")" 
-                               <> renderAction "ON DELETE" onDelete 
-                               <> renderAction "ON UPDATE" onUpdate
+            in conKeyword <> sqlEscaped fname 
+                          <> " FOREIGN KEY (" 
+                          <> T.intercalate ", " fkCols
+                          <> ") REFERENCES " <> sqlEscaped tName 
+                          <> "(" <> T.intercalate ", " referenced <> ")" 
+                          <> renderAction "ON DELETE" onDelete 
+                          <> renderAction "ON UPDATE" onUpdate
         IsForeignKeyOf _tName _cols -> mempty
+        where conKeyword = "CONSTRAINT "
 
-      renderAlterTableConstraint :: TableConstraint -> Text
-      renderAlterTableConstraint = \case
-        Unique cName _ -> cName
-        PrimaryKey cName _ -> cName
-        _ -> error "renderAlterTableConstraint: TODO"
+      renderAddConstraint :: TableConstraint -> Text
+      renderAddConstraint tc = case tc of
+        IsForeignKeyOf{} -> mempty
+        _ -> accC (renderCreateTableConstraint tc)
+        where accC = mappend "ADD "
+
+      renderDropConstraint :: TableConstraint -> Text
+      renderDropConstraint tc = case tc of
+        IsForeignKeyOf{}         -> mempty
+        Unique     cName _       -> dropC cName
+        PrimaryKey cName _       -> dropC cName
+        ForeignKey cName _ _ _ _ -> dropC cName
+        where dropC = mappend "DROP CONSTRAINT "
 
       renderAction actionPrefix = \case
         NoAction   -> mempty
@@ -225,42 +280,52 @@ toSqlSyntax = \case
       -- This function also overlaps with beam-migrate functionalities.
       renderDataType :: ColumnType -> Text
       renderDataType = \case
-        AST.DataTypeChar varying prec charSet ->
+        SqlStdType (AST.DataTypeChar varying prec charSet) ->
             let ty = if varying then "VARCHAR" else "CHAR"
             in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
-        AST.DataTypeNationalChar varying prec ->
+        SqlStdType (AST.DataTypeNationalChar varying prec) ->
             let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
             in ty <> sqlOptPrec prec
-        AST.DataTypeBit varying prec ->
+        SqlStdType (AST.DataTypeBit varying prec) ->
             let ty = if varying then "BIT VARYING" else "BIT"
             in ty <> sqlOptPrec prec
-        AST.DataTypeNumeric prec -> "NUMERIC" <> sqlOptNumericPrec prec
-        AST.DataTypeDecimal prec -> "DOUBLE" <> sqlOptNumericPrec prec
-        AST.DataTypeInteger -> "INT"
-        AST.DataTypeSmallInt -> "SMALLINT"
-        AST.DataTypeBigInt -> "BIGINT"
-        AST.DataTypeFloat prec -> "FLOAT" <> sqlOptPrec prec
-        AST.DataTypeReal -> "REAL"
-        AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
-        AST.DataTypeDate -> "DATE"
-        AST.DataTypeTime prec withTz ->
+        SqlStdType (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+        SqlStdType (AST.DataTypeDecimal prec) -> "DOUBLE" <> sqlOptNumericPrec prec
+        SqlStdType (AST.DataTypeInteger) -> "INT"
+        SqlStdType (AST.DataTypeSmallInt) -> "SMALLINT"
+        SqlStdType (AST.DataTypeBigInt) -> "BIGINT"
+        SqlStdType (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
+        SqlStdType (AST.DataTypeReal) -> "REAL"
+        SqlStdType (AST.DataTypeDoublePrecision) -> "DOUBLE PRECISION"
+        SqlStdType (AST.DataTypeDate) -> "DATE"
+        SqlStdType (AST.DataTypeTime prec withTz) ->
           let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
           in ty <> sqlOptPrec prec
-        AST.DataTypeTimeStamp prec withTz ->
+        SqlStdType (AST.DataTypeTimeStamp prec withTz) ->
           let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
           in ty <> sqlOptPrec prec
-        AST.DataTypeInterval _i -> error "DataTypeInterval not supported yet."
-        AST.DataTypeIntervalFromTo _from _to -> error "DataTypeIntervalFromTo not supported yet."
-        AST.DataTypeBoolean -> "BOOL"
-        AST.DataTypeBinaryLargeObject ->
+        SqlStdType (AST.DataTypeInterval _i) -> error "DataTypeInterval not supported yet."
+        SqlStdType (AST.DataTypeIntervalFromTo _from _to) -> error "DataTypeIntervalFromTo not supported yet."
+        SqlStdType AST.DataTypeBoolean -> "BOOL"
+        SqlStdType AST.DataTypeBinaryLargeObject ->
             error "DataTypeBinaryLargeObject not supported yet."
-        AST.DataTypeCharacterLargeObject ->
+        SqlStdType AST.DataTypeCharacterLargeObject ->
             error "DataTypeCharacterLargeObject not supported yet."
-        AST.DataTypeArray _dt _int ->
+        SqlStdType (AST.DataTypeArray _dt _int) ->
             error "DataTypeArray not supported yet."
-        AST.DataTypeRow _rows ->
+        SqlStdType (AST.DataTypeRow _rows) ->
             error "DataTypeRow not supported yet."
-        AST.DataTypeDomain nm -> "\"" <> nm <> "\""
+        SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+        -- Json types
+        PgSpecificType PgJson  -> "JSON"
+        PgSpecificType PgJsonB -> "JSONB"
+        -- Range types
+        PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
+        PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
+        PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
+        PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
+        PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
+        PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
@@ -272,6 +337,9 @@ sqlOptPrec (Just x) = "(" <> fromString (show x) <> ")"
 sqlOptCharSet :: Maybe Text -> Text
 sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
+
+sqlEscaped :: Text -> Text
+sqlEscaped t = "\"" <> t <> "\""
 
 sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
 sqlOptNumericPrec Nothing = mempty
@@ -292,12 +360,10 @@ createMigration (Right edits) = ExceptT $ do
     put edits
     pure (Right ())
 
-
+-- | Prints the migration to stdout. Useful for debugging and diagnostic.
 printMigration :: MonadIO m => Migration m -> m ()
 printMigration m = do
-    (a, edits) <- runStateT (runExceptT m) mempty
+    (a, sequencedEdits) <- fmap toSequencedEdits <$> runStateT (runExceptT m) mempty
     case a of
       Left e    -> liftIO $ throwIO e
-      Right ()  -> do
-        let pgSyntax = map toSqlSyntax edits
-        liftIO $ putStrLn (unlines $ map displaySyntax pgSyntax)
+      Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sequencedEdits)

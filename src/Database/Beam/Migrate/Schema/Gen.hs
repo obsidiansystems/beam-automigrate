@@ -46,7 +46,7 @@ genColumn :: Columns -> Gen Column
 genColumn _allColums = do
     constNum <- choose (0, 2)
     constrs <- vectorOf constNum (elements [NotNull, Default "10"])
-    pure $ Column AST.DataTypeInteger (S.fromList constrs)
+    pure $ Column (SqlStdType AST.DataTypeInteger) (S.fromList constrs)
 
 genColumns :: Gen Columns
 genColumns = do
@@ -143,7 +143,7 @@ similarColumn col = do
                             , (15, pure NoChange)
                             ]
     case editAction of
-      ChangeType -> pure $ col { columnType = AST.DataTypeBoolean }
+      ChangeType -> pure $ col { columnType = SqlStdType AST.DataTypeBoolean }
       ChangeConstraints -> do
         constNum <- choose (0, 2)
         constrs <- vectorOf constNum (elements [NotNull, Default "FALSE"])

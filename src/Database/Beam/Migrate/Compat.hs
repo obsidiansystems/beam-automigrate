@@ -25,6 +25,13 @@ import           Database.Beam.Backend.SQL
 import qualified Database.Beam                           as Beam
 
 import           Database.Beam.Migrate.Types
+import qualified Database.Beam.Postgres                  as Pg
+import           Data.Aeson                              as JSON
+                                                          ( FromJSON
+                                                          , ToJSON
+                                                          , encode
+                                                          , toJSON
+                                                          )
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
      without the extra complication of importing and using the library itself.
@@ -103,43 +110,75 @@ instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
   defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
 
 instance HasDefaultSqlDataType Int where
-  defaultSqlDataType _ _ = intType
+  defaultSqlDataType _ _ = SqlStdType intType
 instance HasDefaultSqlDataType Int32 where
-  defaultSqlDataType _ _ = intType
+  defaultSqlDataType _ _ = SqlStdType intType
 instance HasDefaultSqlDataType Int16 where
-  defaultSqlDataType _ _ = intType
+  defaultSqlDataType _ _ = SqlStdType intType
 instance HasDefaultSqlDataType Int64 where
-  defaultSqlDataType _ _ = bigIntType
+  defaultSqlDataType _ _ = SqlStdType bigIntType
 
 instance HasDefaultSqlDataType Word where
-  defaultSqlDataType _ _ = numericType (Just (10, Nothing))
+  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (10, Nothing))
 
 instance HasDefaultSqlDataType Word16 where
-  defaultSqlDataType _ _ = numericType (Just (5, Nothing))
+  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (5, Nothing))
 instance HasDefaultSqlDataType Word32 where
-  defaultSqlDataType _ _ = numericType (Just (10, Nothing))
+  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (10, Nothing))
 instance HasDefaultSqlDataType Word64 where
-  defaultSqlDataType _ _ = numericType (Just (20, Nothing))
+  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (20, Nothing))
 
 instance HasDefaultSqlDataType Text where
-  defaultSqlDataType _ _ = varCharType Nothing Nothing
+  defaultSqlDataType _ _ = SqlStdType $ varCharType Nothing Nothing
 instance HasDefaultSqlDataType SqlBitString where
-  defaultSqlDataType _ _ = varBitType Nothing
+  defaultSqlDataType _ _ = SqlStdType $ varBitType Nothing
 
 instance HasDefaultSqlDataType Double where
-  defaultSqlDataType _ _ = doubleType
+  defaultSqlDataType _ _ = SqlStdType $ doubleType
 
 instance HasDefaultSqlDataType Scientific where
-  defaultSqlDataType _ _ = numericType (Just (20, Just 10))
+  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (20, Just 10))
 
 instance HasDefaultSqlDataType Day where
-  defaultSqlDataType _ _ = dateType
+  defaultSqlDataType _ _ = SqlStdType dateType
 
 instance HasDefaultSqlDataType TimeOfDay where
-  defaultSqlDataType _ _ = timeType Nothing False
+  defaultSqlDataType _ _ = SqlStdType $ timeType Nothing False
 
 instance HasDefaultSqlDataType Bool where
-  defaultSqlDataType _ _ = booleanType
+  defaultSqlDataType _ _ = SqlStdType booleanType
 
 instance HasDefaultSqlDataType UTCTime where
-  defaultSqlDataType _ _ = timestampType Nothing False
+  defaultSqlDataType _ _ = SqlStdType $ timestampType Nothing False
+
+--
+-- support for json types
+--
+
+instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSON a) where
+  defaultSqlDataType _ _ = PgSpecificType PgJson
+
+instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
+  defaultSqlDataType _ _ = PgSpecificType PgJsonB
+
+--
+-- support for pg range types
+--
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt4Range a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeInt4
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt8Range a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeInt8
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgNumRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeNum
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeTs
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsTzRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeTsTz
+
+instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
+  defaultSqlDataType _ _ = PgSpecificType PgRangeDate

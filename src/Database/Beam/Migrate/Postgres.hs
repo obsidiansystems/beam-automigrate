@@ -210,41 +210,59 @@ getSchema conn = do
 pgTypeToColumnType :: Pg.Oid -> Maybe Int -> Maybe ColumnType
 pgTypeToColumnType oid width
   | Pg.typoid Pg.int2 == oid
-  = Just smallIntType
+  = Just (SqlStdType smallIntType)
   | Pg.typoid Pg.int4 == oid
-  = Just intType
+  = Just (SqlStdType intType)
   | Pg.typoid Pg.int8 == oid
-  = Just bigIntType
+  = Just (SqlStdType bigIntType)
   | Pg.typoid Pg.bpchar == oid
-  = Just (charType (fromIntegral <$> width) Nothing)
+  = Just (SqlStdType $ charType (fromIntegral <$> width) Nothing)
   | Pg.typoid Pg.varchar == oid
-  = Just (varCharType (fromIntegral <$> width) Nothing)
+  = Just (SqlStdType $ varCharType (fromIntegral <$> width) Nothing)
   | Pg.typoid Pg.bit == oid
-  = Just (bitType (fromIntegral <$> width))
+  = Just (SqlStdType $ bitType (fromIntegral <$> width))
   | Pg.typoid Pg.varbit == oid
-  = Just (varBitType (fromIntegral <$> width))
+  = Just (SqlStdType $ varBitType (fromIntegral <$> width))
   | Pg.typoid Pg.numeric == oid
   = let decimals = fromMaybe 0 width .&. 0xFFFF
         prec     = (fromMaybe 0 width `shiftR` 16) .&. 0xFFFF
-    in  Just (numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
+    in  Just (SqlStdType $ numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
   | Pg.typoid Pg.float4 == oid
-  = Just (floatType (fromIntegral <$> width))
+  = Just (SqlStdType $ floatType (fromIntegral <$> width))
   | Pg.typoid Pg.float8 == oid
-  = Just doubleType
+  = Just (SqlStdType doubleType)
   | Pg.typoid Pg.date == oid
-  = Just dateType
+  = Just (SqlStdType dateType)
   | Pg.typoid Pg.text == oid
-  = Just characterLargeObjectType
+  = Just (SqlStdType characterLargeObjectType)
   | Pg.typoid Pg.bytea == oid
-  = Just binaryLargeObjectType
+  = Just (SqlStdType binaryLargeObjectType)
   | Pg.typoid Pg.bool == oid
-  = Just booleanType
+  = Just (SqlStdType booleanType)
   | Pg.typoid Pg.time == oid
-  = Just (timeType Nothing False)
+  = Just (SqlStdType $ timeType Nothing False)
   | Pg.typoid Pg.timestamp == oid
-  = Just (timestampType Nothing False)
+  = Just (SqlStdType $timestampType Nothing False)
   | Pg.typoid Pg.timestamptz == oid
-  = Just (timestampType Nothing True)
+  = Just (SqlStdType $ timestampType Nothing True)
+  | Pg.typoid Pg.json == oid
+  -- json types
+  = Just (PgSpecificType PgJson)
+  | Pg.typoid Pg.jsonb == oid
+  = Just (PgSpecificType PgJsonB)
+  -- range types
+  | Pg.typoid Pg.int4range == oid
+  = Just (PgSpecificType PgRangeInt4)
+  | Pg.typoid Pg.int8range == oid
+  = Just (PgSpecificType PgRangeInt8)
+  | Pg.typoid Pg.numrange == oid
+  = Just (PgSpecificType PgRangeNum)
+  | Pg.typoid Pg.tsrange == oid
+  = Just (PgSpecificType PgRangeTs)
+  | Pg.typoid Pg.tstzrange == oid
+  = Just (PgSpecificType PgRangeTsTz)
+  | Pg.typoid Pg.daterange == oid
+  = Just (PgSpecificType PgRangeDate)
   | otherwise 
   = Nothing
 

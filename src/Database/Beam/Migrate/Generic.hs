@@ -181,7 +181,6 @@ instance ( Generic (AnnotatedDatabaseSettings be db)
       refcnames :: [ColumnName]
       (reftname, refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
 
-
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
 

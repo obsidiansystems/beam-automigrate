@@ -1,17 +1,31 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE GADTs #-}
 module Database.Beam.Migrate.Types where
 
 import           Control.Exception
 import           Control.DeepSeq
 import           GHC.Generics
 import           Data.String
+import           Data.Typeable
 import           Data.Map                                 ( Map )
 import           Data.Set                                 ( Set )
 import           Data.Text                                ( Text )
 import qualified Data.Text                               as T
 
 import qualified Database.Beam.Backend.SQL.AST           as AST
+import           Database.Beam.Backend.SQL.SQL92          ( HasSqlValueSyntax )
+import qualified Database.Beam.Postgres                  as Pg
+import           Data.Aeson                              as JSON
+                                                          ( Value
+                                                          , FromJSON
+                                                          , ToJSON
+                                                          , encode
+                                                          )
+import           Database.Beam.Postgres.Syntax            ( PgValueSyntax )
 
 --
 -- Types (sketched)
@@ -49,7 +63,23 @@ instance NFData Column where
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
-type ColumnType = AST.DataType
+data ColumnType = 
+    SqlStdType AST.DataType
+  | PgSpecificType PgDataType
+  deriving (Show, Eq)
+
+data PgDataType =
+    PgJson
+  | PgJsonB
+  | PgRangeInt4
+  | PgRangeInt8
+  | PgRangeNum
+  | PgRangeTs
+  | PgRangeTsTz
+  | PgRangeDate
+
+deriving instance Show PgDataType
+deriving instance Eq PgDataType
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
