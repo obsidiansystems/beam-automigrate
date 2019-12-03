@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -124,9 +126,42 @@ fromAnnotatedDbSettings :: ( Database be db
                         -> Schema
 fromAnnotatedDbSettings db = gSchema db (from db)
 
+data SequencedEdits = SequencedEdits {
+    seCreationsOrDeletions :: [Edit]
+  , seAlterations :: [Edit]
+  }
+
+-- | Partion edits in "additions" and "removals" operations, to make sure we do not try to
+-- reference something which hasn't been created yet.
+-- FIXME(adn) Until we fix #1 properly, we also filter 'IsForeignKeyOf' entries.
+toSequencedEdits :: [Edit] -> SequencedEdits
+toSequencedEdits edits =
+    let (seCreationsOrDeletions, alterations) = partitionEdits edits
+        in SequencedEdits { seCreationsOrDeletions, seAlterations = filter (not . isForeignKeyOf) alterations }
+  where
+    partitionEdits :: [Edit] -> ([Edit], [Edit])
+    partitionEdits = L.partition isCreationOrDeletion
+      where
+          isCreationOrDeletion :: Edit -> Bool
+          isCreationOrDeletion = \case
+            TableAdded _ _ -> True
+            TableRemoved _ -> True
+            ColumnAdded _ _ _ -> True
+            ColumnRemoved _ _ -> True
+            _                 -> False
+
+    isForeignKeyOf :: Edit -> Bool
+    isForeignKeyOf = \case
+      TableConstraintAdded   _ IsForeignKeyOf{} -> True
+      TableConstraintRemoved _ IsForeignKeyOf{} -> True
+      _ -> False
+
+editsToPgSyntax :: SequencedEdits -> [Pg.PgSyntax]
+editsToPgSyntax SequencedEdits{seCreationsOrDeletions, seAlterations} =
+  map toSqlSyntax (seCreationsOrDeletions <> seAlterations)
+
 -- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
-
 
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
@@ -144,22 +179,8 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right (partitionEdits -> (creationsOrDeletions, alterations)) -> 
-        let fullSql = mconcat . map toSqlSyntax $ creationsOrDeletions <> alterations
-        in runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl fullSql
-
--- | Partion edits in "additions" and "removals" operations, to make sure we do not try to
--- reference something which hasn't been created yet.
-partitionEdits :: [Edit] -> ([Edit], [Edit])
-partitionEdits = L.partition isCreationOrDeletion
-  where
-      isCreationOrDeletion :: Edit -> Bool
-      isCreationOrDeletion = \case
-        TableAdded _ _ -> True
-        TableRemoved _ -> True
-        ColumnAdded _ _ _ -> True
-        ColumnRemoved _ _ -> True
-        _                 -> False
+    Right (toSequencedEdits -> edits) -> 
+      runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
 
@@ -330,12 +351,10 @@ createMigration (Right edits) = ExceptT $ do
     put edits
     pure (Right ())
 
-
+-- | Prints the migration to stdout. Useful for debugging and diagnostic.
 printMigration :: MonadIO m => Migration m -> m ()
 printMigration m = do
-    (a, (creationsOrDeletions, alterations)) <- fmap partitionEdits <$> runStateT (runExceptT m) mempty
+    (a, sequencedEdits) <- fmap toSequencedEdits <$> runStateT (runExceptT m) mempty
     case a of
       Left e    -> liftIO $ throwIO e
-      Right ()  -> do
-        let pgSyntax = map toSqlSyntax (creationsOrDeletions <> alterations)
-        liftIO $ putStrLn (unlines $ map displaySyntax pgSyntax)
+      Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sequencedEdits)

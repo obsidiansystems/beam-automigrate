@@ -73,7 +73,8 @@ data FlowerT f = Flower
   , flowerName       :: Columnar f Text
   , flowerPrice      :: Columnar (Beam.Nullable f) Double
   , flowerDiscounted :: Columnar f (Maybe Bool)
-  , flowerSchema     :: Columnar f (PgJSON MyJson)
+  , flowerSchemaOne  :: Columnar f (PgJSON MyJson)
+  , flowerSchemaTwo  :: Columnar f (PgJSONB MyJson)
   }
   deriving (Generic, Beamable)
 

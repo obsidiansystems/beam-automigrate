@@ -245,6 +245,10 @@ pgTypeToColumnType oid width
   = Just (SqlStdType $timestampType Nothing False)
   | Pg.typoid Pg.timestamptz == oid
   = Just (SqlStdType $ timestampType Nothing True)
+  | Pg.typoid Pg.json == oid
+  = Just (PgSpecificType PgJson)
+  | Pg.typoid Pg.jsonb == oid
+  = Just (PgSpecificType PgJsonB)
   | otherwise 
   = Nothing
 

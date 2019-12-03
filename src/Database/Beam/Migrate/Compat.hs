@@ -153,3 +153,6 @@ instance HasDefaultSqlDataType UTCTime where
 
 instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSON a) where
   defaultSqlDataType _ _ = PgSpecificType PgJson
+
+instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
+  defaultSqlDataType _ _ = PgSpecificType PgJsonB
