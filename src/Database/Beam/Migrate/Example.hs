@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE TypeFamilies         #-}
@@ -9,6 +10,7 @@ import           GHC.Generics
 import           Control.Exception
 
 import           Database.Beam.Postgres
+import           Data.Set as S
 import           Database.Beam.Schema           ( Beamable
                                                 , Columnar
                                                 , Database
@@ -25,14 +27,20 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 
+import           Database.Beam.Migrate.Annotated
+
 import           Database.Beam.Migrate          ( Schema
                                                 , Diff
                                                 , Migration
-                                                , fromDbSettings
+                                                , fromAnnotatedDbSettings
+                                                , defaultAnnotatedDbSettings
                                                 , diff
                                                 , runMigration
                                                 , printMigration
                                                 , migrate
+                                                , TableConstraint(..)
+                                                , TableName(..)
+                                                , ReferenceAction(..)
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -43,7 +51,6 @@ import           Database.Beam.Postgres (runBeamPostgresDebug)
 import           Data.Int                       ( Int32
                                                 , Int64
                                                 )
-import           Data.Scientific                ( Scientific )
 import           Data.Time                      ( UTCTime )
 
 
@@ -55,7 +62,8 @@ import           Data.Time                      ( UTCTime )
 data FlowerT f = Flower
   { flowerID         :: Columnar f Int32
   , flowerName       :: Columnar f Text
-  , flowerPrice      :: Columnar f Scientific
+  , flowerPrice      :: Columnar (Beam.Nullable f) Double
+  , flowerDiscounted :: Columnar f (Maybe Bool)
   }
   deriving (Generic, Beamable)
 
@@ -69,6 +77,7 @@ data LineItemT f = LineItem
   { lineItemOrderID  :: PrimaryKey OrderT (Beam.Nullable f)
   , lineItemFlowerID :: PrimaryKey FlowerT f
   , lineItemQuantity :: Columnar f Int64
+  , lineItemDiscount :: Columnar f (Maybe Bool)
   }
   deriving (Generic, Beamable)
 
@@ -108,21 +117,20 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
-{-
+
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
-annotatedDB = withAnnotations flowerDB [
-    onTable "flowers" [
-        onField "price" [Default "10.0"]
-      ]
-    onTable "line_items" [
-       foreignKey "flowers" ["id"] Cascade Restrict
-    ,  unique ["quantity"]
-    ]
-  ]
--}
+annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
+  { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
+               <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
+  , dbLineItems = (addTableConstraints $ 
+      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
+                 , ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
+                 ])
+               <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+  }
 
 hsSchema :: Schema
-hsSchema = fromDbSettings flowerDB
+hsSchema = fromAnnotatedDbSettings annotatedDB
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do

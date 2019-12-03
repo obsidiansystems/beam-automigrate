@@ -14,7 +14,6 @@ import           Data.Bits                                ( (.&.)
                                                           , shiftR
                                                           )
 import           Data.Foldable                            ( foldlM )
-import           Data.List                                ( foldl' )
 import qualified Data.Vector                             as V
 import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S

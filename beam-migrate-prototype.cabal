@@ -17,6 +17,7 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:
                        Database.Beam.Migrate
+                       Database.Beam.Migrate.Annotated
                        Database.Beam.Migrate.Compat
                        Database.Beam.Migrate.Diff
                        Database.Beam.Migrate.Generic
@@ -27,6 +28,7 @@ library
                        Database.Beam.Migrate.BenchUtil
   other-modules:
                        Database.Beam.Migrate.Example
+                       Database.Beam.Migrate.Example.ForeignKeys
 
   hs-source-dirs:      src
 

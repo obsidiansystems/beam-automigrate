@@ -1,10 +1,16 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 module Database.Beam.Migrate
-  ( fromDbSettings
+  ( fromAnnotatedDbSettings
+  , defaultAnnotatedDbSettings
+  -- * Converting from an annotated to a simple 'DatabaseSettings'
+  , deAnnotateDatabase
+  -- * Migrations
   , Migration
   , migrate
   , runMigration
@@ -15,60 +21,111 @@ module Database.Beam.Migrate
   )
 where
 
-import           Control.Exception (throwIO)
+import           Control.Exception                        ( throwIO )
+import           Control.Monad.Identity                   (runIdentity)
 import           Control.Monad.State.Strict
 import           Control.Monad.Except
-import           Control.Monad.IO.Class         ( liftIO
-                                                , MonadIO
-                                                )
-import           Data.String                    ( fromString )
-import qualified Data.Set                      as S
-import qualified Data.Map.Strict               as M
-import           Data.Map (Map)
-import           Data.Text                      ( Text )
-import qualified Data.Text                     as T
-import qualified Data.Text.Encoding            as TE
+import           Control.Monad.IO.Class                   ( liftIO
+                                                          , MonadIO
+                                                          )
+import           Lens.Micro                               ( (^.) )
+import           Data.Proxy
+import           Data.String                              ( fromString )
+import qualified Data.Set                                as S
+import qualified Data.Map.Strict                         as M
+import           Data.Text                                ( Text )
+import qualified Data.Text                               as T
+import qualified Data.Text.Encoding                      as TE
 
-import           GHC.Generics hiding (prec)
+import           GHC.Generics                      hiding ( prec )
 
 
-import           Database.Beam                  ( MonadBeam )
-import           Database.Beam.Schema           ( DatabaseSettings )
+import           Database.Beam                            ( MonadBeam )
+import           Database.Beam.Schema                     ( Database
+                                                          , DatabaseSettings
+                                                          )
+import           Database.Beam.Schema.Tables              ( DatabaseEntity(..)
+                                                          )
 
-import           Database.Beam.Migrate.Generic as Exports
-import           Database.Beam.Migrate.Types   as Exports
-import           Database.Beam.Migrate.Diff    as Exports
-import           Database.Beam.Migrate.Postgres ( getSchema )
-import qualified Database.Beam.Backend.SQL.AST as AST
+import           Database.Beam.Migrate.Annotated         as Exports
+import           Database.Beam.Migrate.Generic           as Exports
+import           Database.Beam.Migrate.Types             as Exports
+import           Database.Beam.Migrate.Diff              as Exports
+import           Database.Beam.Migrate.Postgres           ( getSchema )
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
-import Database.Beam.Backend.SQL hiding (tableName)
+import           Database.Beam.Backend.SQL         hiding ( tableName )
 
-import qualified Database.Beam.Postgres as Pg
-import qualified Database.Beam.Postgres.Syntax as Pg
+import qualified Database.Beam.Postgres                  as Pg
+import qualified Database.Beam.Postgres.Syntax           as Pg
 
 --
 -- Potential API (sketched)
 --
 
-type AnnotatedDatabaseSettings be db = (DatabaseAnnotations, db)
+-- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
+defaultAnnotatedDbSettings :: forall be db. 
+                           ( Generic (db (DatabaseEntity be db))
+                           , Generic (db (AnnotatedDatabaseEntity be db))
+                           , Database be db 
+                           , GZipDatabase be (DatabaseEntity be db)
+                                             (AnnotatedDatabaseEntity be db)
+                                             (AnnotatedDatabaseEntity be db)
+                                             (Rep (db (DatabaseEntity be db)))
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                           )
+                           => DatabaseSettings be db 
+                           -> AnnotatedDatabaseSettings be db
+defaultAnnotatedDbSettings db = runIdentity $
+  zipTables (Proxy @be) annotate db (undefined :: AnnotatedDatabaseSettings be db)
+  where
 
-data SchemaIdentifier = TBL TableName
-                      | COL ColumnName
-                      deriving (Show, Eq, Ord)
+    annotate :: ( Monad m
+                , IsAnnotatedDatabaseEntity be ty
+                , AnnotatedDatabaseEntityRegularRequirements be ty)
+             => DatabaseEntity be db ty 
+             -> AnnotatedDatabaseEntity be db ty 
+             -> m (AnnotatedDatabaseEntity be db ty)
+    annotate (DatabaseEntity edesc) _ = 
+        pure $ AnnotatedDatabaseEntity (dbAnnotatedEntityAuto edesc) (DatabaseEntity edesc)
 
-newtype DatabaseAnnotations =
-    DatabaseAnnotations { getAnnotations :: Map SchemaIdentifier Annotation }
+deAnnotateDatabase :: forall be db. 
+                   ( Database be db 
+                   , Generic (db (DatabaseEntity be db))
+                   , Generic (db (AnnotatedDatabaseEntity be db))
+                   , GZipDatabase be (AnnotatedDatabaseEntity be db)
+                                     (AnnotatedDatabaseEntity be db)
+                                     (DatabaseEntity be db)
+                                     (Rep (db (AnnotatedDatabaseEntity be db)))
+                                     (Rep (db (AnnotatedDatabaseEntity be db)))
+                                     (Rep (db (DatabaseEntity be db)))
+                   )
+                   => AnnotatedDatabaseSettings be db 
+                   -> DatabaseSettings be db
+deAnnotateDatabase db = 
+    runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
 
-type Annotation = ()
+-- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
+fromAnnotatedDbSettings :: ( Database be db
+                           , Generic (db (DatabaseEntity be db))
+                           , Generic (db (AnnotatedDatabaseEntity be db))
+                           , GZipDatabase be (AnnotatedDatabaseEntity be db)
+                                             (AnnotatedDatabaseEntity be db)
+                                             (DatabaseEntity be db)
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                                             (Rep (db (AnnotatedDatabaseEntity be db)))
+                                             (Rep (db (DatabaseEntity be db)))
+                           , Generic (AnnotatedDatabaseSettings be db)
+                           , GSchema be db (Rep (AnnotatedDatabaseSettings be db))
+                           )
+                        => AnnotatedDatabaseSettings be db 
+                        -> Schema
+fromAnnotatedDbSettings db = gSchema db (from db)
 
-
--- | Turns a Beam's 'DatabaseSettings' into a 'Schema'.
-fromDbSettings :: (Generic (DatabaseSettings be db), GSchema be db (Rep (DatabaseSettings be db)))
-               => DatabaseSettings be db
-               -> Schema
-fromDbSettings db = gSchema db (from db)
-
+-- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [Edit] m) ()
+
 
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do

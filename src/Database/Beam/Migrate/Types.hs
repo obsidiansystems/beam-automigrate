@@ -5,11 +5,13 @@ module Database.Beam.Migrate.Types where
 import           Control.Exception
 import           Control.DeepSeq
 import           GHC.Generics
-import           Data.Map                       ( Map )
-import           Data.Set                       ( Set )
-import           Data.Text                      ( Text )
+import           Data.String
+import           Data.Map                                 ( Map )
+import           Data.Set                                 ( Set )
+import           Data.Text                                ( Text )
+import qualified Data.Text                               as T
 
-import qualified Database.Beam.Backend.SQL.AST as AST
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
 --
 -- Types (sketched)
@@ -32,6 +34,9 @@ instance NFData Table
 type Columns = Map ColumnName Column
 
 newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord, NFData)
+
+instance IsString ColumnName where
+    fromString = ColumnName . T.pack
 
 data Column = Column {
     columnType        :: ColumnType
@@ -86,6 +91,10 @@ data ReferenceAction =
     deriving (Show, Eq, Ord, Generic)
 
 instance NFData ReferenceAction
+
+--
+-- Modifying the 'Schema'
+--
 
 -- | A possible list of edits on a 'Schema'.
 data Edit =

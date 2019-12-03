@@ -1,3 +1,4 @@
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -10,22 +11,28 @@
 module Database.Beam.Migrate.Compat where
 
 import           Data.Proxy
-import           Data.Text                      ( Text )
-import           Data.Scientific                ( Scientific )
-import           Data.Time.Calendar             ( Day )
-import           Data.Time                      ( TimeOfDay )
+import           Data.Text                                ( Text )
+import           Data.Scientific                          ( Scientific )
+import           Data.Time.Calendar                       ( Day )
+import           Data.Time                                ( TimeOfDay )
 import           Data.Int
-import           Data.Time                      ( UTCTime )
+import           Data.Time                                ( UTCTime )
 import           Data.Word
+import           Data.Set                                 ( Set )
+import qualified Data.Set                                as S
 
 import           Database.Beam.Backend.SQL
-import qualified Database.Beam                 as Beam
+import qualified Database.Beam                           as Beam
 
 import           Database.Beam.Migrate.Types
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
      without the extra complication of importing and using the library itself.
 -}
+
+--
+-- Specifying SQL data types and constraints
+--
 
 class HasDefaultSqlDataType ty where
 
@@ -36,18 +43,18 @@ class HasDefaultSqlDataType ty where
                      -> ColumnType
 
 
-class HasSchemaConstraints ty where
+class Ord (SchemaConstraint ty) => HasSchemaConstraints ty where
   -- | Provide arbitrary constraints on a field of the requested type. See
   -- 'FieldCheck' for more information on the formatting of constraints.
   schemaConstraints :: Proxy ty
                     -- ^ Concrete representation of the type
-                    -> [ SchemaConstraint ty ]
-  schemaConstraints _ = []
+                    -> Set (SchemaConstraint ty)
+  schemaConstraints _ = mempty
 
-class HasSchemaConstraints' (nullary :: Bool) ty where
+class Ord (SchemaConstraint ty) => HasSchemaConstraints' (nullary :: Bool) ty where
   -- | Provide arbitrary constraints on a field of the requested type. See
   -- 'FieldCheck' for more information on the formatting of constraints.
-  schemaConstraints' :: Proxy nullary -> Proxy ty -> [ SchemaConstraint ty ]
+  schemaConstraints' :: Proxy nullary -> Proxy ty -> Set (SchemaConstraint ty)
 
 type family SchemaConstraint (k :: *) where
     SchemaConstraint (Beam.TableEntity e)  = TableConstraint
@@ -59,17 +66,26 @@ type family IsMaybe (k :: *) :: Bool where
     IsMaybe (Beam.TableField t _)         = 'False
     IsMaybe _                             = 'False
 
+-- Default /table-level/ constraints.
+instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
+  schemaConstraints' Proxy Proxy = mempty
+
+instance HasSchemaConstraints' 'False (Beam.TableEntity tbl) where
+  schemaConstraints' Proxy Proxy = mempty
+
+-- Default /field-level/ constraints.
+
 instance HasSchemaConstraints' 'True (Beam.TableField e (Beam.TableField e t)) where
-  schemaConstraints' Proxy Proxy = []
+  schemaConstraints' Proxy Proxy = mempty
 
 instance HasSchemaConstraints' 'False (Beam.TableField e (Beam.TableField e t)) where
-  schemaConstraints' Proxy Proxy = [NotNull]
+  schemaConstraints' Proxy Proxy = S.singleton NotNull
 
 instance HasSchemaConstraints' 'True (Beam.TableField e (Maybe t)) where
-  schemaConstraints' Proxy Proxy = []
+  schemaConstraints' Proxy Proxy = mempty
 
 instance HasSchemaConstraints' 'False (Beam.TableField e t) where
-  schemaConstraints' Proxy Proxy = [NotNull]
+  schemaConstraints' Proxy Proxy = S.singleton NotNull
 
 instance ( IsMaybe a ~ nullary
          , HasSchemaConstraints' nullary a
@@ -79,6 +95,9 @@ instance ( IsMaybe a ~ nullary
 --
 -- Sql datatype instances for the most common types.
 --
+
+instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Beam.TableField e ty) where
+  defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
 
 instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
   defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
