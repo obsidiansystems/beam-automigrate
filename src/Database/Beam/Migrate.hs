@@ -201,13 +201,15 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
+  EnumTypeCreated tyName vals -> createTypeSyntax tyName vals
   ColumnAdded tblName colName col ->
-      updateSyntax (alterTable tblName <> "ADD COLUMN "
-                                       <> sqlEscaped (columnName colName)
-                                       <> " "
-                                       <> renderDataType (columnType col)
-                                       <> " "
-                                       <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+      updateSyntax (alterTable tblName 
+                                <> "ADD COLUMN "
+                                <> sqlEscaped (columnName colName)
+                                <> " "
+                                <> renderDataType (columnType col)
+                                <> " "
+                                <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
                    )
   ColumnRemoved tblName colName ->
       updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
@@ -277,6 +279,10 @@ toSqlSyntax = \case
         NotNull -> "NOT NULL"
         Default defValue -> "DEFAULT " <> defValue
 
+      createTypeSyntax :: Text -> [Text] -> Pg.PgSyntax
+      createTypeSyntax ty vals = Pg.emit $ toS $
+          "CREATE TYPE " <> sqlEscaped ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
+
       -- This function also overlaps with beam-migrate functionalities.
       renderDataType :: ColumnType -> Text
       renderDataType = \case
@@ -326,6 +332,8 @@ toSqlSyntax = \case
         PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
         PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
         PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
+        -- enumerations
+        PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
@@ -340,6 +348,9 @@ sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
 sqlEscaped :: Text -> Text
 sqlEscaped t = "\"" <> t <> "\""
+
+sqlSingleQuoted :: Text -> Text
+sqlSingleQuoted t = "'" <> t <> "'"
 
 sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
 sqlOptNumericPrec Nothing = mempty

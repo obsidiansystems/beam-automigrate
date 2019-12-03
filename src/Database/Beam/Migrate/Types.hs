@@ -17,23 +17,24 @@ import           Data.Text                                ( Text )
 import qualified Data.Text                               as T
 
 import qualified Database.Beam.Backend.SQL.AST           as AST
-import           Database.Beam.Backend.SQL.SQL92          ( HasSqlValueSyntax )
-import qualified Database.Beam.Postgres                  as Pg
-import           Data.Aeson                              as JSON
-                                                          ( Value
-                                                          , FromJSON
-                                                          , ToJSON
-                                                          , encode
-                                                          )
-import           Database.Beam.Postgres.Syntax            ( PgValueSyntax )
 
 --
 -- Types (sketched)
 --
 
-newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq, Generic)
+data Schema = Schema { schemaTables        :: Tables
+                     , schemaEnumerations  :: Enumerations
+                     } deriving (Show, Eq, Generic)
 
 instance NFData Schema
+
+type Enumerations = Map EnumerationName Enumeration
+
+newtype EnumerationName = EnumerationName { enumName :: Text } deriving (Show, Eq, Ord, Generic)
+newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, Eq, Ord, Generic)
+
+instance NFData EnumerationName
+instance NFData Enumeration
 
 type Tables = Map TableName Table
 
@@ -77,9 +78,14 @@ data PgDataType =
   | PgRangeTs
   | PgRangeTsTz
   | PgRangeDate
+  | PgEnumeration EnumerationName
 
 deriving instance Show PgDataType
 deriving instance Eq PgDataType
+
+-- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for enum types.
+newtype PgEnum a = 
+    PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
@@ -137,6 +143,7 @@ data Edit =
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
   | ColumnConstraintAdded   TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
+  | EnumTypeCreated Text {- type name -} [Text] {- values -}
   deriving (Show, Eq)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
@@ -167,7 +174,7 @@ instance NFData DiffError
 --
 
 noSchema :: Schema
-noSchema = Schema mempty
+noSchema = Schema mempty mempty
 
 noTableConstraints :: Set TableConstraint
 noTableConstraints = mempty

@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 module Database.Beam.Migrate.Diff
@@ -16,22 +17,23 @@ module Database.Beam.Migrate.Diff
   )
 where
 
-import Data.DList (DList)
-import qualified Data.DList as D
+import           Data.DList                               ( DList )
+import qualified Data.DList                              as D
 import           Data.Maybe
-import           Data.List (foldl')
+import           Data.Text                                ( Text )
+import           Data.List                                ( foldl' )
 import           Control.Monad
-import           Control.Exception              ( assert )
-import           Data.Map.Merge.Strict          ( mergeA
-                                                , traverseMissing
-                                                , zipWithAMatched
-                                                , zipWithAMatched
-                                                , WhenMissing
-                                                , WhenMatched
-                                                )
-import qualified Data.Map.Strict               as M
-import qualified Data.Set                      as S
-import           Data.Foldable                  ( foldlM )
+import           Control.Exception                        ( assert )
+import           Data.Map.Merge.Strict                    ( mergeA
+                                                          , traverseMissing
+                                                          , zipWithAMatched
+                                                          , zipWithAMatched
+                                                          , WhenMissing
+                                                          , WhenMatched
+                                                          )
+import qualified Data.Map.Strict                         as M
+import qualified Data.Set                                as S
+import           Data.Foldable                            ( foldlM )
 
 import           Database.Beam.Migrate.Types
 
@@ -92,9 +94,13 @@ diffTableReferenceImplementation tName hsTable dbTable = do
   let tblConstraintsRemoved = do
         guard (not $ S.null constraintsRemoved)
         pure $ map (TableConstraintRemoved tName) (S.toList constraintsRemoved)
-  let colAdded   = map (uncurry (ColumnAdded tName)) (M.toList columnAdded)
+  let cols         = M.toList columnAdded
+  let colAdded     = map (uncurry (ColumnAdded tName)) cols
   let colRemoved = map (ColumnRemoved tName) (M.keys columnRemoved)
-  pure $ (join $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved]) <> colAdded <> colRemoved <> diffs
+  pure $ (join $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved]) 
+      <> colAdded 
+      <> colRemoved 
+      <> diffs
   where
     go :: [Edit] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
     go e ((hsName, hsCol), (dbName, dbCol)) = assert (hsName == dbName) $ do

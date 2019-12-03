@@ -10,7 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Database.Beam.Migrate.Compat where
 
-import           Data.Proxy
+import           Data.Typeable
 import           Data.Text                                ( Text )
 import           Data.Scientific                          ( Scientific )
 import           Data.Time.Calendar                       ( Day )
@@ -20,6 +20,8 @@ import           Data.Time                                ( UTCTime )
 import           Data.Word
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
+import qualified Data.Text                               as T
+import qualified Data.Map.Strict                         as M
 
 import           Database.Beam.Backend.SQL
 import qualified Database.Beam                           as Beam
@@ -29,8 +31,6 @@ import qualified Database.Beam.Postgres                  as Pg
 import           Data.Aeson                              as JSON
                                                           ( FromJSON
                                                           , ToJSON
-                                                          , encode
-                                                          , toJSON
                                                           )
 
 {- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
@@ -63,6 +63,12 @@ class Ord (SchemaConstraint ty) => HasSchemaConstraints' (nullary :: Bool) ty wh
   -- 'FieldCheck' for more information on the formatting of constraints.
   schemaConstraints' :: Proxy nullary -> Proxy ty -> Set (SchemaConstraint ty)
 
+class IsEnumeration' (isEnum :: Bool) ty where
+  schemaEnums' :: Proxy isEnum -> Proxy ty -> Enumerations
+
+class IsEnumeration ty where
+  schemaEnums :: Proxy ty -> Enumerations
+
 type family SchemaConstraint (k :: *) where
     SchemaConstraint (Beam.TableEntity e)  = TableConstraint
     SchemaConstraint (Beam.TableField e t) = ColumnConstraint
@@ -71,6 +77,10 @@ type family IsMaybe (k :: *) :: Bool where
     IsMaybe (Maybe x)                     = 'True
     IsMaybe (Beam.TableField t (Maybe x)) = 'True
     IsMaybe (Beam.TableField t _)         = 'False
+    IsMaybe _                             = 'False
+
+type family IsEnum (k :: *) :: Bool where
+    IsMaybe (PgEnum x)                    = 'True
     IsMaybe _                             = 'False
 
 -- Default /table-level/ constraints.
@@ -98,6 +108,21 @@ instance ( IsMaybe a ~ nullary
          , HasSchemaConstraints' nullary a
          ) => HasSchemaConstraints a where
   schemaConstraints = schemaConstraints' (Proxy :: Proxy nullary)
+
+-- Default instances for enum discovery.
+
+instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (PgEnum a) where
+  schemaEnums' Proxy Proxy = M.singleton ty vals
+    where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
+          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+
+instance IsEnumeration' 'False a where
+  schemaEnums' Proxy Proxy = mempty
+
+instance ( IsEnum a ~ isEnum
+         , IsEnumeration' isEnum a
+         ) => IsEnumeration a where
+  schemaEnums = schemaEnums' (Proxy :: Proxy isEnum)
 
 --
 -- Sql datatype instances for the most common types.
@@ -182,3 +207,11 @@ instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsTzRange a) where
 
 instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
   defaultSqlDataType _ _ = PgSpecificType PgRangeDate
+
+--
+-- support for enum types
+--
+
+instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (PgEnum a) where
+  defaultSqlDataType (Proxy :: (Proxy (PgEnum a))) _ = 
+    PgSpecificType (PgEnumeration $ EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))

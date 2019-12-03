@@ -171,7 +171,7 @@ getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
   allConstraints <- getAllConstraints conn
   tables         <- Pg.fold_ conn userTablesQ mempty (getTable allConstraints)
-  pure $ Schema tables
+  pure $ Schema tables mempty -- FIXME(and) support retrieving enums
 
   where
     getTable :: AllConstraints -> Tables -> (Pg.Oid, Text) -> IO Tables
