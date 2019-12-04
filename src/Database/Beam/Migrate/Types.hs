@@ -17,23 +17,24 @@ import           Data.Text                                ( Text )
 import qualified Data.Text                               as T
 
 import qualified Database.Beam.Backend.SQL.AST           as AST
-import           Database.Beam.Backend.SQL.SQL92          ( HasSqlValueSyntax )
-import qualified Database.Beam.Postgres                  as Pg
-import           Data.Aeson                              as JSON
-                                                          ( Value
-                                                          , FromJSON
-                                                          , ToJSON
-                                                          , encode
-                                                          )
-import           Database.Beam.Postgres.Syntax            ( PgValueSyntax )
 
 --
 -- Types (sketched)
 --
 
-newtype Schema = Schema { schemaTables :: Tables } deriving (Show, Eq, Generic)
+data Schema = Schema { schemaTables        :: Tables
+                     , schemaEnumerations  :: Enumerations
+                     } deriving (Show, Eq, Generic)
 
 instance NFData Schema
+
+type Enumerations = Map EnumerationName Enumeration
+
+newtype EnumerationName = EnumerationName { enumName :: Text } deriving (Show, Eq, Ord, Generic)
+newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, Eq, Ord, Generic)
+
+instance NFData EnumerationName
+instance NFData Enumeration
 
 type Tables = Map TableName Table
 
@@ -65,7 +66,11 @@ instance NFData Column where
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
 data ColumnType = 
     SqlStdType AST.DataType
+  -- ^ Standard SQL types.
   | PgSpecificType PgDataType
+  -- ^ Postgres specific types.
+  | DbEnumeration EnumerationName Enumeration
+  -- ^ An enumeration implemented with text-based encoding.
   deriving (Show, Eq)
 
 data PgDataType =
@@ -77,9 +82,18 @@ data PgDataType =
   | PgRangeTs
   | PgRangeTsTz
   | PgRangeDate
+  | PgEnumeration EnumerationName
 
 deriving instance Show PgDataType
 deriving instance Eq PgDataType
+
+-- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
+newtype PgEnum a = 
+    PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
+
+-- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
+newtype DbEnum a = 
+    DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
@@ -137,7 +151,16 @@ data Edit =
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
   | ColumnConstraintAdded   TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
+  | EnumTypeAdded       EnumerationName Enumeration
+  | EnumTypeRemoved     EnumerationName
+  | EnumTypeValueAdded  EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
   deriving (Show, Eq)
+
+data InsertionOrder = 
+    Before 
+  | After deriving (Show, Eq, Generic)
+
+instance NFData InsertionOrder
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Edit where
@@ -150,6 +173,10 @@ instance NFData Edit where
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
   rnf (ColumnConstraintAdded   tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
+  rnf (EnumTypeAdded       eName enum) = eName `deepseq` enum `deepseq` ()
+  rnf (EnumTypeRemoved     eName) = eName `deepseq` ()
+  rnf (EnumTypeValueAdded  eName inserted order insertionPoint) = 
+      eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
 data DiffError =
@@ -157,7 +184,9 @@ data DiffError =
     -- ^ The diff couldn't be completed. TODO(adn) We need extra information
     -- we can later on reify into the raw SQL queries users can try to run
     -- themselves.
-    deriving (Show, Generic, Eq)
+  | ValuesRemovedFromEnum EnumerationName [Text]
+  -- ^ Postgres doesn't support removing values from an enum.
+  deriving (Show, Generic, Eq)
 
 instance Exception DiffError
 instance NFData DiffError
@@ -167,7 +196,7 @@ instance NFData DiffError
 --
 
 noSchema :: Schema
-noSchema = Schema mempty
+noSchema = Schema mempty mempty
 
 noTableConstraints :: Set TableConstraint
 noTableConstraints = mempty

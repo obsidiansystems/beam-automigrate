@@ -9,6 +9,7 @@ where
 
 import           Data.String
 import           Control.Monad.State
+import           Control.Applicative
 import           Data.Maybe                               ( fromMaybe )
 import           Data.Bits                                ( (.&.)
                                                           , shiftR
@@ -104,6 +105,13 @@ tableColumnsQ = fromString $ unlines
   , "FROM pg_catalog.pg_attribute att WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f'"
   ]
 
+enumerationsQ :: Pg.Query
+enumerationsQ = fromString $ unlines
+  [ "SELECT t.typname, t.oid, array_agg(e.enumlabel ORDER BY e.enumsortorder)"
+  , "FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid"
+  , "GROUP BY t.typname, t.oid" 
+  ]
+
 -- | Return all foreign key constraints for /all/ 'Table's.
 
 foreignKeysQ :: Pg.Query
@@ -169,23 +177,38 @@ referenceActionsQ = fromString $ unlines
 -- | Connects to a running PostgreSQL database and extract the relevant 'Schema' out of it.
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
-  allConstraints <- getAllConstraints conn
-  tables         <- Pg.fold_ conn userTablesQ mempty (getTable allConstraints)
-  pure $ Schema tables
+  allConstraints  <- getAllConstraints conn
+  enumerationData <- Pg.fold_ conn enumerationsQ mempty getEnumeration
+  tables          <- Pg.fold_ conn userTablesQ mempty (getTable enumerationData allConstraints)
+  pure $ Schema tables (M.fromList $ M.elems enumerationData)
 
   where
-    getTable :: AllConstraints -> Tables -> (Pg.Oid, Text) -> IO Tables
-    getTable allConstraints allTables (oid, TableName -> tName) = do
+    getEnumeration :: Map Pg.Oid (EnumerationName, Enumeration) 
+                   -> (Text, Pg.Oid, V.Vector Text) 
+                   -> IO (Map Pg.Oid (EnumerationName, Enumeration))
+    getEnumeration allEnums (enumName, oid, V.toList -> vals) =
+      pure $ M.insert oid (EnumerationName enumName, (Enumeration vals)) allEnums
+
+    getTable :: Map Pg.Oid (EnumerationName, Enumeration) 
+             -> AllConstraints 
+             -> Tables 
+             -> (Pg.Oid, Text) 
+             -> IO Tables
+    getTable enumData allConstraints allTables (oid, TableName -> tName) = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
       newTable  <-
         Table (fromMaybe noTableConstraints (M.lookup tName (fst allConstraints)))
-          <$> foldlM (getColumns (snd allConstraints)) mempty pgColumns
+          <$> foldlM (getColumns enumData (snd allConstraints)) mempty pgColumns
       pure $ M.insert tName newTable allTables
 
-    getColumns :: AllColumnConstraints -> Columns -> (ByteString, Pg.Oid, Int, Bool, ByteString) -> IO Columns
-    getColumns allConstraints c (attname, atttypid, atttypmod, attnotnull, format_type) = do
+    getColumns :: Map Pg.Oid (EnumerationName, Enumeration) 
+               -> AllColumnConstraints 
+               -> Columns 
+               -> (ByteString, Pg.Oid, Int, Bool, ByteString) 
+               -> IO Columns
+    getColumns enumData allConstraints c (attname, atttypid, atttypmod, attnotnull, format_type) = do
       let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
-      case pgTypeToColumnType atttypid mbPrecision of
+      case pgTypeToColumnType atttypid mbPrecision <|> pgEnumTypeToColumnType enumData atttypid of
         Just cType -> do
           let nullConstraint = 
                   if attnotnull then S.fromList [NotNull] else mempty
@@ -204,6 +227,12 @@ getSchema conn = do
 --
 -- Postgres type mapping
 --
+
+pgEnumTypeToColumnType :: Map Pg.Oid (EnumerationName, Enumeration) 
+                       -> Pg.Oid 
+                       -> Maybe ColumnType
+pgEnumTypeToColumnType enumData oid = 
+    (\(n, _) -> PgSpecificType (PgEnumeration n)) <$> M.lookup oid enumData
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).

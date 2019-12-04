@@ -36,6 +36,7 @@ import           Database.Beam.Schema.Tables    ( dbEntityDescriptor
                                                 )
 
 import           Database.Beam.Migrate.Annotated
+import           Database.Beam.Migrate.Compat
 
 -- | To make kind signatures more readable.
 type DatabaseKind = (Type -> Type) -> Type
@@ -61,6 +62,11 @@ class GTableEntry be db x where
 class GTable be db x where
     gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
 
+-- Enumerations-specific classes
+
+class GEnums be db x where
+    gEnums :: AnnotatedDatabaseSettings be db -> x p -> Enumerations
+
 -- Column-specific classes
 
 class GColumns x where
@@ -82,8 +88,41 @@ class GColumn x where
 instance GSchema be db x => GSchema be db (D1 f x) where
   gSchema db (M1 x) = gSchema db x
 
-instance (Constructor f, GTables be db x) => GSchema be db (C1 f x) where
-  gSchema db (M1 x) = Schema { schemaTables = gTables db x }
+instance (Constructor f, GTables be db x, GEnums be db x) => GSchema be db (C1 f x) where
+  gSchema db (M1 x) = Schema { schemaTables = gTables db x, schemaEnumerations = gEnums db x }
+
+--
+-- Deriving information about 'Enums'.
+--
+
+instance GEnums be db x => GEnums be db (D1 f x) where
+  gEnums db (M1 x) = gEnums db x
+
+instance GEnums be db x => GEnums be db (C1 f x) where
+  gEnums db (M1 x) = gEnums db x
+
+instance (GEnums be db a, GEnums be db b) => GEnums be db (a :*: b) where
+  gEnums db (a :*: b) = gEnums db a <> gEnums db b
+
+instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
+         , Beam.Table tbl
+         , GEnums be db (Rep (TableSchema tbl))
+         , Generic (TableSchema tbl)
+         )
+  => GEnums be db (S1 f (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))) where
+  gEnums db (M1 (K1 annEntity)) =
+    gEnums db (from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
+
+instance IsEnumeration ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
+    gEnums _ (M1 (K1 _)) = schemaEnums (Proxy @ty)
+
+-- primary-key-wrapped types do not yield any enumerations.
+
+instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (TableFieldSchema tbl2)))) where
+    gEnums _ (M1 (K1 _)) = mempty
+
+instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))) where
+    gEnums _ (M1 (K1 _)) = mempty
 
 --
 -- Deriving information about 'Table's.
@@ -97,10 +136,6 @@ instance GTableEntry be db x => GTableEntry be db (S1 f x) where
 
 instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
   gTables db (a :*: b) = gTables db a <> gTables db b
-
--- test starts
-
--- test ends
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , GColumns (Rep (TableSchema tbl))

@@ -48,11 +48,11 @@ library
                      , time
                      , scientific
                      -- Needed only for the examples, (re)move eventually.
-                     , QuickCheck             < 2.15.0.0
+                     , QuickCheck          < 2.15.0.0
                      , splitmix
                      , string-conv
                      -- ^ Needed for schema generation
-                     , aeson < 1.5.0.0
+                     , aeson               < 1.5.0.0
                      -- ^ needed for the pgJSON ad pgJSONb types
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings

@@ -55,6 +55,7 @@ import           Database.Beam.Migrate.Annotated         as Exports
 import           Database.Beam.Migrate.Generic           as Exports
 import           Database.Beam.Migrate.Types             as Exports
 import           Database.Beam.Migrate.Diff              as Exports
+import           Database.Beam.Migrate.Compat            as Exports
 import           Database.Beam.Migrate.Postgres           ( getSchema )
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
@@ -127,42 +128,24 @@ fromAnnotatedDbSettings :: ( Database be db
                         -> Schema
 fromAnnotatedDbSettings db = gSchema db (from db)
 
-data SequencedEdits = SequencedEdits {
-    seCreationsOrDeletions :: [Edit]
-  , seAlterations :: [Edit]
-  }
-
--- | Partion edits in "additions" and "removals" operations, to make sure we do not try to
--- reference something which hasn't been created yet.
+-- | Sort edits according to their execution order, to make sure they don't reference something which
+-- hasn't been created yet.
 -- FIXME(adn) Until we fix #1 properly, we also filter 'IsForeignKeyOf' entries.
-toSequencedEdits :: [Edit] -> SequencedEdits
-toSequencedEdits edits =
-    let (seCreationsOrDeletions, alterations) = partitionEdits edits
-        in SequencedEdits { seCreationsOrDeletions, seAlterations = filter (not . isForeignKeyOf) alterations }
+sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
+sortEdits edits =
+    filter (not . isForeignKeyOf) $ L.sortOn (snd . unPriority) edits
   where
-    partitionEdits :: [Edit] -> ([Edit], [Edit])
-    partitionEdits = L.partition isCreationOrDeletion
-      where
-          isCreationOrDeletion :: Edit -> Bool
-          isCreationOrDeletion = \case
-            TableAdded _ _ -> True
-            TableRemoved _ -> True
-            ColumnAdded _ _ _ -> True
-            ColumnRemoved _ _ -> True
-            _                 -> False
-
-    isForeignKeyOf :: Edit -> Bool
+    isForeignKeyOf :: WithPriority Edit -> Bool
     isForeignKeyOf = \case
-      TableConstraintAdded   _ IsForeignKeyOf{} -> True
-      TableConstraintRemoved _ IsForeignKeyOf{} -> True
+      WithPriority (TableConstraintAdded   _ IsForeignKeyOf{}, _) -> True
+      WithPriority (TableConstraintRemoved _ IsForeignKeyOf{}, _) -> True
       _ -> False
 
-editsToPgSyntax :: SequencedEdits -> [Pg.PgSyntax]
-editsToPgSyntax SequencedEdits{seCreationsOrDeletions, seAlterations} =
-  map toSqlSyntax (seCreationsOrDeletions <> seAlterations)
+editsToPgSyntax :: [WithPriority Edit] -> [Pg.PgSyntax]
+editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
 
 -- | A database 'Migration'.
-type Migration m = ExceptT DiffError (StateT [Edit] m) ()
+type Migration m = ExceptT DiffError (StateT [WithPriority Edit] m) ()
 
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
@@ -180,7 +163,7 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right (toSequencedEdits -> edits) -> 
+    Right (sortEdits -> edits) -> 
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
@@ -190,9 +173,7 @@ toSqlSyntax = \case
   TableAdded tblName tbl -> 
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
                                    <> " (" 
-                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)) <>
-                                                          filter (not . T.null) (map renderCreateTableConstraint (S.toList (tableConstraints tbl)))
-                                                         )
+                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)))
                                    <> ")"
                 )
   TableRemoved tblName    ->
@@ -201,13 +182,25 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
+  EnumTypeAdded   tyName vals -> createTypeSyntax tyName vals
+  EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
+  EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint -> 
+      ddlSyntax ("ALTER TYPE " <> tyName 
+                               <> " ADD VALUE " 
+                               <> sqlSingleQuoted newVal 
+                               <> " " 
+                               <> renderInsertionOrder order
+                               <> " "
+                               <> sqlSingleQuoted insPoint
+                )
   ColumnAdded tblName colName col ->
-      updateSyntax (alterTable tblName <> "ADD COLUMN "
-                                       <> sqlEscaped (columnName colName)
-                                       <> " "
-                                       <> renderDataType (columnType col)
-                                       <> " "
-                                       <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+      updateSyntax (alterTable tblName 
+                                <> "ADD COLUMN "
+                                <> sqlEscaped (columnName colName)
+                                <> " "
+                                <> renderDataType (columnType col)
+                                <> " "
+                                <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
                    )
   ColumnRemoved tblName colName ->
       updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
@@ -227,6 +220,10 @@ toSqlSyntax = \case
       renderTableColumn :: (ColumnName, Column) -> Text
       renderTableColumn (colName, col) = columnName colName <> " " <> renderDataType (columnType col)
 
+      renderInsertionOrder :: InsertionOrder -> Text
+      renderInsertionOrder Before = "BEFORE"
+      renderInsertionOrder After  = "AFTER"
+
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
         Unique fname cols -> 
@@ -236,7 +233,7 @@ toSqlSyntax = \case
                        <> ")"
         PrimaryKey fname cols -> 
             conKeyword <> sqlEscaped fname 
-                       <> "PRIMARY KEY (" 
+                       <> " PRIMARY KEY (" 
                        <> T.intercalate ", " (map columnName (S.toList cols)) 
                        <> ")"
         ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
@@ -277,6 +274,10 @@ toSqlSyntax = \case
         NotNull -> "NOT NULL"
         Default defValue -> "DEFAULT " <> defValue
 
+      createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
+      createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
+          "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
+
       -- This function also overlaps with beam-migrate functionalities.
       renderDataType :: ColumnType -> Text
       renderDataType = \case
@@ -316,6 +317,9 @@ toSqlSyntax = \case
         SqlStdType (AST.DataTypeRow _rows) ->
             error "DataTypeRow not supported yet."
         SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+        -- text-based enum types
+        DbEnumeration (EnumerationName _) _ -> 
+            renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
         -- Json types
         PgSpecificType PgJson  -> "JSON"
         PgSpecificType PgJsonB -> "JSONB"
@@ -326,6 +330,8 @@ toSqlSyntax = \case
         PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
         PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
         PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
+        -- enumerations
+        PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
@@ -341,12 +347,15 @@ sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 sqlEscaped :: Text -> Text
 sqlEscaped t = "\"" <> t <> "\""
 
+sqlSingleQuoted :: Text -> Text
+sqlSingleQuoted t = "'" <> t <> "'"
+
 sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
 sqlOptNumericPrec Nothing = mempty
 sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
 sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
 
-evalMigration :: Monad m => Migration m -> m (Either DiffError [Edit])
+evalMigration :: Monad m => Migration m -> m (Either DiffError [WithPriority Edit])
 evalMigration m = do
     (a, s) <- runStateT (runExceptT m) mempty
     case a of
@@ -363,7 +372,7 @@ createMigration (Right edits) = ExceptT $ do
 -- | Prints the migration to stdout. Useful for debugging and diagnostic.
 printMigration :: MonadIO m => Migration m -> m ()
 printMigration m = do
-    (a, sequencedEdits) <- fmap toSequencedEdits <$> runStateT (runExceptT m) mempty
+    (a, sortedEdits) <- fmap sortEdits <$> runStateT (runExceptT m) mempty
     case a of
       Left e    -> liftIO $ throwIO e
-      Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sequencedEdits)
+      Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sortedEdits)
