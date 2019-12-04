@@ -149,7 +149,11 @@ data Edit =
   | EnumTypeValueAdded  EnumerationName Text {- added values -} InsertionOrder Text {- insertion point -}
   deriving (Show, Eq)
 
-data InsertionOrder = Before | After deriving (Show, Eq)
+data InsertionOrder = 
+    Before 
+  | After deriving (Show, Eq, Generic)
+
+instance NFData InsertionOrder
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Edit where
@@ -162,6 +166,10 @@ instance NFData Edit where
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
   rnf (ColumnConstraintAdded   tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
+  rnf (EnumTypeAdded       eName enum) = eName `deepseq` enum `deepseq` ()
+  rnf (EnumTypeRemoved     eName) = eName `deepseq` ()
+  rnf (EnumTypeValueAdded  eName inserted order insertionPoint) = 
+      eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
 data DiffError =
