@@ -32,7 +32,6 @@ import           Data.List                                ( foldl'
                                                           , (\\)
                                                           )
 import qualified Data.List                               as L
-import qualified Data.List.NonEmpty                      as NE
 import           Control.Monad
 import           Control.Exception                        ( assert )
 import           Data.Map.Merge.Strict                    ( mergeA
@@ -68,13 +67,15 @@ editPriority = \case
   ColumnTypeChanged{}       -> Priority 3
   EnumTypeRemoved{}         -> Priority 3
   EnumTypeValueAdded{}      -> Priority 3
-  TableConstraintAdded{}    -> Priority 3
-  TableConstraintRemoved{}  -> Priority 3
-  ColumnConstraintAdded{}   -> Priority 3
-  ColumnConstraintRemoved{} -> Priority 3
+  -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
+  TableConstraintAdded _ (ForeignKey{}) -> Priority 4  
+  TableConstraintAdded _ _              -> Priority 3
+  TableConstraintRemoved{}  -> Priority 5
+  ColumnConstraintAdded{}   -> Priority 5
+  ColumnConstraintRemoved{} -> Priority 5
   -- Destructive operations go last
-  ColumnRemoved{}           -> Priority 4
-  TableRemoved{}            -> Priority 5
+  ColumnRemoved{}           -> Priority 5
+  TableRemoved{}            -> Priority 6
 
 mkEdit :: Edit -> WithPriority Edit
 mkEdit e = WithPriority (e, editPriority e)
@@ -112,45 +113,66 @@ diffReferenceImplementation hsSchema = diff (schemaTables hsSchema) . schemaTabl
 diffTablesReferenceImplementation :: Tables -> Tables -> Diff
 diffTablesReferenceImplementation hsTables dbTables = do
   let tablesAdded     = M.difference hsTables dbTables
-      tableRemoved    = M.difference dbTables hsTables
+      tablesRemoved   = M.difference dbTables hsTables
       diffableTables  = M.intersection hsTables dbTables
       diffableTables' = M.intersection dbTables (hsTables)
-  diffs <- foldlM go mempty (zip (M.toList diffableTables) (M.toList diffableTables'))
-  pure $ map (mkEdit . uncurry TableAdded) (M.toList tablesAdded) 
-      <> map (mkEdit . TableRemoved) (M.keys tableRemoved) <> diffs
+  whenBoth <- foldlM go mempty (zip (M.toList diffableTables) (M.toList diffableTables'))
+  pure $ whenAdded tablesAdded <> whenRemoved tablesRemoved <> whenBoth
   where
+    whenAdded :: Tables -> [WithPriority Edit]
+    whenAdded = concatMap (addEdit TableAdded TableConstraintAdded tableConstraints) . M.toList
+
+    whenRemoved :: Tables -> [WithPriority Edit]
+    whenRemoved = 
+        concatMap (addEdit (\k _ -> TableRemoved k) TableConstraintRemoved tableConstraints) . M.toList
+
     go :: [WithPriority Edit] -> ((TableName, Table), (TableName, Table)) -> Diff
     go e ((hsName, hsTable), (dbName, dbTable)) = assert (hsName == dbName) $ do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
 
+addEdit :: (k -> v -> Edit) 
+        -> (k -> c -> Edit) 
+        -> (v -> S.Set c)
+        -> (k, v)
+        -> [WithPriority Edit]
+addEdit onValue onConstr getConstr (k,v) = 
+    (mkEdit $ onValue k v) : map (mkEdit . onConstr k) (S.toList $ getConstr v)
+
 diffTableReferenceImplementation :: TableName -> Table -> Table -> Diff
 diffTableReferenceImplementation tName hsTable dbTable = do
   let constraintsAdded   = S.difference (tableConstraints hsTable) (tableConstraints dbTable)
       constraintsRemoved = S.difference (tableConstraints dbTable) (tableConstraints hsTable)
-      columnAdded        = M.difference (tableColumns hsTable) (tableColumns dbTable)
-      columnRemoved      = M.difference (tableColumns dbTable) (tableColumns hsTable)
+      columnsAdded       = M.difference (tableColumns hsTable) (tableColumns dbTable)
+      columnsRemoved     = M.difference (tableColumns dbTable) (tableColumns hsTable)
       diffableColumns    = M.intersection (tableColumns hsTable) (tableColumns dbTable)
       diffableColumns'   = M.intersection (tableColumns dbTable) (tableColumns hsTable)
-  diffs <- foldlM go mempty (zip (M.toList diffableColumns) (M.toList diffableColumns'))
+  whenBoth <- foldlM go mempty (zip (M.toList diffableColumns) (M.toList diffableColumns'))
   let tblConstraintsAdded = do
         guard (not $ S.null constraintsAdded)
         pure $ map (mkEdit . TableConstraintAdded tName) (S.toList constraintsAdded)
   let tblConstraintsRemoved = do
         guard (not $ S.null constraintsRemoved)
         pure $ map (mkEdit . TableConstraintRemoved tName) (S.toList constraintsRemoved)
-  let cols         = M.toList columnAdded
-  let colAdded     = map (mkEdit . uncurry (ColumnAdded tName)) cols
-  let colRemoved = map (mkEdit . ColumnRemoved tName) (M.keys columnRemoved)
+  let colsAdded   = whenAdded columnsAdded
+  let colsRemoved = whenRemoved columnsRemoved
   pure $ (join $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved]) 
-      <> colAdded 
-      <> colRemoved 
-      <> diffs
+      <> colsAdded 
+      <> colsRemoved 
+      <> whenBoth
   where
     go :: [WithPriority Edit] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
     go e ((hsName, hsCol), (dbName, dbCol)) = assert (hsName == dbName) $ do
       d <- diffColumnReferenceImplementation tName hsName hsCol dbCol
       pure $ e <> d
+
+    whenAdded :: Columns -> [WithPriority Edit]
+    whenAdded = 
+        concatMap (addEdit (ColumnAdded tName) (ColumnConstraintAdded tName) columnConstraints) . M.toList
+
+    whenRemoved :: Columns -> [WithPriority Edit]
+    whenRemoved = 
+        concatMap (addEdit (\k _ -> ColumnRemoved tName k) (ColumnConstraintRemoved tName) columnConstraints) . M.toList
 
 diffColumnReferenceImplementation :: TableName -> ColumnName -> Column -> Column -> Diff
 diffColumnReferenceImplementation tName colName hsColumn dbColumn = do
@@ -189,7 +211,7 @@ diffEnums hsEnums dbEnums =
     whenBoth          = zipWithAMatched (\k x -> diffEnumeration k x)
 
 diffEnumeration :: EnumerationName -> Enumeration -> Enumeration -> DiffA DList
-diffEnumeration eName (Enumeration (NE.toList -> hsEnum)) (Enumeration (NE.toList -> dbEnum)) = do
+diffEnumeration eName (Enumeration hsEnum) (Enumeration dbEnum) = do
   let valuesRemoved = dbEnum \\ hsEnum
   case L.null valuesRemoved of
     False -> Left  $ ValuesRemovedFromEnum eName valuesRemoved
@@ -207,7 +229,7 @@ computeEnumEdit eName (x:xs) (y:ys) =
               else (mkEdit $ EnumTypeValueAdded eName x Before y) : computeEnumEdit eName xs (y:ys)
 
 appendAfter :: EnumerationName -> [Text] -> Text -> [WithPriority Edit]
-appendAfter _ []  _        = mempty    
+appendAfter _ []  _        = mempty
 appendAfter eName [l] z    = [mkEdit $ EnumTypeValueAdded eName l After z]
 appendAfter eName (l:ls) z = mkEdit (EnumTypeValueAdded eName l After z) : appendAfter eName ls l
 
@@ -220,10 +242,16 @@ diffTables hsTables dbTables =
   M.foldl' D.append mempty <$> mergeA whenTablesAdded whenTablesRemoved whenBoth hsTables dbTables
   where
     whenTablesAdded :: WhenMissing (Either DiffError) TableName Table (DList (WithPriority Edit))
-    whenTablesAdded = traverseMissing (\k v -> Right . D.singleton . mkEdit $ TableAdded k v)
+    whenTablesAdded = traverseMissing (\k v -> do
+        let created = mkEdit $ TableAdded k v
+        let constraintsAdded = map (mkEdit . TableConstraintAdded k) (S.toList $ tableConstraints v)
+        pure $ D.fromList (created : constraintsAdded))
 
     whenTablesRemoved :: WhenMissing (Either DiffError) TableName Table (DList (WithPriority Edit))
-    whenTablesRemoved = traverseMissing (\k _ -> Right . D.singleton . mkEdit $ TableRemoved k)
+    whenTablesRemoved = traverseMissing (\k v -> do
+        let removed = mkEdit $ TableRemoved k
+        let constraintsRemoved = map (mkEdit . TableConstraintRemoved k) (S.toList $ tableConstraints v)
+        pure $ D.fromList (removed : constraintsRemoved))
 
     whenBoth :: WhenMatched (Either DiffError) TableName Table Table (DList (WithPriority Edit))
     whenBoth          = zipWithAMatched (\k x -> diffTable k x)
@@ -243,10 +271,16 @@ diffTable tName hsTable dbTable = do
   pure $ (foldl' D.append D.empty $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved]) <> diffs
   where
     whenColumnAdded :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
-    whenColumnAdded = traverseMissing (\k v -> Right . D.singleton . mkEdit $ ColumnAdded tName k v)
+    whenColumnAdded = traverseMissing (\k v -> do
+        let added = mkEdit $ ColumnAdded tName k v
+        let constraintsAdded = map (mkEdit . ColumnConstraintAdded tName k) (S.toList $ columnConstraints v)
+        pure $ D.fromList (added : constraintsAdded))
 
     whenColumnRemoved :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
-    whenColumnRemoved = traverseMissing (\k _ -> Right . D.singleton . mkEdit $ ColumnRemoved tName k)
+    whenColumnRemoved = traverseMissing (\k v -> do
+        let removed = mkEdit $ ColumnRemoved tName k
+        let constraintsRemoved = map (mkEdit . ColumnConstraintRemoved tName k) (S.toList $ columnConstraints v)
+        pure $ D.fromList (removed : constraintsRemoved))
 
     whenBoth :: WhenMatched (Either DiffError) ColumnName Column Column (DList (WithPriority Edit))
     whenBoth          = zipWithAMatched (\k x -> diffColumn tName k x)

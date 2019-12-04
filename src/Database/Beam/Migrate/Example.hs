@@ -40,7 +40,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , printMigration
                                                 , migrate
                                                 , TableConstraint(..)
-                                                , PgEnum
+                                                , DbEnum
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -81,7 +81,7 @@ data FlowerT f = Flower
   , flowerDiscounted :: Columnar f (Maybe Bool)
   , flowerSchemaOne  :: Columnar f (PgJSON MyJson)
   , flowerSchemaTwo  :: Columnar f (PgJSONB MyJson)
-  , flowerType       :: Columnar f (PgEnum FlowerType)
+  , flowerType       :: Columnar f (DbEnum FlowerType)
   }
   deriving (Generic, Beamable)
 

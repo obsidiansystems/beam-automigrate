@@ -67,9 +67,6 @@ class GTable be db x where
 class GEnums be db x where
     gEnums :: AnnotatedDatabaseSettings be db -> x p -> Enumerations
 
-class GEnumEntry be db x where
-    gEnumEntry :: AnnotatedDatabaseSettings be db -> x p -> (EnumerationName, Enumeration)
-
 -- Column-specific classes
 
 class GColumns x where

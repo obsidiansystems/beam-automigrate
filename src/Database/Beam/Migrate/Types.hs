@@ -6,7 +6,6 @@
 {-# LANGUAGE GADTs #-}
 module Database.Beam.Migrate.Types where
 
-import           Data.List.NonEmpty (NonEmpty)
 import           Control.Exception
 import           Control.DeepSeq
 import           GHC.Generics
@@ -32,7 +31,7 @@ instance NFData Schema
 type Enumerations = Map EnumerationName Enumeration
 
 newtype EnumerationName = EnumerationName { enumName :: Text } deriving (Show, Eq, Ord, Generic)
-newtype Enumeration     = Enumeration { enumValues :: NonEmpty Text } deriving (Show, Eq, Ord, Generic)
+newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, Eq, Ord, Generic)
 
 instance NFData EnumerationName
 instance NFData Enumeration
@@ -67,7 +66,11 @@ instance NFData Column where
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
 data ColumnType = 
     SqlStdType AST.DataType
+  -- ^ Standard SQL types.
   | PgSpecificType PgDataType
+  -- ^ Postgres specific types.
+  | DbEnumeration EnumerationName Enumeration
+  -- ^ An enumeration implemented with text-based encoding.
   deriving (Show, Eq)
 
 data PgDataType =
@@ -84,9 +87,13 @@ data PgDataType =
 deriving instance Show PgDataType
 deriving instance Eq PgDataType
 
--- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for enum types.
+-- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
 newtype PgEnum a = 
     PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
+
+-- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
+newtype DbEnum a = 
+    DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
@@ -146,7 +153,7 @@ data Edit =
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
   | EnumTypeAdded       EnumerationName Enumeration
   | EnumTypeRemoved     EnumerationName
-  | EnumTypeValueAdded  EnumerationName Text {- added values -} InsertionOrder Text {- insertion point -}
+  | EnumTypeValueAdded  EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
   deriving (Show, Eq)
 
 data InsertionOrder = 

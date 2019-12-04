@@ -35,7 +35,6 @@ import           Data.Proxy
 import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
 import qualified Data.List                               as L
-import qualified Data.List.NonEmpty                      as NE
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
@@ -56,6 +55,7 @@ import           Database.Beam.Migrate.Annotated         as Exports
 import           Database.Beam.Migrate.Generic           as Exports
 import           Database.Beam.Migrate.Types             as Exports
 import           Database.Beam.Migrate.Diff              as Exports
+import           Database.Beam.Migrate.Compat            as Exports
 import           Database.Beam.Migrate.Postgres           ( getSchema )
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
@@ -173,9 +173,7 @@ toSqlSyntax = \case
   TableAdded tblName tbl -> 
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
                                    <> " (" 
-                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)) <>
-                                                          filter (not . T.null) (map renderCreateTableConstraint (S.toList (tableConstraints tbl)))
-                                                         )
+                                   <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)))
                                    <> ")"
                 )
   TableRemoved tblName    ->
@@ -184,7 +182,17 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-  EnumTypeAdded tyName vals -> createTypeSyntax tyName vals
+  EnumTypeAdded   tyName vals -> createTypeSyntax tyName vals
+  EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
+  EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint -> 
+      ddlSyntax ("ALTER TYPE " <> tyName 
+                               <> " ADD VALUE " 
+                               <> sqlSingleQuoted newVal 
+                               <> " " 
+                               <> renderInsertionOrder order
+                               <> " "
+                               <> sqlSingleQuoted insPoint
+                )
   ColumnAdded tblName colName col ->
       updateSyntax (alterTable tblName 
                                 <> "ADD COLUMN "
@@ -211,6 +219,10 @@ toSqlSyntax = \case
 
       renderTableColumn :: (ColumnName, Column) -> Text
       renderTableColumn (colName, col) = columnName colName <> " " <> renderDataType (columnType col)
+
+      renderInsertionOrder :: InsertionOrder -> Text
+      renderInsertionOrder Before = "BEFORE"
+      renderInsertionOrder After  = "AFTER"
 
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
@@ -263,7 +275,7 @@ toSqlSyntax = \case
         Default defValue -> "DEFAULT " <> defValue
 
       createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
-      createTypeSyntax (EnumerationName ty) (Enumeration (NE.toList -> vals)) = Pg.emit $ toS $
+      createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
       -- This function also overlaps with beam-migrate functionalities.
@@ -305,6 +317,9 @@ toSqlSyntax = \case
         SqlStdType (AST.DataTypeRow _rows) ->
             error "DataTypeRow not supported yet."
         SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+        -- text-based enum types
+        DbEnumeration (EnumerationName _) _ -> 
+            renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
         -- Json types
         PgSpecificType PgJson  -> "JSON"
         PgSpecificType PgJsonB -> "JSONB"

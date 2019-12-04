@@ -80,9 +80,9 @@ type family IsMaybe (k :: *) :: Bool where
     IsMaybe (Beam.TableField t _)         = 'False
     IsMaybe _                             = 'False
 
-type family IsEnum (k :: *) :: Bool where
-    IsMaybe (PgEnum x)                    = 'True
-    IsMaybe _                             = 'False
+type family IsPgEnum (k :: *) :: Bool where
+    IsPgEnum (PgEnum x)                    = 'True
+    IsPgEnum _                             = 'False
 
 -- Default /table-level/ constraints.
 instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
@@ -115,15 +115,20 @@ instance ( IsMaybe a ~ nullary
 instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (PgEnum a) where
   schemaEnums' Proxy Proxy = M.singleton ty vals
     where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
-          vals = Enumeration $ NE.fromList $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+
+instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (DbEnum a) where
+  schemaEnums' Proxy Proxy = M.singleton ty vals
+    where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
+          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
 
 instance IsEnumeration' 'False a where
   schemaEnums' Proxy Proxy = mempty
 
-instance ( IsEnum a ~ isEnum
-         , IsEnumeration' isEnum a
+instance ( IsPgEnum a ~ isPgEnum
+         , IsEnumeration' isPgEnum a
          ) => IsEnumeration a where
-  schemaEnums = schemaEnums' (Proxy :: Proxy isEnum)
+  schemaEnums = schemaEnums' (Proxy :: Proxy isPgEnum)
 
 --
 -- Sql datatype instances for the most common types.
@@ -187,6 +192,9 @@ instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSON a) where
 instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
   defaultSqlDataType _ _ = PgSpecificType PgJsonB
 
+
+
+
 --
 -- support for pg range types
 --
@@ -216,3 +224,8 @@ instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
 instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (PgEnum a) where
   defaultSqlDataType (Proxy :: (Proxy (PgEnum a))) _ = 
     PgSpecificType (PgEnumeration $ EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
+
+instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (DbEnum a) where
+  defaultSqlDataType (Proxy :: (Proxy (DbEnum a))) _ = 
+    let vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+    in DbEnumeration (EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)) vals
