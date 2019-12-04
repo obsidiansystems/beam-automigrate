@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Database.Beam.Migrate.Postgres
   ( getSchema
   )
@@ -78,6 +79,12 @@ instance Pg.FromRow SqlForeignConstraint where
                                  <*> (fmap (V.map ColumnName) field) 
                                  <*> field
 
+instance FromField TableName where
+  fromField f dat = TableName <$> fromField f dat
+
+instance FromField ColumnName where
+  fromField f dat = ColumnName <$> fromField f dat
+
 instance FromField SqlRawOtherConstraintType where
   fromField f dat = do
       t <- fromField f dat
@@ -99,12 +106,26 @@ userTablesQ = fromString $ unlines
   , "and relname NOT LIKE 'beam_%'"
   ]
 
+-- | Get information about default values for /all/ tables.
+defaultsQ :: Pg.Query
+defaultsQ = fromString $ unlines
+  [ "SELECT col.table_name, col.column_name, col.column_default "
+  , "FROM information_schema.columns col "
+  , "WHERE col.column_default IS NOT NULL "
+  , "AND col.table_schema NOT IN('information_schema', 'pg_catalog') "
+  , "ORDER BY col.table_name"
+  ]
+
+-- | Get information about columns for this table. Due to the fact this is a query executed for /each/
+-- table, is important this is as light as possible to keep the performance decent.
 tableColumnsQ :: Pg.Query
 tableColumnsQ = fromString $ unlines
   [ "SELECT attname, atttypid, atttypmod, attnotnull, pg_catalog.format_type(atttypid, atttypmod) "
-  , "FROM pg_catalog.pg_attribute att WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f'"
+  , "FROM pg_catalog.pg_attribute att "
+  , "WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f' "
   ]
 
+-- | Get the enumeration data for all enum types in the database.
 enumerationsQ :: Pg.Query
 enumerationsQ = fromString $ unlines
   [ "SELECT t.typname, t.oid, array_agg(e.enumlabel ORDER BY e.enumsortorder)"
@@ -113,7 +134,6 @@ enumerationsQ = fromString $ unlines
   ]
 
 -- | Return all foreign key constraints for /all/ 'Table's.
-
 foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
   [ "SELECT kcu.table_name as foreign_table,"
@@ -177,9 +197,11 @@ referenceActionsQ = fromString $ unlines
 -- | Connects to a running PostgreSQL database and extract the relevant 'Schema' out of it.
 getSchema :: Pg.Connection -> IO Schema
 getSchema conn = do
-  allConstraints  <- getAllConstraints conn
-  enumerationData <- Pg.fold_ conn enumerationsQ mempty getEnumeration
-  tables          <- Pg.fold_ conn userTablesQ mempty (getTable enumerationData allConstraints)
+  allTableConstraints  <- getAllConstraints conn
+  allDefaults          <- getAllDefaults conn
+  enumerationData      <- Pg.fold_ conn enumerationsQ mempty getEnumeration
+  tables               <-
+      Pg.fold_ conn userTablesQ mempty (getTable allDefaults enumerationData allTableConstraints)
   pure $ Schema tables (M.fromList $ M.elems enumerationData)
 
   where
@@ -189,32 +211,37 @@ getSchema conn = do
     getEnumeration allEnums (enumName, oid, V.toList -> vals) =
       pure $ M.insert oid (EnumerationName enumName, (Enumeration vals)) allEnums
 
-    getTable :: Map Pg.Oid (EnumerationName, Enumeration) 
-             -> AllConstraints 
+    getTable :: AllDefaults
+             -> Map Pg.Oid (EnumerationName, Enumeration) 
+             -> AllTableConstraints 
              -> Tables 
              -> (Pg.Oid, Text) 
              -> IO Tables
-    getTable enumData allConstraints allTables (oid, TableName -> tName) = do
+    getTable allDefaults enumData allTableConstraints allTables (oid, TableName -> tName) = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
       newTable  <-
-        Table (fromMaybe noTableConstraints (M.lookup tName (fst allConstraints)))
-          <$> foldlM (getColumns enumData (snd allConstraints)) mempty pgColumns
+        Table (fromMaybe noTableConstraints (M.lookup tName allTableConstraints))
+          <$> foldlM (getColumns tName enumData allDefaults) mempty pgColumns
       pure $ M.insert tName newTable allTables
 
-    getColumns :: Map Pg.Oid (EnumerationName, Enumeration) 
-               -> AllColumnConstraints 
+    getColumns :: TableName
+               -> Map Pg.Oid (EnumerationName, Enumeration) 
+               -> AllDefaults
                -> Columns 
                -> (ByteString, Pg.Oid, Int, Bool, ByteString) 
                -> IO Columns
-    getColumns enumData allConstraints c (attname, atttypid, atttypmod, attnotnull, format_type) = do
+    getColumns tName enumData defaultData c (attname, atttypid, atttypmod, attnotnull, format_type) = do
       let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
       case pgTypeToColumnType atttypid mbPrecision <|> pgEnumTypeToColumnType enumData atttypid of
         Just cType -> do
-          let nullConstraint = 
-                  if attnotnull then S.fromList [NotNull] else mempty
+          let nullConstraint  = if attnotnull then S.fromList [NotNull] else mempty
           let columnName = ColumnName (TE.decodeUtf8 attname)
-          let newColumn  = 
-                  Column cType (maybe nullConstraint (mappend nullConstraint) (M.lookup columnName allConstraints))
+          let defaultConstraintMb = do
+                x <- M.lookup tName defaultData
+                y <- M.lookup columnName x
+                pure $ S.singleton y
+          let inferredConstraints = nullConstraint <> fromMaybe mempty defaultConstraintMb
+          let newColumn  = Column cType inferredConstraints
           pure $ M.insert columnName newColumn c
         Nothing ->
           fail
@@ -300,19 +327,30 @@ pgTypeToColumnType oid width
 --
 
 type AllTableConstraints = Map TableName (Set TableConstraint)
-type AllConstraints = (AllTableConstraints, AllColumnConstraints)
+type AllDefaults    = Map TableName Defaults
+type Defaults       = Map ColumnName ColumnConstraint
 type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
 
-getAllConstraints :: Pg.Connection -> IO AllConstraints
+getAllDefaults :: Pg.Connection -> IO AllDefaults
+getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
+  where
+      addDefault :: AllDefaults -> (TableName, ColumnName, Text) -> AllDefaults
+      addDefault m (tName, colName, defValue) =
+          let entry = M.singleton colName (Default defValue)
+          in M.alter (\case Nothing -> Just entry
+                            Just ss -> Just $ ss <> entry
+                     ) tName m
+
+getAllConstraints :: Pg.Connection -> IO AllTableConstraints
 getAllConstraints conn = do
     allActions <- mkActions <$> Pg.query_ conn referenceActionsQ
     allForeignKeys <- Pg.fold_ conn foreignKeysQ mempty (\acc -> pure . addFkConstraint allActions acc)
     Pg.fold_ conn otherConstraintsQ allForeignKeys (\acc -> pure . addOtherConstraint acc)
   where
       addFkConstraint :: ReferenceActions 
-                      -> AllConstraints 
+                      -> AllTableConstraints 
                       -> SqlForeignConstraint
-                      -> AllConstraints
+                      -> AllTableConstraints
       addFkConstraint actions st SqlForeignConstraint{..} = flip execState st $ do
         let currentTable = sqlFk_foreign_table
         let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
@@ -322,12 +360,11 @@ getAllConstraints conn = do
                 case M.lookup sqlFk_name (getActions actions) of
                   Nothing -> (NoAction, NoAction)
                   Just a  -> (actionOnDelete a, actionOnUpdate a)
-        addTableConstraint sqlFk_primary_table (IsForeignKeyOf sqlFk_foreign_table columnSet) 
         addTableConstraint currentTable (ForeignKey sqlFk_name sqlFk_primary_table columnSet onDelete onUpdate)
 
-      addOtherConstraint :: AllConstraints 
+      addOtherConstraint :: AllTableConstraints 
                          -> SqlOtherConstraint
-                         -> AllConstraints
+                         -> AllTableConstraints
       addOtherConstraint st SqlOtherConstraint{..} = flip execState st $ do
           let currentTable = sqlCon_table
           let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
@@ -369,21 +406,7 @@ mkAction c = case c of
 
 addTableConstraint :: TableName
                    -> TableConstraint 
-                   -> State AllConstraints ()
+                   -> State AllTableConstraints ()
 addTableConstraint tName cns =
-  modify' (\(tcon, ccon) -> (M.alter (\case
-                               Nothing -> Just $ S.singleton cns
-                               Just ss -> Just $ S.insert cns ss) tName tcon
-                            , ccon)
-          )
-
-addColumnConstraint :: ColumnName
-                    -> ColumnConstraint 
-                    -> State AllConstraints ()
-addColumnConstraint cName cns =
-  modify' (\(tcon, ccon) -> (tcon
-                            , M.alter (\case
-                              Nothing -> Just $ S.singleton cns
-                              Just ss -> Just $ S.insert cns ss) cName ccon)
-          )
-
+  modify' (\tcon -> M.alter (\case Nothing -> Just $ S.singleton cns
+                                   Just ss -> Just $ S.insert cns ss) tName tcon)

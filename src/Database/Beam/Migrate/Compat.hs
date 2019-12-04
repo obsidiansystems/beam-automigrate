@@ -21,7 +21,6 @@ import           Data.Word
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
 import qualified Data.Text                               as T
-import qualified Data.List.NonEmpty                      as NE
 import qualified Data.Map.Strict                         as M
 
 import           Database.Beam.Backend.SQL
@@ -113,9 +112,10 @@ instance ( IsMaybe a ~ nullary
 -- Default instances for enum discovery.
 
 instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (PgEnum a) where
-  schemaEnums' Proxy Proxy = M.singleton ty vals
-    where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
+  schemaEnums' Proxy Proxy = 
+      let (PgSpecificType (PgEnumeration ty)) = defaultSqlDataType (Proxy @(PgEnum a)) False
           vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+      in M.singleton ty vals
 
 instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (DbEnum a) where
   schemaEnums' Proxy Proxy = M.singleton ty vals
@@ -223,7 +223,8 @@ instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
 
 instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (PgEnum a) where
   defaultSqlDataType (Proxy :: (Proxy (PgEnum a))) _ = 
-    PgSpecificType (PgEnumeration $ EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
+    -- Postgres converts enumeration types to lowercase, so we need to call 'toLower' here.
+    PgSpecificType (PgEnumeration $ EnumerationName (T.toLower . T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
 
 instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (DbEnum a) where
   defaultSqlDataType (Proxy :: (Proxy (DbEnum a))) _ = 
