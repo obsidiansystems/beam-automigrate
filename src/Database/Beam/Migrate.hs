@@ -132,14 +132,7 @@ fromAnnotatedDbSettings db = gSchema db (from db)
 -- hasn't been created yet.
 -- FIXME(adn) Until we fix #1 properly, we also filter 'IsForeignKeyOf' entries.
 sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
-sortEdits edits =
-    filter (not . isForeignKeyOf) $ L.sortOn (snd . unPriority) edits
-  where
-    isForeignKeyOf :: WithPriority Edit -> Bool
-    isForeignKeyOf = \case
-      WithPriority (TableConstraintAdded   _ IsForeignKeyOf{}, _) -> True
-      WithPriority (TableConstraintRemoved _ IsForeignKeyOf{}, _) -> True
-      _ -> False
+sortEdits = L.sortOn (snd . unPriority)
 
 editsToPgSyntax :: [WithPriority Edit] -> [Pg.PgSyntax]
 editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
@@ -245,18 +238,13 @@ toSqlSyntax = \case
                           <> "(" <> T.intercalate ", " referenced <> ")" 
                           <> renderAction "ON DELETE" onDelete 
                           <> renderAction "ON UPDATE" onUpdate
-        IsForeignKeyOf _tName _cols -> mempty
         where conKeyword = "CONSTRAINT "
 
       renderAddConstraint :: TableConstraint -> Text
-      renderAddConstraint tc = case tc of
-        IsForeignKeyOf{} -> mempty
-        _ -> accC (renderCreateTableConstraint tc)
-        where accC = mappend "ADD "
+      renderAddConstraint = mappend "ADD " . renderCreateTableConstraint
 
       renderDropConstraint :: TableConstraint -> Text
       renderDropConstraint tc = case tc of
-        IsForeignKeyOf{}         -> mempty
         Unique     cName _       -> dropC cName
         PrimaryKey cName _       -> dropC cName
         ForeignKey cName _ _ _ _ -> dropC cName

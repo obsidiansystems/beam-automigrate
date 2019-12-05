@@ -254,5 +254,6 @@ defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe t
 defaultsTo tyVal = FieldModification $ \old -> 
     case tableFieldSchema old of 
       FieldSchema ty c -> old { 
-          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.pack $ show tyVal) <> c 
+          -- Postgres converts the default values all lowercase, so we need to abide to this format.
+          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.toLower $ T.pack $ show tyVal) <> c 
         }

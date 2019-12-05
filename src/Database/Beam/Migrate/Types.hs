@@ -110,10 +110,6 @@ data TableConstraint =
       -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
       -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
       -- The set stores a (fk_column, pk_column) correspondence.
-    | IsForeignKeyOf TableName (Set (ColumnName, ColumnName))
-      -- ^ \"backward pointer\" to express the relation that the current table has some of its columns
-      -- referenced in a 'ForeignKey' constraint. This is usually found in the 'tableConstraints' of the table
-      -- where the foreign key \"points to\".
     | Unique ConstraintName (Set ColumnName)
     deriving (Show, Eq, Ord, Generic)
 
