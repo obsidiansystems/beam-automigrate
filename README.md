@@ -14,7 +14,7 @@ can be amended.
 Both `DatabaseSettings` and `AnnotatedDatabaseSettings` follow the structure of the Haskell datatypes
 comprising the schema, and are therefore quite strongly typed. 
 
-From an `AnnotatedDatabaseSettings` value, we can internally derive a `Schema`. This is a straight-forward
+From an `AnnotatedDatabaseSettings` value, we can internally derive a `Schema`. This is a straightforward
 representation of a DB schema without any type-level magic.
 
 We can similarly generate a `Schema` value for the DB schema currently stored in the database. We can then
