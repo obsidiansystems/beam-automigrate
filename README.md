@@ -74,7 +74,11 @@ This is described later on in the "Overriding the defaults of an `AnnotatedDatab
 ### Deriving information from an AnnotatedDatabaseSettings
 
 This is the phase where we traverse the generic representation of an `AnnotatedDatabaseSettings` in order to
-infer the `Schema`. It is **during this phase that we try to discover Foreign keys**. 
+infer the `Schema`. It is **during this phase that we try to discover Foreign keys**.
+
+Foreign key discovery can fail statically. If foreign key discovery fails, one should have the possibility
+to override `AnnotatedDatabaseSettings` before running the transformation to `Schema` to manually provide the
+necessary hints.
 
 ## User guide/reference
 
