@@ -1,13 +1,25 @@
-
 # Current design (10_000ft overview)
 
-We provide an `AnnotatedDatabaseSettings` type which is similar in spirit to `CheckedDatabaseSettings`,
-but simpler. We use this type to annotated a `DatabaseSettings` with extra information (e.g. any particular
-table/column constraint) and we derive a `Schema` from this type automatically, via `GHC.Generics`.
+Beam itself provides a `DatabaseSettings` type. A value of this type is typically derived generically from
+the Haskell datatypes representing the database schema, but can be amended. The primary purpose of
+`DatabaseSettings` is to provide a mapping between Haskell names for tables and columns and the corresponding
+DB-side names.
 
-We generate one `Schema` for the Haskell datatypes composing your database, and one for the DB schema
-currently stored in the database. The `Diff` of the two determines a list of `Edit`s, which can be applied
-in a particular (prioritised) order to migrate the DB schema to the Haskell schema.
+On top of this, we provide an `AnnotatedDatabaseSettings` type. This is similar in spirit to the
+`CheckedDatabaseSettings` provided by the original `beam-migrate`, but a bit simpler. On top of `DatabaseSettings`,
+the `AnnotatedDatabaseSettings` contain additional information, in particular constraints that tables and
+columns must satisfy. Once again, a value of this type can be derived generically, but the information
+can be amended.
+
+Both `DatabaseSettings` and `AnnotatedDatabaseSettings` follow the structure of the Haskell datatypes
+comprising the schema, and are therefore quite strongly typed. 
+
+From an `AnnotatedDatabaseSettings` value, we can internally derive a `Schema`. This is a straight-forward
+representation of a DB schema without any type-level magic.
+
+We can similarly generate a `Schema` value for the DB schema currently stored in the database. We can then
+diff the two `Schema`s to get a `Diff` which determines a list of `Edit`s. Such edits can be applied in a
+particular (prioritised) order to migrate the DB schema to the Haskell schema.
 
 ## Internal design/reference
 
