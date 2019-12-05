@@ -1,88 +1,25 @@
-# Current design (10_000ft overview)
+Table of Contents
+=================
 
-Beam itself provides a `DatabaseSettings` type. A value of this type is typically derived generically from
-the Haskell datatypes representing the database schema, but can be amended. The primary purpose of
-`DatabaseSettings` is to provide a mapping between Haskell names for tables and columns and the corresponding
-DB-side names.
+* [Table of Contents](#table-of-contents)
+* [Getting started (User guide/reference)](#getting-started-user-guidereference)
+   * [Deriving an AnnotatedDatabaseSettings](#deriving-an-annotateddatabasesettings)
+   * [Overriding the defaults of an AnnotatedDatabaseSettings](#overriding-the-defaults-of-an-annotateddatabasesettings)
+   * [Deriving a Schema](#deriving-a-schema)
+   * [Generating an automatic migration](#generating-an-automatic-migration)
+* [Current design (10_000ft overview)](#current-design-10_000ft-overview)
+   * [Deriving information from a DatabaseSettings](#deriving-information-from-a-databasesettings)
+   * [Deriving information from an AnnotatedDatabaseSettings](#deriving-information-from-an-annotateddatabasesettings)
+   * [What is implemented](#what-is-implemented)
+   * [Shortcomings and limitations](#shortcomings-and-limitations)
 
-On top of this, we provide an `AnnotatedDatabaseSettings` type. This is similar in spirit to the
-`CheckedDatabaseSettings` provided by the original `beam-migrate`, but a bit simpler. On top of `DatabaseSettings`,
-the `AnnotatedDatabaseSettings` contain additional information, in particular constraints that tables and
-columns must satisfy. Once again, a value of this type can be derived generically, but the information
-can be amended.
+# Getting started (User guide/reference)
 
-Both `DatabaseSettings` and `AnnotatedDatabaseSettings` follow the structure of the Haskell datatypes
-comprising the schema, and are therefore quite strongly typed. 
+For a complete working example refer to the `src/Database/Beam/Migrate/Example.hs` module. There is also
+a smaller-scale example available at `src/Database/Beam/Migrate/Example/ForeignKeys.hs`, which has been used
+to write this guide.
 
-From an `AnnotatedDatabaseSettings` value, we can internally derive a `Schema`. This is a straightforward
-representation of a DB schema without any type-level magic.
-
-We can similarly generate a `Schema` value for the DB schema currently stored in the database. We can then
-diff the two `Schema`s to get a `Diff` which determines a list of `Edit`s. Such edits can be applied in a
-particular (prioritised) order to migrate the DB schema to the Haskell schema.
-
-## Internal design/reference
-
-There are two important stages in the library, the first one being when we call `defaultAnnotatedDbSettings`
-and the second one when we call `fromAnnotatedDbSettings`. The first function converts from a `DatabaseSettings`
-into an `AnnotatedDatabaseSettings` whereas the latter convert from an `AnnotatedDatabaseSettings` into a
-`Schema`. Both uses generic-derivation but in a different way and for different purposes.
-
-### Deriving information from a DatabaseSettings
-
-During this phase we "zip" all the tables together and we essentially convert each `DatabaseEntity` into an
-`AnnotatedDatabaseEntity`. The latter is ever so slightly similar to the former but crucially it embeds extra
-information. One way to see this is that exactly as a `DatabaseEntity` carry around a `TableSettings` which
-carries meta-information on the naming of each particular column for each table, an `AnnotatedDatabaseEntity`
-carries what's called a `TableSchema`, which is defined as:
-
-```haskell
--- | A table schema.
-type TableSchema tbl =
-    tbl (TableFieldSchema tbl)
-
--- | A schema for a field within a given table
-data TableFieldSchema (tbl :: (* -> *) -> *) ty where
-    TableFieldSchema 
-      :: 
-      { tableFieldName :: Text
-      , tableFieldSchema :: FieldSchema ty } 
-      -> TableFieldSchema tbl ty
-
-data FieldSchema ty where
-  FieldSchema :: ColumnType
-              -> Set ColumnConstraint
-              -> FieldSchema ty
-```
-
-Looking at this, the similarity with a `TableSettings` is quite obvious:
-
-```haskell
-type TableSettings tbl = tbl (TableField tbl)
-```
-
-Here is where the second generic-derivation algorithm comes in, and it "maps" each `TableField` with a new
-`TableFieldSchema`, which is initialised with "stock" default values for the `ColumnType` 
-and `Set ColumnConstraint`. There values are automatically inferred thanks to the `HasDefaultSqlDataType` and
-`HasSchemaConstraints` typeclasses defined over at `Database.Beam.Migrate.Compat`. **This gives us a concrete
-anchor point for the user to further annotate the database and override each individual table & column with
-extra information.** 
-
-This is described later on in the "Overriding the defaults of an `AnnotatedDatabaseSettings`" section.
-
-
-### Deriving information from an AnnotatedDatabaseSettings
-
-This is the phase where we traverse the generic representation of an `AnnotatedDatabaseSettings` in order to
-infer the `Schema`. It is **during this phase that we try to discover Foreign keys**.
-
-Foreign key discovery can fail statically. If foreign key discovery fails, one should have the possibility
-to override `AnnotatedDatabaseSettings` before running the transformation to `Schema` to manually provide the
-necessary hints.
-
-## User guide/reference
-
-### Deriving an AnnotatedDatabaseSettings
+## Deriving an AnnotatedDatabaseSettings
 
 Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter of calling 
 `defaultAnnotatedDbSettings`. For example, given:
@@ -107,6 +44,11 @@ data ForecastDB f = ForecastDB
   , dbWeathers :: f (TableEntity WeatherT)
   }
   deriving (Generic, Database be)
+
+-- ...
+-- instance Beam.Table CitiesT where ...
+-- ...
+
 ```
 
 Then calling `defaultAnnotatedDbSettings` will yield:
@@ -151,7 +93,7 @@ these combinators simply manipulates under the hood the particular `TableFieldSc
 column, so that the information contained within can be "spliced back" when we generate a `Schema` out of
 an `AnnotatedDatabaseSettings`.
 
-### Deriving a Schema
+## Deriving a Schema
 
 Once we have an `AnnotatedDatabaseSettings`, the next step is to generate a `Schema`. This can be done
 simply by calling `fromAnnotatedDbSettings`, like so:
@@ -254,23 +196,131 @@ Notable things to notice:
 * Each column is mapped to a sensible SQL datatype;
 * Non `Maybe/Nullable` types have a `NotNull` constraint added;
 
+## Generating an automatic migration
 
-### Generating an automatic migration
-
-Once a `Schema` has been generated, in order to automatically migrate your schema, it is sufficient to do:
+Once a `Schema` has been generated, in order to automatically migrate your schema, it is sufficient to write
+something like this:
 
 ```haskell
-exampleAutoMigration :: IO ()
-exampleAutoMigration = do
-  let connInfo = "host=localhost port=5432 dbname=beam-test-db"
+exampleShowMigration :: IO ()
+exampleShowMigration = withBeamTestDb printMigration
+
+withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
+withBeamTestDb action = do
+  let connInfo = "host=localhost port=5432 dbname=beam-test-forecast-db"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
-    Pg.withTransaction conn $ runBeamPostgresDebug putStrLn conn $
-      runMigration (migrate conn hsSchema)
+    Pg.withTransaction conn $ runBeamPostgres conn $ do
+      let mig = migrate conn hsSchema
+      action mig
+
+exampleAutoMigration :: IO ()
+exampleAutoMigration = withBeamTestDb runMigration
 ```
 
 The `runMigration` function will try to generate another `Schema`, this time from the Postgres database and
 the two `Schema`s will be "diffed together" in order to compute the list of edits necessary to migrate from
-the DB to the Haskell database.
+the DB to the Haskell database. To begin with, we can call `exampleShowMigration` to "preview" the full
+SQL command that will be run:
+
+```
+Ok, 12 modules loaded.
+> import Database.Beam.Migrate.Example.ForeignKeys 
+> exampleShowMigration 
+CREATE TABLE "cities" (city VARCHAR NOT NULL, location VARCHAR NOT NULL);
+
+CREATE TABLE "weathers" (city__city VARCHAR NOT NULL, id INT NOT NULL, temp_hi INT NOT NULL, temp_lo INT NOT NULL);
+
+ALTER TABLE "cities" ADD CONSTRAINT "cities_pkey" PRIMARY KEY (city);
+
+ALTER TABLE "weathers" ADD CONSTRAINT "weathers_pkey" PRIMARY KEY (id);
+
+ALTER TABLE "weathers" ADD CONSTRAINT "weathers_city__city_fkey" FOREIGN KEY (city__city) REFERENCES "cities"(city);
+
+> 
+```
+
+Once we are satisfied with visual inspection, we can run it via `exampleAutoMigration`. If all is well, we
+can now check how the DB has been migrated. If we try to call `exampleShowMigration` again, no output should
+be shown, because the DB is now up-to-date with the Haskell types.
+
+# Current design (10_000ft overview)
+
+Beam itself provides a `DatabaseSettings` type. A value of this type is typically derived generically from
+the Haskell datatypes representing the database schema, but can be amended. The primary purpose of
+`DatabaseSettings` is to provide a mapping between Haskell names for tables and columns and the corresponding
+DB-side names.
+
+On top of this, we provide an `AnnotatedDatabaseSettings` type. This is similar in spirit to the
+`CheckedDatabaseSettings` provided by the original `beam-migrate`, but a bit simpler. On top of `DatabaseSettings`,
+the `AnnotatedDatabaseSettings` contain additional information, in particular constraints that tables and
+columns must satisfy. Once again, a value of this type can be derived generically, but the information
+can be amended.
+
+Both `DatabaseSettings` and `AnnotatedDatabaseSettings` follow the structure of the Haskell datatypes
+comprising the schema, and are therefore quite strongly typed. 
+
+From an `AnnotatedDatabaseSettings` value, we can internally derive a `Schema`. This is a straightforward
+representation of a DB schema without any type-level magic.
+
+We can similarly generate a `Schema` value for the DB schema currently stored in the database. We can then
+diff the two `Schema`s to get a `Diff` which determines a list of `Edit`s. Such edits can be applied in a
+particular (prioritised) order to migrate the DB schema to the Haskell schema.
+
+There are two important stages in the library, the first one being when we call `defaultAnnotatedDbSettings`
+and the second one when we call `fromAnnotatedDbSettings`. The first function converts from a `DatabaseSettings`
+into an `AnnotatedDatabaseSettings` whereas the latter convert from an `AnnotatedDatabaseSettings` into a
+`Schema`. Both uses generic-derivation but in a different way and for different purposes.
+
+## Deriving information from a DatabaseSettings
+
+During this phase we "zip" all the tables together and we essentially convert each `DatabaseEntity` into an
+`AnnotatedDatabaseEntity`. The latter is ever so slightly similar to the former but crucially it embeds extra
+information. One way to see this is that exactly as a `DatabaseEntity` carry around a `TableSettings` which
+carries meta-information on the naming of each particular column for each table, an `AnnotatedDatabaseEntity`
+carries what's called a `TableSchema`, which is defined as:
+
+```haskell
+-- | A table schema.
+type TableSchema tbl =
+    tbl (TableFieldSchema tbl)
+
+-- | A schema for a field within a given table
+data TableFieldSchema (tbl :: (* -> *) -> *) ty where
+    TableFieldSchema 
+      :: 
+      { tableFieldName :: Text
+      , tableFieldSchema :: FieldSchema ty } 
+      -> TableFieldSchema tbl ty
+
+data FieldSchema ty where
+  FieldSchema :: ColumnType
+              -> Set ColumnConstraint
+              -> FieldSchema ty
+```
+
+Looking at this, the similarity with a `TableSettings` is quite obvious:
+
+```haskell
+type TableSettings tbl = tbl (TableField tbl)
+```
+
+Here is where the second generic-derivation algorithm comes in, and it "maps" each `TableField` with a new
+`TableFieldSchema`, which is initialised with "stock" default values for the `ColumnType` 
+and `Set ColumnConstraint`. There values are automatically inferred thanks to the `HasDefaultSqlDataType` and
+`HasSchemaConstraints` typeclasses defined over at `Database.Beam.Migrate.Compat`. **This gives us a concrete
+anchor point for the user to further annotate the database and override each individual table & column with
+extra information.** 
+
+This is described later on in the "Overriding the defaults of an `AnnotatedDatabaseSettings`" section.
+
+## Deriving information from an AnnotatedDatabaseSettings
+
+This is the phase where we traverse the generic representation of an `AnnotatedDatabaseSettings` in order to
+infer the `Schema`. It is **during this phase that we try to discover Foreign keys**.
+
+Foreign key discovery can fail statically. If foreign key discovery fails, one should have the possibility
+to override `AnnotatedDatabaseSettings` before running the transformation to `Schema` to manually provide the
+necessary hints.
 
 ## What is implemented
 

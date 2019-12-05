@@ -211,7 +211,11 @@ toSqlSyntax = \case
       alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " " 
 
       renderTableColumn :: (ColumnName, Column) -> Text
-      renderTableColumn (colName, col) = columnName colName <> " " <> renderDataType (columnType col)
+      renderTableColumn (colName, col) = 
+          columnName colName <> " " 
+                             <> renderDataType (columnType col)
+                             <> " "
+                             <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
 
       renderInsertionOrder :: InsertionOrder -> Text
       renderInsertionOrder Before = "BEFORE"
