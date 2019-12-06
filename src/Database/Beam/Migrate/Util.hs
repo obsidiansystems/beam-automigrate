@@ -35,6 +35,9 @@ pkFieldNames entity =
 pkAsColumnNames :: Beamable (PrimaryKey table) => PrimaryKey table (Beam.TableField c) -> [ColumnName]
 pkAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
 
+fieldAsColumnNames :: Beamable f => f (Beam.TableField c) -> [ColumnName]
+fieldAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
+
 -- | Returns /all/ the 'ColumnName's for a given 'DatabaseEntity'.
 allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> [ColumnName]
 allColumnNames entity =

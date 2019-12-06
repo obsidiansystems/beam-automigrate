@@ -251,12 +251,31 @@ addTableConstraints con =
        dbAnnotatedConstraints = (dbAnnotatedConstraints tbl) <> con
                             }) e))
 
-data U (tbl :: ((* -> *) -> *)) where
-  U  :: (Beam.TableSettings tbl -> Beam.Columnar Beam.Identity (Beam.TableField tbl ty)) -> U tbl
-  UPK :: Beam.Beamable (PrimaryKey tbl') => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) -> U tbl
+--
+-- Specifying default values
+--
+
+defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)
+defaultsTo tyVal = FieldModification $ \old -> 
+    case tableFieldSchema old of 
+      FieldSchema ty c -> old { 
+          -- Postgres converts the default values all lowercase, so we need to abide to this format.
+          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.toLower $ T.pack $ show tyVal) <> c 
+        }
+
+--
+-- Specifying uniqness constrainst
+--
+
+data UniqueConstraint (tbl :: ((* -> *) -> *)) where
+  U   :: (tbl (Beam.TableField tbl) -> Beam.Columnar Beam.Identity (Beam.TableField tbl ty)) 
+      -> UniqueConstraint tbl
+  UPK :: Beam.Beamable (PrimaryKey tbl') 
+      => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) 
+      -> UniqueConstraint tbl
 
 uniqueFields :: ConstraintName
-             -> [U tbl]
+             -> [UniqueConstraint tbl]
              -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 uniqueFields con us =
     EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
@@ -269,10 +288,3 @@ uniqueFields con us =
            in S.insert (Unique con cols) (dbAnnotatedConstraints tbl)
                             }) e))
 
-defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)
-defaultsTo tyVal = FieldModification $ \old -> 
-    case tableFieldSchema old of 
-      FieldSchema ty c -> old { 
-          -- Postgres converts the default values all lowercase, so we need to abide to this format.
-          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.toLower $ T.pack $ show tyVal) <> c 
-        }

@@ -144,7 +144,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
-               <> uniqueFields "db_line_unique" [UPK lineItemFlowerID, UPK lineItemOrderID]
+               <> uniqueFields "db_line_unique" [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
   }
 
 hsSchema :: Schema
