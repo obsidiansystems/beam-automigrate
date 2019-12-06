@@ -193,15 +193,15 @@ instance ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint
             defaultFieldSchema = FieldSchema (defaultSqlDataType (Proxy @ty) False)
                                              (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
 
--- | Instance for 'PrimaryKey's going from one table into another.
-instance ( Generic (PrimaryKey tbl1 (Beam.TableField tbl2))
-         , Generic (PrimaryKey tbl1 (TableFieldSchema tbl2))
-         , GDefaultTableSchema (Rep (PrimaryKey tbl1 (TableFieldSchema tbl2)) ())
-                               (Rep (PrimaryKey tbl1 (Beam.TableField tbl2)) ())
+-- | Instance where /g/ is things like a 'PrimaryKey' or a /mixin/.
+instance ( Generic (g (Beam.TableField tbl2))
+         , Generic (g (TableFieldSchema tbl2))
+         , GDefaultTableSchema (Rep (g (TableFieldSchema tbl2)) ())
+                               (Rep (g (Beam.TableField tbl2)) ())
          )
-    => GDefaultTableSchema (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())
-                           (S1 f (K1 Generic.R (PrimaryKey tbl1 (Beam.TableField tbl2))) ()) where
-    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) = 
+    => GDefaultTableSchema (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())
+                           (S1 f (K1 Generic.R (g (Beam.TableField tbl2))) ()) where
+    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) = 
       M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
 
 -- | Instance for things like 'Nullable (TableFieldSchema tbl)'.

@@ -1,3 +1,7 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ConstraintKinds #-}
@@ -26,13 +30,14 @@ import           Lens.Micro                     ( (^.) )
 import           GHC.Generics
 import           GHC.TypeLits
 
-import           Database.Beam.Schema           ( Beamable
-                                                , PrimaryKey
+import           Database.Beam.Schema           ( PrimaryKey
                                                 , TableEntity
                                                 )
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( dbEntityDescriptor
                                                 , dbEntityName
+                                                , Beamable(..)
+                                                , TableSkeleton
                                                 )
 
 import           Database.Beam.Migrate.Annotated
@@ -43,6 +48,28 @@ type DatabaseKind = (Type -> Type) -> Type
 
 -- | To make kind signatures more readable.
 type TableKind    = (Type -> Type) -> Type
+
+
+-- | In beam it's possible to embed tables within tables (as \"mixins\") out of the box, i.e. without
+-- requiring any newtype indirection. In our library, however, we do need to distinguish the "this is a
+-- PrimaryKey" vs "this is something else", because in the former case we kickoff the FK-discovery algorithm.
+-- This is why we need this ever so slightly artificial 'Mixin' newtype to make sure we can branch out
+-- correctly during the generic-derivation.
+newtype Mixin' tbl f = Mixin' (tbl f) deriving Generic
+
+-- | A type-synonym that swaps the order of the two parameters, so that the functor goes first in the
+-- familiar beam style (i.e. 'Columnar f Foo').
+type Mixin f tbl = Mixin' tbl f
+
+instance ( Generic (TableSkeleton (Mixin' tbl))
+         , Beamable tbl
+         ) => Beamable (Mixin' tbl) where
+
+    zipBeamFieldsM f (Mixin' x) (Mixin' y) = 
+        Mixin' <$> zipBeamFieldsM f x y
+
+    tblSkeleton = Mixin' tblSkeleton
+
 
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
@@ -112,6 +139,10 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
   => GEnums be db (S1 f (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))) where
   gEnums db (M1 (K1 annEntity)) =
     gEnums db (from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
+
+instance (GEnums be db (Rep (tbl ty)), Generic (tbl ty))
+    => GEnums be db (S1 f (K1 R (Mixin' tbl ty))) where
+    gEnums db (M1 (K1 (Mixin' e))) = gEnums db (from e)
 
 instance IsEnumeration ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
     gEnums _ (M1 (K1 _)) = schemaEnums (Proxy @ty)
@@ -187,8 +218,21 @@ instance ( GColumns (Rep (PrimaryKey tbl f))
     => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
   gColumns (M1 (K1 e)) = gColumns (from e)
 
+instance ( GColumns (Rep (tbl f))
+         , Generic (tbl f)
+         )
+    => GColumns (S1 m (K1 R (Mixin' tbl f))) where
+  gColumns (M1 (K1 (Mixin' e))) = gColumns (from e)
+
 instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
+
+instance ( Generic (AnnotatedDatabaseSettings be db)
+         , GTableConstraintColumns be db (Rep (tbl f))
+         , Generic (tbl f)
+         ) => GTableConstraintColumns be db (S1 m (K1 R (Mixin' tbl f))) where
+  gTableConstraintsColumns db tname (M1 (K1 (Mixin' e))) =
+    gTableConstraintsColumns db tname (from e)
 
 instance ( Generic (AnnotatedDatabaseSettings be db)
          , Generic (PrimaryKey tbl f)
