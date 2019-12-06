@@ -38,6 +38,7 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDefaultRequirements
                                                           , DatabaseEntityRegularRequirements
                                                           , dbEntityDescriptor
+                                                          , dbEntityName
                                                           , dbTableSettings
                                                           , FieldModification(..)
                                                           , EntityModification(..)
@@ -274,17 +275,18 @@ data UniqueConstraint (tbl :: ((* -> *) -> *)) where
       => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) 
       -> UniqueConstraint tbl
 
-uniqueFields :: ConstraintName
-             -> [UniqueConstraint tbl]
+uniqueFields :: [UniqueConstraint tbl]
              -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-uniqueFields con us =
+uniqueFields us =
     EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
       -> AnnotatedDatabaseEntity (tbl { 
        dbAnnotatedConstraints = 
-           let cols = S.fromList $ concatMap (\case
+           let cols = concatMap (\case
                  (U f)   -> [ColumnName $ (f (tableSettings e) ^. Beam.fieldName)]
                  (UPK f) -> pkAsColumnNames $ f (tableSettings e)
                                        ) us
-           in S.insert (Unique con cols) (dbAnnotatedConstraints tbl)
+               tName   = e ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
+           in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
                             }) e))
 
