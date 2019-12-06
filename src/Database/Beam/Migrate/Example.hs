@@ -11,7 +11,6 @@ import           GHC.Generics
 import           Control.Exception
 
 import           Database.Beam.Postgres
-import           Data.Set as S
 import           Database.Beam.Schema           ( Beamable
                                                 , Columnar
                                                 , Database
@@ -39,7 +38,6 @@ import           Database.Beam.Migrate          ( Schema
                                                 , runMigration
                                                 , printMigration
                                                 , migrate
-                                                , TableConstraint(..)
                                                 , DbEnum
                                                 , PgEnum
                                                 )
@@ -141,16 +139,12 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
-
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
-  , dbLineItems = (addTableConstraints $ 
-      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
-                 --, ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
-                 ])
-               <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+  , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+               <> uniqueFields "db_line_unique" [UPK lineItemFlowerID, UPK lineItemOrderID]
   }
 
 hsSchema :: Schema

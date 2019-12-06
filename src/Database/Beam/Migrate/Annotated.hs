@@ -30,6 +30,7 @@ import qualified Database.Beam                           as Beam
 import           Database.Beam.Schema.Tables              ( PrimaryKey )
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Migrate.Compat
+import           Database.Beam.Migrate.Util
 import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
                                                           , TableEntity
@@ -248,6 +249,24 @@ addTableConstraints con =
     EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
       -> AnnotatedDatabaseEntity (tbl { 
        dbAnnotatedConstraints = (dbAnnotatedConstraints tbl) <> con
+                            }) e))
+
+data U (tbl :: ((* -> *) -> *)) where
+  U  :: (Beam.TableSettings tbl -> Beam.Columnar Beam.Identity (Beam.TableField tbl ty)) -> U tbl
+  UPK :: Beam.Beamable (PrimaryKey tbl') => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) -> U tbl
+
+uniqueFields :: ConstraintName
+             -> [U tbl]
+             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+uniqueFields con us =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let cols = S.fromList $ concatMap (\case
+                 (U f)   -> [ColumnName $ (f (tableSettings e) ^. Beam.fieldName)]
+                 (UPK f) -> pkAsColumnNames $ f (tableSettings e)
+                                       ) us
+           in S.insert (Unique con cols) (dbAnnotatedConstraints tbl)
                             }) e))
 
 defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)

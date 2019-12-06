@@ -329,7 +329,6 @@ pgTypeToColumnType oid width
 type AllTableConstraints = Map TableName (Set TableConstraint)
 type AllDefaults    = Map TableName Defaults
 type Defaults       = Map ColumnName ColumnConstraint
-type AllColumnConstraints = Map ColumnName (Set ColumnConstraint)
 
 getAllDefaults :: Pg.Connection -> IO AllDefaults
 getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
