@@ -45,6 +45,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , PgEnum
                                                 , ReferenceAction(..)
                                                 , Mixin
+                                                , mixin
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -77,6 +78,7 @@ data FlowerType =
   | Tulip
   deriving (Show, Enum, Bounded)
 
+-- A mixin embedded into another (i.e. 'Address').
 data AddressRegion f
   = AddressRegion
   { addressState      :: Columnar f (Maybe Text)
@@ -176,11 +178,13 @@ annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
+               <> uniqueFields [U (addressPostalCode . mixin . addressRegion . mixin . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
                <> uniqueFields [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
   , dbOrders = foreignKeyOn (dbFlowers flowerDB) [
                             orderFlowerIdRef `References` flowerID
                           ] Cascade Restrict
+             <> uniqueFields [U (addressPostalCode . mixin . addressRegion . mixin . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
   --                          lineItemTwoFk `References` LineItemID
   --                        ] Cascade Restrict

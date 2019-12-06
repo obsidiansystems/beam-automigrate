@@ -55,11 +55,11 @@ type TableKind    = (Type -> Type) -> Type
 -- PrimaryKey" vs "this is something else", because in the former case we kickoff the FK-discovery algorithm.
 -- This is why we need this ever so slightly artificial 'Mixin' newtype to make sure we can branch out
 -- correctly during the generic-derivation.
-newtype Mixin' tbl f = Mixin' (tbl f) deriving Generic
+newtype Mixin' tbl f = Mixin' { mixin :: tbl f } deriving Generic
 
 -- | A type-synonym that swaps the order of the two parameters, so that the functor goes first in the
 -- familiar beam style (i.e. 'Columnar f Foo').
-type Mixin f tbl = Mixin' tbl f
+type Mixin (f :: * -> *) tbl = Mixin' tbl f
 
 instance ( Generic (TableSkeleton (Mixin' tbl))
          , Beamable tbl
