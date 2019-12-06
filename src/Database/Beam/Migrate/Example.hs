@@ -40,6 +40,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , migrate
                                                 , DbEnum
                                                 , PgEnum
+                                                , ReferenceAction(..)
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -86,9 +87,10 @@ data FlowerT f = Flower
   deriving (Generic, Beamable)
 
 data OrderT f = Order
-  { orderID       :: Columnar f Int32
-  , orderTime     :: Columnar f UTCTime
-  , orderValidity :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
+  { orderID          :: Columnar f Int32
+  , orderTime        :: Columnar f UTCTime
+  , orderFlowerIdRef :: PrimaryKey FlowerT f
+  , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
   }
   deriving (Generic, Beamable)
 
@@ -145,6 +147,9 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
                <> uniqueFields [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
+  , dbOrders = foreignKeyOn (dbFlowers flowerDB) [
+                            orderFlowerIdRef `References` flowerID
+                          ] Cascade Restrict
   }
 
 hsSchema :: Schema

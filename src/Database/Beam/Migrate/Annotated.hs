@@ -244,14 +244,6 @@ annotateTableFields modFields =
        dbAnnotatedSchema = Beam.withTableModification modFields (dbAnnotatedSchema tbl) 
                             }) e))
 
-addTableConstraints :: Set TableConstraint 
-                    -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-addTableConstraints con =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
-      -> AnnotatedDatabaseEntity (tbl { 
-       dbAnnotatedConstraints = (dbAnnotatedConstraints tbl) <> con
-                            }) e))
-
 --
 -- Specifying default values
 --
@@ -283,10 +275,46 @@ uniqueFields us =
        dbAnnotatedConstraints = 
            let cols = concatMap (\case
                  (U f)   -> [ColumnName $ (f (tableSettings e) ^. Beam.fieldName)]
-                 (UPK f) -> pkAsColumnNames $ f (tableSettings e)
+                 (UPK f) -> fieldAsColumnNames $ f (tableSettings e)
                                        ) us
                tName   = e ^. dbEntityDescriptor . dbEntityName
                conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
            in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
                             }) e))
 
+--
+-- Specifying FK constrainst
+--
+
+data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) where
+  References :: Beam.Beamable (PrimaryKey tbl')
+             => ( tbl (Beam.TableField tbl)   -> PrimaryKey tbl' (Beam.TableField tbl)) 
+             -> ( tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty))
+             -> ForeignKeyConstraint tbl tbl'
+  --FPK :: Beam.Beamable (PrimaryKey tbl') 
+  --    => DatabaseEntity be db (TableEntity tbl')
+  --    -> (tbl' (Beam.TableField tbl') -> PrimaryKey tbl' (Beam.TableField tbl')) 
+  --    -> ForeignKeyConstraint tbl be db
+
+foreignKeyOn :: Beam.Beamable tbl' 
+             => DatabaseEntity be db (TableEntity tbl')
+             -> [ForeignKeyConstraint tbl tbl']
+             -> ReferenceAction
+             -- ^ On Delete
+             -> ReferenceAction
+             -- ^ On Update
+             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOn externalEntity us onDelete onUpdate =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let colPairs = concatMap (\case
+                 (References ours theirs) -> zipWith (,)
+                     (fieldAsColumnNames (ours   (tableSettings e)))
+                     [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
+                     ) us
+               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate) 
+                       (dbAnnotatedConstraints tbl)
+                            }) e))

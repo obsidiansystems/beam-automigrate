@@ -31,10 +31,7 @@ pkFieldNames :: (Beamable (PrimaryKey tbl), Beam.Table tbl)
 pkFieldNames entity =
   map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
 
--- | Similar to 'pkFieldNames', but it works with an input 'PrimaryKey'.
-pkAsColumnNames :: Beamable (PrimaryKey table) => PrimaryKey table (Beam.TableField c) -> [ColumnName]
-pkAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
-
+-- | Similar to 'pkFieldNames', but it works on any entity that derives 'Beamable'.
 fieldAsColumnNames :: Beamable f => f (Beam.TableField c) -> [ColumnName]
 fieldAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
 
