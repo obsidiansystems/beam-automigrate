@@ -25,6 +25,7 @@ import           Data.Kind
 import           Data.Proxy
 import qualified Data.Map.Strict               as M
 import qualified Data.Set                      as S
+import qualified Data.List                     as L
 import           Lens.Micro                     ( (^.) )
 
 import           GHC.Generics
@@ -271,7 +272,7 @@ instance ( Generic (AnnotatedDatabaseSettings be db)
           (ForeignKey
             (tname <> "_" <> cname <> "_fkey")
             reftname
-            (S.fromList (zip cnames refcnames))
+            (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
             NoAction -- TODO: what should the default be?
             NoAction -- TODO: what should the default be?
           )
