@@ -55,6 +55,12 @@ type TableKind    = (Type -> Type) -> Type
 -- PrimaryKey" vs "this is something else", because in the former case we kickoff the FK-discovery algorithm.
 -- This is why we need this ever so slightly artificial 'Mixin' newtype to make sure we can branch out
 -- correctly during the generic-derivation.
+--
+-- Having said that, Beam's API gravitates around the fact we can treat mixins as \"normal\" tables, and
+-- adding this extra level of indirection hinder the usability of the library, as now coercion or calling
+-- 'mixin' would be necessary to navigate the nested tables.
+-- For this reason we allow overlapped instances in our generic-derivation code, while also leaving this
+-- safer mechanism in place, so that is opt-in for the user to choose the guarantee level.
 newtype Mixin' tbl f = Mixin' { mixin :: tbl f } deriving Generic
 
 -- | A type-synonym that swaps the order of the two parameters, so that the functor goes first in the
@@ -69,7 +75,6 @@ instance ( Generic (TableSkeleton (Mixin' tbl))
         Mixin' <$> zipBeamFieldsM f x y
 
     tblSkeleton = Mixin' tblSkeleton
-
 
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
@@ -143,6 +148,10 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
 instance (GEnums be db (Rep (tbl ty)), Generic (tbl ty))
     => GEnums be db (S1 f (K1 R (Mixin' tbl ty))) where
     gEnums db (M1 (K1 (Mixin' e))) = gEnums db (from e)
+
+instance {-# OVERLAPS #-} (GEnums be db (Rep (sub f)), Generic (sub f))
+    => GEnums be db (S1 m (K1 R (sub f))) where
+    gEnums db (M1 (K1 e)) = gEnums db (from e)
 
 instance IsEnumeration ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
     gEnums _ (M1 (K1 _)) = schemaEnums (Proxy @ty)
@@ -224,6 +233,12 @@ instance ( GColumns (Rep (tbl f))
     => GColumns (S1 m (K1 R (Mixin' tbl f))) where
   gColumns (M1 (K1 (Mixin' e))) = gColumns (from e)
 
+instance {-# OVERLAPS #-} ( GColumns (Rep (sub f))
+         , Generic (sub f)
+         )
+    => GColumns (S1 m (K1 R (sub f))) where
+  gColumns (M1 (K1 e)) = gColumns (from e)
+
 instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
 
@@ -232,6 +247,14 @@ instance ( Generic (AnnotatedDatabaseSettings be db)
          , Generic (tbl f)
          ) => GTableConstraintColumns be db (S1 m (K1 R (Mixin' tbl f))) where
   gTableConstraintsColumns db tname (M1 (K1 (Mixin' e))) =
+    gTableConstraintsColumns db tname (from e)
+
+instance {-# OVERLAPS #-} ( Generic (AnnotatedDatabaseSettings be db)
+         , Generic (sub f)
+         , GColumns (Rep (sub f))
+         , GTableConstraintColumns be db (Rep (sub f))
+         ) => GTableConstraintColumns be db (S1 m (K1 R (sub f))) where
+  gTableConstraintsColumns db tname (M1 (K1 e)) =
     gTableConstraintsColumns db tname (from e)
 
 instance ( Generic (AnnotatedDatabaseSettings be db)

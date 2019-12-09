@@ -44,8 +44,6 @@ import           Database.Beam.Migrate          ( Schema
                                                 , DbEnum
                                                 , PgEnum
                                                 , ReferenceAction(..)
-                                                , Mixin
-                                                , mixin
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -90,7 +88,7 @@ data Address f
   = Address
   { address           :: Columnar f (Maybe Text)
   , addressCity       :: Columnar f (Maybe Text)
-  , addressRegion     :: Mixin f AddressRegion
+  , addressRegion     :: AddressRegion f
   } deriving (Generic, Beamable)
 
 data FlowerT f = Flower
@@ -102,7 +100,7 @@ data FlowerT f = Flower
   , flowerSchemaTwo  :: Columnar f (PgJSONB MyJson)
   , flowerType       :: Columnar f (DbEnum FlowerType)
   , flowerPgType     :: Columnar f (PgEnum FlowerType)
-  , flowerAddress    :: Mixin    f Address
+  , flowerAddress    :: Address f
   }
   deriving (Generic, Beamable)
 
@@ -111,7 +109,7 @@ data OrderT f = Order
   , orderTime        :: Columnar f UTCTime
   , orderFlowerIdRef :: PrimaryKey FlowerT f
   , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
-  , orderAddress     :: Mixin    f Address
+  , orderAddress     :: Address f
   }
   deriving (Generic, Beamable)
 
@@ -178,13 +176,13 @@ annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
-               <> uniqueFields [U (addressPostalCode . mixin . addressRegion . mixin . flowerAddress)]
+               <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
                <> uniqueFields [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
   , dbOrders = foreignKeyOn (dbFlowers flowerDB) [
                             orderFlowerIdRef `References` flowerID
                           ] Cascade Restrict
-             <> uniqueFields [U (addressPostalCode . mixin . addressRegion . mixin . orderAddress)]
+             <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
   --                          lineItemTwoFk `References` LineItemID
   --                        ] Cascade Restrict
