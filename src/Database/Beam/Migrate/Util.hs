@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts     #-}
 module Database.Beam.Migrate.Util where
 
@@ -20,6 +21,28 @@ import           Database.Beam.Schema.Tables    ( Columnar'(..)
 import           Database.Beam.Migrate.Types    ( ColumnName(..) )
 
 
+--
+-- Retrieving all the column names for a beam entity.
+--
+
+class HasColumnNames entity tbl where
+  colNames :: (tbl (Beam.TableField tbl)) -> (tbl (Beam.TableField tbl) -> entity) -> [ColumnName]
+
+instance Beam.Beamable (PrimaryKey tbl)
+    => HasColumnNames (PrimaryKey tbl (Beam.TableField c)) tbl where
+    colNames field fn = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (fn field))
+
+instance Beam.Beamable (PrimaryKey tbl)
+    => HasColumnNames (PrimaryKey tbl (Beam.TableField c)) tbl' where
+    colNames field fn = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (fn field))
+
+instance HasColumnNames (Beam.TableField tbl ty) tbl where
+    colNames field fn = [ColumnName $ (fn field ^. Beam.fieldName)]
+
+--
+-- General utility functions
+--
+
 -- | Extracts the 'TableSettings' out of the input 'DatabaseEntity'.
 tableSettings :: Beam.DatabaseEntity be db (TableEntity tbl) -> TableSettings tbl
 tableSettings entity = dbTableSettings $ entity ^. dbEntityDescriptor
@@ -32,7 +55,7 @@ pkFieldNames entity =
   map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (primaryKey . tableSettings $ entity))
 
 -- | Similar to 'pkFieldNames', but it works on any entity that derives 'Beamable'.
-fieldAsColumnNames :: Beamable f => f (Beam.TableField c) -> [ColumnName]
+fieldAsColumnNames :: Beamable tbl => tbl (Beam.TableField c) -> [ColumnName]
 fieldAsColumnNames field = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) field)
 
 -- | Returns /all/ the 'ColumnName's for a given 'DatabaseEntity'.

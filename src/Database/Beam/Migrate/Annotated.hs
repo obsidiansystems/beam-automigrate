@@ -16,8 +16,6 @@ module Database.Beam.Migrate.Annotated where
 
 import           Data.Kind
 
-import GHC.TypeLits
-
 import           Data.Proxy
 import qualified Lens.Micro as Lens
 import           Lens.Micro                               ( SimpleGetter, (^.) )
@@ -263,11 +261,7 @@ defaultsTo tyVal = FieldModification $ \old ->
 --
 
 data UniqueConstraint (tbl :: ((* -> *) -> *)) where
-  U   :: (tbl (Beam.TableField tbl) -> Beam.Columnar Beam.Identity (Beam.TableField tbl ty)) 
-      -> UniqueConstraint tbl
-  UPK :: Beam.Beamable (PrimaryKey tbl') 
-      => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl))
-      -> UniqueConstraint tbl
+  U   :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
 
 uniqueFields :: [UniqueConstraint tbl]
              -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
@@ -275,10 +269,7 @@ uniqueFields us =
     EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
       -> AnnotatedDatabaseEntity (tbl { 
        dbAnnotatedConstraints = 
-           let cols = concatMap (\case
-                 (U f)   -> [ColumnName $ (f (tableSettings e) ^. Beam.fieldName)]
-                 (UPK f) -> fieldAsColumnNames $ f (tableSettings e)
-                                       ) us
+           let cols    = concatMap (\case (U f) -> colNames (tableSettings e) f) us
                tName   = e ^. dbEntityDescriptor . dbEntityName
                conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
            in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)

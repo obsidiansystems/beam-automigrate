@@ -179,7 +179,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
                <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
-               <> uniqueFields [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
+               <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
   , dbOrders = foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
              <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
