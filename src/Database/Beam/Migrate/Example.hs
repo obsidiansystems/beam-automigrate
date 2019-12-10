@@ -110,6 +110,7 @@ data OrderT f = Order
   , orderFlowerIdRef :: PrimaryKey FlowerT f
   , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
   , orderAddress     :: Address f
+  , orderLineItemRef :: PrimaryKey LineItemT f
   }
   deriving (Generic, Beamable)
 
@@ -179,9 +180,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
                <> uniqueFields [UPK lineItemFlowerID, UPK lineItemOrderID, U lineItemQuantity]
-  , dbOrders = foreignKeyOn (dbFlowers flowerDB) [
-                            orderFlowerIdRef `References` flowerID
-                          ] Cascade Restrict
+  , dbOrders = foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
              <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
   --                          lineItemTwoFk `References` LineItemID

@@ -178,6 +178,7 @@ instance GTableEntry be db x => GTableEntry be db (S1 f x) where
 instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
   gTables db (a :*: b) = gTables db a <> gTables db b
 
+
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , GColumns (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
@@ -221,13 +222,6 @@ instance GColumns (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
     M.singleton (ColumnName name) (Column ty constr)
 
-instance ( GColumns (Rep (PrimaryKey tbl f))
-         , Generic (PrimaryKey tbl f)
-         , Beamable (PrimaryKey tbl)
-         )
-    => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
-  gColumns (M1 (K1 e)) = gColumns (from e)
-
 instance ( GColumns (Rep (tbl f))
          , Generic (tbl f)
          )
@@ -238,6 +232,13 @@ instance {-# OVERLAPS #-} ( GColumns (Rep (sub f))
          , Generic (sub f)
          )
     => GColumns (S1 m (K1 R (sub f))) where
+  gColumns (M1 (K1 e)) = gColumns (from e)
+
+instance ( GColumns (Rep (PrimaryKey tbl f))
+         , Generic (PrimaryKey tbl f)
+         , Beamable (PrimaryKey tbl)
+         )
+    => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
   gColumns (M1 (K1 e)) = gColumns (from e)
 
 instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where

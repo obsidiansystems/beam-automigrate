@@ -16,6 +16,8 @@ module Database.Beam.Migrate.Annotated where
 
 import           Data.Kind
 
+import GHC.TypeLits
+
 import           Data.Proxy
 import qualified Lens.Micro as Lens
 import           Lens.Micro                               ( SimpleGetter, (^.) )
@@ -264,7 +266,7 @@ data UniqueConstraint (tbl :: ((* -> *) -> *)) where
   U   :: (tbl (Beam.TableField tbl) -> Beam.Columnar Beam.Identity (Beam.TableField tbl ty)) 
       -> UniqueConstraint tbl
   UPK :: Beam.Beamable (PrimaryKey tbl') 
-      => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) 
+      => (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl))
       -> UniqueConstraint tbl
 
 uniqueFields :: [UniqueConstraint tbl]
@@ -291,10 +293,38 @@ data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) whe
              => ( tbl (Beam.TableField tbl)   -> PrimaryKey tbl' (Beam.TableField tbl)) 
              -> ( tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty))
              -> ForeignKeyConstraint tbl tbl'
-  --FPK :: Beam.Beamable (PrimaryKey tbl') 
-  --    => DatabaseEntity be db (TableEntity tbl')
-  --    -> (tbl' (Beam.TableField tbl') -> PrimaryKey tbl' (Beam.TableField tbl')) 
-  --    -> ForeignKeyConstraint tbl be db
+
+
+-- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
+-- target table.
+foreignKeyOnPk :: ( Beam.Beamable (PrimaryKey tbl')
+                  , Beam.Beamable tbl'
+                  , Beam.Table tbl'
+                  , PrimaryKey tbl' f ~ PrimaryKey tbl' g
+                  )
+               => DatabaseEntity be db (TableEntity tbl')
+               -- ^ The 'DatabaseEntity' of the /referenced/ table.
+               -> (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl))
+               -- ^ A function yielding a 'PrimaryKey'. This is usually a record field of the table
+               -- you want to define the FK /for/, and it must have /PrimaryKey externalTable f/ as
+               -- its column-tag.
+               -> ReferenceAction
+               -- ^ What do to \"on delete\"
+               -> ReferenceAction
+               -- ^ What do to \"on update\"
+               -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let colPairs = zipWith (,)
+                          (fieldAsColumnNames (ourColumn (tableSettings e)))
+                          (fieldAsColumnNames (Beam.pk   (tableSettings externalEntity)))
+               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate) 
+                       (dbAnnotatedConstraints tbl)
+                            }) e))
 
 foreignKeyOn :: Beam.Beamable tbl' 
              => DatabaseEntity be db (TableEntity tbl')

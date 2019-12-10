@@ -33,7 +33,7 @@ pkFieldNames entity =
 
 -- | Similar to 'pkFieldNames', but it works on any entity that derives 'Beamable'.
 fieldAsColumnNames :: Beamable f => f (Beam.TableField c) -> [ColumnName]
-fieldAsColumnNames pk = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) pk)
+fieldAsColumnNames field = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) field)
 
 -- | Returns /all/ the 'ColumnName's for a given 'DatabaseEntity'.
 allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> [ColumnName]
