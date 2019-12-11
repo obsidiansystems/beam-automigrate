@@ -30,6 +30,7 @@ import qualified Database.Beam                           as Beam
 import           Database.Beam.Schema.Tables              ( PrimaryKey )
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Migrate.Compat
+import           Database.Beam.Migrate.Util
 import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
                                                           , TableEntity
@@ -37,6 +38,7 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
                                                           , DatabaseEntityDefaultRequirements
                                                           , DatabaseEntityRegularRequirements
                                                           , dbEntityDescriptor
+                                                          , dbEntityName
                                                           , dbTableSettings
                                                           , FieldModification(..)
                                                           , EntityModification(..)
@@ -191,15 +193,15 @@ instance ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint
             defaultFieldSchema = FieldSchema (defaultSqlDataType (Proxy @ty) False)
                                              (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
 
--- | Instance for 'PrimaryKey's going from one table into another.
-instance ( Generic (PrimaryKey tbl1 (Beam.TableField tbl2))
-         , Generic (PrimaryKey tbl1 (TableFieldSchema tbl2))
-         , GDefaultTableSchema (Rep (PrimaryKey tbl1 (TableFieldSchema tbl2)) ())
-                               (Rep (PrimaryKey tbl1 (Beam.TableField tbl2)) ())
+-- | Instance where /g/ is things like a 'PrimaryKey' or a /mixin/.
+instance ( Generic (g (Beam.TableField tbl2))
+         , Generic (g (TableFieldSchema tbl2))
+         , GDefaultTableSchema (Rep (g (TableFieldSchema tbl2)) ())
+                               (Rep (g (Beam.TableField tbl2)) ())
          )
-    => GDefaultTableSchema (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())
-                           (S1 f (K1 Generic.R (PrimaryKey tbl1 (Beam.TableField tbl2))) ()) where
-    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) = 
+    => GDefaultTableSchema (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())
+                           (S1 f (K1 Generic.R (g (Beam.TableField tbl2))) ()) where
+    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) = 
       M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
 
 -- | Instance for things like 'Nullable (TableFieldSchema tbl)'.
@@ -242,13 +244,9 @@ annotateTableFields modFields =
        dbAnnotatedSchema = Beam.withTableModification modFields (dbAnnotatedSchema tbl) 
                             }) e))
 
-addTableConstraints :: Set TableConstraint 
-                    -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-addTableConstraints con =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
-      -> AnnotatedDatabaseEntity (tbl { 
-       dbAnnotatedConstraints = (dbAnnotatedConstraints tbl) <> con
-                            }) e))
+--
+-- Specifying default values
+--
 
 defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)
 defaultsTo tyVal = FieldModification $ \old -> 
@@ -257,3 +255,87 @@ defaultsTo tyVal = FieldModification $ \old ->
           -- Postgres converts the default values all lowercase, so we need to abide to this format.
           tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.toLower $ T.pack $ show tyVal) <> c 
         }
+
+--
+-- Specifying uniqness constrainst
+--
+
+data UniqueConstraint (tbl :: ((* -> *) -> *)) where
+  U   :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
+
+uniqueFields :: [UniqueConstraint tbl]
+             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+uniqueFields us =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let cols    = concatMap (\case (U f) -> colNames (tableSettings e) f) us
+               tName   = e ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
+           in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
+                            }) e))
+
+--
+-- Specifying FK constrainst
+--
+
+data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) where
+  References :: Beam.Beamable (PrimaryKey tbl')
+             => ( tbl (Beam.TableField tbl)   -> PrimaryKey tbl' (Beam.TableField tbl)) 
+             -> ( tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty))
+             -> ForeignKeyConstraint tbl tbl'
+
+
+-- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
+-- target table.
+foreignKeyOnPk :: ( Beam.Beamable (PrimaryKey tbl')
+                  , Beam.Beamable tbl'
+                  , Beam.Table tbl'
+                  , PrimaryKey tbl' f ~ PrimaryKey tbl' g
+                  )
+               => DatabaseEntity be db (TableEntity tbl')
+               -- ^ The 'DatabaseEntity' of the /referenced/ table.
+               -> (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl))
+               -- ^ A function yielding a 'PrimaryKey'. This is usually a record field of the table
+               -- you want to define the FK /for/, and it must have /PrimaryKey externalTable f/ as
+               -- its column-tag.
+               -> ReferenceAction
+               -- ^ What do to \"on delete\"
+               -> ReferenceAction
+               -- ^ What do to \"on update\"
+               -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let colPairs = zipWith (,)
+                          (fieldAsColumnNames (ourColumn (tableSettings e)))
+                          (fieldAsColumnNames (Beam.pk   (tableSettings externalEntity)))
+               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate) 
+                       (dbAnnotatedConstraints tbl)
+                            }) e))
+
+foreignKeyOn :: Beam.Beamable tbl' 
+             => DatabaseEntity be db (TableEntity tbl')
+             -> [ForeignKeyConstraint tbl tbl']
+             -> ReferenceAction
+             -- ^ On Delete
+             -> ReferenceAction
+             -- ^ On Update
+             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOn externalEntity us onDelete onUpdate =
+    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) 
+      -> AnnotatedDatabaseEntity (tbl { 
+       dbAnnotatedConstraints = 
+           let colPairs = concatMap (\case
+                 (References ours theirs) -> zipWith (,)
+                     (fieldAsColumnNames (ours   (tableSettings e)))
+                     [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
+                     ) us
+               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
+               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate) 
+                       (dbAnnotatedConstraints tbl)
+                            }) e))

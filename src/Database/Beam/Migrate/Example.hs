@@ -1,8 +1,11 @@
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell    #-}
+{-# LANGUAGE FlexibleContexts   #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DeriveGeneric      #-}
+{-# LANGUAGE TypeFamilies       #-}
 module Database.Beam.Migrate.Example where
 
 import           Data.Text                      ( Text )
@@ -11,7 +14,6 @@ import           GHC.Generics
 import           Control.Exception
 
 import           Database.Beam.Postgres
-import           Data.Set as S
 import           Database.Beam.Schema           ( Beamable
                                                 , Columnar
                                                 , Database
@@ -39,9 +41,9 @@ import           Database.Beam.Migrate          ( Schema
                                                 , runMigration
                                                 , printMigration
                                                 , migrate
-                                                , TableConstraint(..)
                                                 , DbEnum
                                                 , PgEnum
+                                                , ReferenceAction(..)
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -74,6 +76,20 @@ data FlowerType =
   | Tulip
   deriving (Show, Enum, Bounded)
 
+-- A mixin embedded into another (i.e. 'Address').
+data AddressRegion f
+  = AddressRegion
+  { addressState      :: Columnar f (Maybe Text)
+  , addressCountry    :: Columnar f (Maybe Text)
+  , addressPostalCode :: Columnar f (Maybe Text)
+  } deriving (Generic, Beamable)
+
+data Address f
+  = Address
+  { address           :: Columnar f (Maybe Text)
+  , addressCity       :: Columnar f (Maybe Text)
+  , addressRegion     :: AddressRegion f
+  } deriving (Generic, Beamable)
 
 data FlowerT f = Flower
   { flowerID         :: Columnar f Int32
@@ -84,13 +100,17 @@ data FlowerT f = Flower
   , flowerSchemaTwo  :: Columnar f (PgJSONB MyJson)
   , flowerType       :: Columnar f (DbEnum FlowerType)
   , flowerPgType     :: Columnar f (PgEnum FlowerType)
+  , flowerAddress    :: Address f
   }
   deriving (Generic, Beamable)
 
 data OrderT f = Order
-  { orderID       :: Columnar f Int32
-  , orderTime     :: Columnar f UTCTime
-  , orderValidity :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
+  { orderID          :: Columnar f Int32
+  , orderTime        :: Columnar f UTCTime
+  , orderFlowerIdRef :: PrimaryKey FlowerT f
+  , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
+  , orderAddress     :: Address f
+  , orderLineItemRef :: PrimaryKey LineItemT f
   }
   deriving (Generic, Beamable)
 
@@ -103,10 +123,17 @@ data LineItemT f = LineItem
   }
   deriving (Generic, Beamable)
 
+data LineItemTwoT f = LineItemTwo
+  { lineItemTwoID       :: Columnar f Int
+  , lineItemTwoFk       :: PrimaryKey LineItemT f
+  }
+  deriving (Generic, Beamable)
+
 data FlowerDB f = FlowerDB
-  { dbFlowers   :: f (TableEntity FlowerT)
-  , dbOrders    :: f (TableEntity OrderT)
-  , dbLineItems :: f (TableEntity LineItemT)
+  { dbFlowers      :: f (TableEntity FlowerT)
+  , dbOrders       :: f (TableEntity OrderT)
+  , dbLineItems    :: f (TableEntity LineItemT)
+  , dbLineItemsTwo :: f (TableEntity LineItemTwoT)
   }
   deriving (Generic, Database be)
 
@@ -126,6 +153,11 @@ instance Beam.Table LineItemT where
     deriving (Generic, Beamable)
   primaryKey = LineItemID <$> lineItemOrderID <*> lineItemFlowerID
 
+instance Beam.Table LineItemTwoT where
+  data PrimaryKey LineItemTwoT f = LineItemTwoID (Columnar f Int)
+    deriving (Generic, Beamable)
+  primaryKey = LineItemTwoID <$> lineItemTwoID
+
 -- Modify the field names to be compliant with William Yao's format.
 flowerDB :: DatabaseSettings Postgres FlowerDB
 flowerDB = defaultDbSettings `withDbModification` dbModification
@@ -141,16 +173,18 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
                                                       }
   }
 
-
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
-  , dbLineItems = (addTableConstraints $ 
-      S.fromList [ Unique "db_line_unique" (S.fromList ["flower_id", "order_id"])
-                 --, ForeignKey "lineItemOrderID_fkey" (TableName "orders") mempty NoAction NoAction
-                 ])
-               <> annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+               <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
+  , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+               <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
+  , dbOrders = foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
+             <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
+  --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
+  --                          lineItemTwoFk `References` LineItemID
+  --                        ] Cascade Restrict
   }
 
 hsSchema :: Schema
