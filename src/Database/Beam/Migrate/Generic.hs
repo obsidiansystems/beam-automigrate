@@ -1,4 +1,3 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -82,22 +81,22 @@ instance ( Generic (TableSkeleton (Mixin' tbl))
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
 --
 
-class GSchema be db anns x where
+class GSchema be db (anns :: [Annotation]) (x :: * -> *) where
     gSchema :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Schema
 
 -- Table-specific classes
 
-class GTables be db anns x where
+class GTables be db (anns :: [Annotation]) (x :: * -> *) where
     gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
-class GTableEntry be db anns (tableFound :: Bool) x where
+class GTableEntry (be :: *) (db :: DatabaseKind) (anns :: [Annotation]) (tableFound :: Bool) (x :: * -> *) where
     gTableEntry :: AnnotatedDatabaseSettings be db 
                 -> Proxy anns 
                 -> Proxy tableFound
                 -> x p 
                 -> (TableName, Table)
 
-class GTable be db x where
+class GTable be db (x :: * -> *) where
     gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
 
 -- Enumerations-specific classes
@@ -107,16 +106,16 @@ class GEnums be db x where
 
 -- Column-specific classes
 
-class GColumns x where
+class GColumns (x :: * -> *) where
     gColumns :: x p -> Columns
 
 class GTableConstraintColumns be db x where
     gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
 
-class GColumnEntry x where
+class GColumnEntry (x :: * -> *) where
     gColumnEntry :: x p -> (ColumnName, Column)
 
-class GColumn x where
+class GColumn (x :: * -> *) where
     gColumn :: x p -> Column
 
 --

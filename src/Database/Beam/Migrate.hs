@@ -127,7 +127,7 @@ fromAnnotatedDbSettings :: ( Database be db
                            , GSchema be db anns (Rep (AnnotatedDatabaseSettings be db))
                            )
                         => AnnotatedDatabaseSettings be db 
-                        -> Proxy anns
+                        -> Proxy (anns :: [Annotation])
                         -> Schema
 fromAnnotatedDbSettings db p = gSchema db p (from db)
 
