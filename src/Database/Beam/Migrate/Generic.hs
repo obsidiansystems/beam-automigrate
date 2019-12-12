@@ -81,16 +81,16 @@ instance ( Generic (TableSkeleton (Mixin' tbl))
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
 --
 
-class GSchema be db x where
-    gSchema :: AnnotatedDatabaseSettings be db -> x p -> Schema
+class GSchema be db anns x where
+    gSchema :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Schema
 
 -- Table-specific classes
 
-class GTables be db x where
-    gTables :: AnnotatedDatabaseSettings be db -> x p -> Tables
+class GTables be db anns x where
+    gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
-class GTableEntry be db x where
-    gTableEntry :: AnnotatedDatabaseSettings be db -> x p -> (TableName, Table)
+class GTableEntry be db anns x where
+    gTableEntry :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> (TableName, Table)
 
 class GTable be db x where
     gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
@@ -118,11 +118,11 @@ class GColumn x where
 -- Deriving information about 'Schema's
 --
 
-instance GSchema be db x => GSchema be db (D1 f x) where
-  gSchema db (M1 x) = gSchema db x
+instance GSchema be db anns x => GSchema be db anns (D1 f x) where
+  gSchema db p (M1 x) = gSchema db p x
 
-instance (Constructor f, GTables be db x, GEnums be db x) => GSchema be db (C1 f x) where
-  gSchema db (M1 x) = Schema { schemaTables = gTables db x, schemaEnumerations = gEnums db x }
+instance (Constructor f, GTables be db anns x, GEnums be db x) => GSchema be db anns (C1 f x) where
+  gSchema db p (M1 x) = Schema { schemaTables = gTables db p x, schemaEnumerations = gEnums db x }
 
 --
 -- Deriving information about 'Enums'.
@@ -169,14 +169,14 @@ instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))
 -- Deriving information about 'Table's.
 --
 
-instance GTableEntry be db (S1 f x) => GTables be db (S1 f x) where
-  gTables db = uncurry M.singleton . gTableEntry db
+instance GTableEntry be db anns (S1 f x) => GTables be db anns (S1 f x) where
+  gTables db p = uncurry M.singleton . gTableEntry db p
 
-instance GTableEntry be db x => GTableEntry be db (S1 f x) where
-  gTableEntry db (M1 x) = gTableEntry db x
+instance GTableEntry be db anns x => GTableEntry be db anns (S1 f x) where
+  gTableEntry db p (M1 x) = gTableEntry db p x
 
-instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
-  gTables db (a :*: b) = gTables db a <> gTables db b
+instance (GTables be db anns a, GTables be db anns b) => GTables be db anns (a :*: b) where
+  gTables db p (a :*: b) = gTables db p a <> gTables db p b
 
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
@@ -185,8 +185,8 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , Beam.Table tbl
          , GTableConstraintColumns be db (Rep (TableSchema tbl))
          )
-  => GTableEntry be db (K1 R (AnnotatedDatabaseEntity be' db' (TableEntity tbl))) where
-  gTableEntry db (K1 annEntity) =
+  => GTableEntry be db '[] (K1 R (AnnotatedDatabaseEntity be' db' (TableEntity tbl))) where
+  gTableEntry db Proxy (K1 annEntity) =
     let entity = annEntity ^. deannotate
         tName = entity ^. dbEntityDescriptor . dbEntityName
         pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))

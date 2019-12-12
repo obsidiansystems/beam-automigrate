@@ -1,9 +1,12 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE TypeFamilies         #-}
 module Database.Beam.Migrate.Example.ForeignKeys where
 
 import           Data.Text                                ( Text )
+import           Data.Proxy
 
 import           GHC.Generics
 
@@ -72,7 +75,7 @@ forecastDB :: AnnotatedDatabaseSettings Postgres ForecastDB
 forecastDB = defaultAnnotatedDbSettings defaultDbSettings
 
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings forecastDB
+hsSchema = fromAnnotatedDbSettings forecastDB (Proxy @'[])
 
 exampleShowMigration :: IO ()
 exampleShowMigration = withBeamTestDb printMigration

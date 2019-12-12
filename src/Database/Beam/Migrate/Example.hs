@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -9,6 +10,7 @@
 module Database.Beam.Migrate.Example where
 
 import           Data.Text                      ( Text )
+import           Data.Proxy
 
 import           GHC.Generics
 import           Control.Exception
@@ -188,7 +190,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   }
 
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings annotatedDB
+hsSchema = fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do
