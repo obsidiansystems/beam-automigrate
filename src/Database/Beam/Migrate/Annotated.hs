@@ -50,11 +50,7 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
 -- Annotating a 'DatabaseSettings' with meta information.
 --
 
-data HList :: [*] -> * where
-    HNil :: HList '[]
-    (:*) :: x -> HList xs -> HList (x ': xs)
-
-data Annotation = UserDefinedFk Symbol
+data UserDefinedFk (tbl :: (* -> *) -> *) :: *
 
 
 -- | NOTE(adn) Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it works by

@@ -134,6 +134,7 @@ data LineItemTwoT f = LineItemTwo
 data FlowerDB f = FlowerDB
   { dbFlowers      :: f (TableEntity FlowerT)
   , dbOrders       :: f (TableEntity OrderT)
+  , dbOrders2      :: f (TableEntity OrderT)
   , dbLineItems    :: f (TableEntity LineItemT)
   , dbLineItemsTwo :: f (TableEntity LineItemTwoT)
   }
@@ -190,7 +191,8 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   }
 
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings annotatedDB (Proxy @'[])
+hsSchema = 
+    fromAnnotatedDbSettings annotatedDB (Proxy @'[ UserDefinedFk LineItemT ])
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do
