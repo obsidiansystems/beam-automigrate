@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -9,6 +10,7 @@
 module Database.Beam.Migrate.Example where
 
 import           Data.Text                      ( Text )
+import           Data.Proxy
 
 import           GHC.Generics
 import           Control.Exception
@@ -132,6 +134,7 @@ data LineItemTwoT f = LineItemTwo
 data FlowerDB f = FlowerDB
   { dbFlowers      :: f (TableEntity FlowerT)
   , dbOrders       :: f (TableEntity OrderT)
+  , dbOrders2      :: f (TableEntity OrderT)
   , dbLineItems    :: f (TableEntity LineItemT)
   , dbLineItemsTwo :: f (TableEntity LineItemTwoT)
   }
@@ -188,7 +191,8 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   }
 
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings annotatedDB
+hsSchema = 
+    fromAnnotatedDbSettings annotatedDB (Proxy @'[ UserDefinedFk LineItemT ])
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do

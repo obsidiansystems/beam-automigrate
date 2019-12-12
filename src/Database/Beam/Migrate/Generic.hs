@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DefaultSignatures #-}
@@ -81,16 +82,20 @@ instance ( Generic (TableSkeleton (Mixin' tbl))
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
 --
 
-class GSchema be db x where
-    gSchema :: AnnotatedDatabaseSettings be db -> x p -> Schema
+class GSchema be db anns x where
+    gSchema :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Schema
 
 -- Table-specific classes
 
-class GTables be db x where
-    gTables :: AnnotatedDatabaseSettings be db -> x p -> Tables
+class GTables be db anns x where
+    gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
-class GTableEntry be db x where
-    gTableEntry :: AnnotatedDatabaseSettings be db -> x p -> (TableName, Table)
+class GTableEntry be db anns (tableFound :: Bool) x where
+    gTableEntry :: AnnotatedDatabaseSettings be db 
+                -> Proxy anns 
+                -> Proxy tableFound
+                -> x p 
+                -> (TableName, Table)
 
 class GTable be db x where
     gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
@@ -118,11 +123,11 @@ class GColumn x where
 -- Deriving information about 'Schema's
 --
 
-instance GSchema be db x => GSchema be db (D1 f x) where
-  gSchema db (M1 x) = gSchema db x
+instance GSchema be db anns x => GSchema be db anns (D1 f x) where
+  gSchema db p (M1 x) = gSchema db p x
 
-instance (Constructor f, GTables be db x, GEnums be db x) => GSchema be db (C1 f x) where
-  gSchema db (M1 x) = Schema { schemaTables = gTables db x, schemaEnumerations = gEnums db x }
+instance (Constructor f, GTables be db anns x, GEnums be db x) => GSchema be db anns (C1 f x) where
+  gSchema db p (M1 x) = Schema { schemaTables = gTables db p x, schemaEnumerations = gEnums db x }
 
 --
 -- Deriving information about 'Enums'.
@@ -169,15 +174,68 @@ instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))
 -- Deriving information about 'Table's.
 --
 
-instance GTableEntry be db (S1 f x) => GTables be db (S1 f x) where
-  gTables db = uncurry M.singleton . gTableEntry db
+instance GTableEntry be db anns 'False (S1 f x) => GTables be db anns (S1 f x) where
+  gTables db p = uncurry M.singleton . gTableEntry db p (Proxy @'False)
 
-instance GTableEntry be db x => GTableEntry be db (S1 f x) where
-  gTableEntry db (M1 x) = gTableEntry db x
+instance GTableEntry be db anns tableFound x => GTableEntry be db anns tableFound (S1 f x) where
+  gTableEntry db p1 p2 (M1 x) = gTableEntry db p1 p2 x
 
-instance (GTables be db a, GTables be db b) => GTables be db (a :*: b) where
-  gTables db (a :*: b) = gTables db a <> gTables db b
+instance (GTables be db anns a, GTables be db anns b) => GTables be db anns (a :*: b) where
+  gTables db p (a :*: b) = gTables db p a <> gTables db p b
 
+
+mkTableEntryNoFkDiscovery :: (GColumns (Rep (TableSchema tbl)), Generic (TableSchema tbl), Beam.Table tbl)
+                          => AnnotatedDatabaseEntity be db (TableEntity tbl)
+                          -> (TableName, Table)
+mkTableEntryNoFkDiscovery annEntity =
+  let entity        = annEntity ^. deannotate
+      tName         = entity ^. dbEntityDescriptor . dbEntityName
+      pks           = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
+      columns       = gColumns . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+      annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
+  in  (TableName tName, Table (pks <> annotatedCons) columns)
+
+mkTableEntryFkDiscovery :: ( GColumns (Rep (TableSchema tbl))
+                           , Generic (TableSchema tbl)
+                           , Beam.Table tbl
+                           , GTableConstraintColumns be db (Rep (TableSchema tbl))
+                           )
+                        => AnnotatedDatabaseSettings be db
+                        -> AnnotatedDatabaseEntity be db (TableEntity tbl)
+                        -> (TableName, Table)
+mkTableEntryFkDiscovery db annEntity =
+  let (tName, table) = mkTableEntryNoFkDiscovery annEntity
+      discoveredCons =
+          gTableConstraintsColumns db tName . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+  in  (tName, table { tableConstraints = discoveredCons <> tableConstraints table })
+
+--
+-- Automatic FK-discovery algorithm starts here
+--
+-- The general idea is to carry around a (tableFound :: Bool) type-level witness to be used as we uncons
+-- the type-level list. If we find a match, we toggle-off the FK-discovery algorithm, otherwise we don't.
+
+instance ( GColumns (Rep (TableSchema tbl))
+         , Generic (TableSchema tbl)
+         , Beam.Table tbl
+         , GTableEntry be db xs (TestTableEqual tbl tbl') (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
+         )
+  => GTableEntry be db (UserDefinedFk tbl' ': xs) 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+
+-- At this point we explored the full list and the previous equality check yielded 'True, which means a
+-- match was found. We disable the FK-discovery algorithm.
+
+instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
+         , GColumns (Rep (TableSchema tbl))
+         , Generic (TableSchema tbl)
+         , Beam.Table tbl
+         )
+  => GTableEntry be db '[] 'True (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+
+-- At this point we explored the full list and the previous equality check yielded 'False, so we kickoff the
+-- automatic FK-discovery algorithm.
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , GColumns (Rep (TableSchema tbl))
@@ -185,15 +243,8 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , Beam.Table tbl
          , GTableConstraintColumns be db (Rep (TableSchema tbl))
          )
-  => GTableEntry be db (K1 R (AnnotatedDatabaseEntity be' db' (TableEntity tbl))) where
-  gTableEntry db (K1 annEntity) =
-    let entity = annEntity ^. deannotate
-        tName = entity ^. dbEntityDescriptor . dbEntityName
-        pks   = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-        columns = gColumns . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
-        annotatedCons  = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
-        discoveredCons = gTableConstraintsColumns db (TableName tName) . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
-    in  (TableName tName, Table (pks <> annotatedCons <> discoveredCons) columns)
+  => GTableEntry be db '[] 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry db Proxy Proxy (K1 annEntity) = mkTableEntryFkDiscovery db annEntity
 
 instance GColumns x => GColumns (D1 f x) where
   gColumns (M1 x) = gColumns x

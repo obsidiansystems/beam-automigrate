@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -122,11 +124,12 @@ fromAnnotatedDbSettings :: ( Database be db
                                              (Rep (db (AnnotatedDatabaseEntity be db)))
                                              (Rep (db (DatabaseEntity be db)))
                            , Generic (AnnotatedDatabaseSettings be db)
-                           , GSchema be db (Rep (AnnotatedDatabaseSettings be db))
+                           , GSchema be db anns (Rep (AnnotatedDatabaseSettings be db))
                            )
                         => AnnotatedDatabaseSettings be db 
+                        -> Proxy anns
                         -> Schema
-fromAnnotatedDbSettings db = gSchema db (from db)
+fromAnnotatedDbSettings db p = gSchema db p (from db)
 
 -- | Sort edits according to their execution order, to make sure they don't reference something which
 -- hasn't been created yet.
