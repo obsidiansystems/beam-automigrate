@@ -16,8 +16,6 @@ module Database.Beam.Migrate.Annotated where
 
 import           Data.Kind
 
-import           GHC.TypeLits
-
 import           Data.Proxy
 import qualified Lens.Micro as Lens
 import           Lens.Micro                               ( SimpleGetter, (^.) )
@@ -50,8 +48,8 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
 -- Annotating a 'DatabaseSettings' with meta information.
 --
 
-data UserDefinedFk (tbl :: (* -> *) -> *) :: *
-
+data Annotation where
+    UserDefinedFk :: ((* -> *) -> *) -> Annotation
 
 -- | NOTE(adn) Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it works by
 -- supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as witnesses,

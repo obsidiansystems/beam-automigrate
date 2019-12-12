@@ -192,7 +192,8 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
 
 hsSchema :: Schema
 hsSchema = 
-    fromAnnotatedDbSettings annotatedDB (Proxy @'[ UserDefinedFk LineItemT ])
+    fromAnnotatedDbSettings annotatedDB (Proxy @'[ 'UserDefinedFk LineItemT ])
+    -- fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName = do
