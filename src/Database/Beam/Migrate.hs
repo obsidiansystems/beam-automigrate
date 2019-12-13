@@ -133,7 +133,6 @@ fromAnnotatedDbSettings db p = gSchema db p (from db)
 
 -- | Sort edits according to their execution order, to make sure they don't reference something which
 -- hasn't been created yet.
--- FIXME(adn) Until we fix #1 properly, we also filter 'IsForeignKeyOf' entries.
 sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
 sortEdits = L.sortOn (snd . unPriority)
 
