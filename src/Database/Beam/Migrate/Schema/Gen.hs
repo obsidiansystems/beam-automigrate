@@ -143,9 +143,11 @@ similarColumn col = do
                             , (15, pure NoChange)
                             ]
     case editAction of
-      ChangeType -> pure $ col { columnType = SqlStdType AST.DataTypeBoolean }
+      ChangeType -> pure $ col { columnType = SqlStdType AST.DataTypeBoolean
+                               , columnConstraints  = S.singleton (Default "FALSE")
+                               }
       ChangeConstraints -> do
         constNum <- choose (0, 2)
         constrs <- vectorOf constNum (elements [NotNull, Default "FALSE"])
-        pure $ col { columnConstraints = (S.fromList constrs) }
+        pure $ col { columnType = SqlStdType AST.DataTypeBoolean, columnConstraints = (S.fromList constrs) }
       NoChange -> pure col
