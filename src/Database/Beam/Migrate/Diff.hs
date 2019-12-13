@@ -18,8 +18,7 @@ module Database.Beam.Migrate.Diff
   , diffTables
   , diffTable
 
-  , computeEnumEdit
-  , appendAfter
+  , sortEdits
   )
 where
 
@@ -68,7 +67,7 @@ editPriority = \case
   EnumTypeRemoved{}         -> Priority 3
   EnumTypeValueAdded{}      -> Priority 3
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
-  TableConstraintAdded _ (ForeignKey{}) -> Priority 4  
+  TableConstraintAdded _ (ForeignKey{}) -> Priority 4
   TableConstraintAdded _ _              -> Priority 3
   TableConstraintRemoved{}  -> Priority 5
   ColumnConstraintAdded{}   -> Priority 5
@@ -79,6 +78,12 @@ editPriority = \case
 
 mkEdit :: Edit -> WithPriority Edit
 mkEdit e = WithPriority (e, editPriority e)
+
+-- | Sort edits according to their execution order, to make sure they don't reference something which
+-- hasn't been created yet.
+sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
+sortEdits = L.sortOn (snd . unPriority)
+
 
 type DiffA t = Either DiffError (t (WithPriority Edit))
 type Diff = DiffA []
@@ -123,7 +128,7 @@ diffTablesReferenceImplementation hsTables dbTables = do
     whenAdded = concatMap (addEdit TableAdded TableConstraintAdded tableConstraints) . M.toList
 
     whenRemoved :: Tables -> [WithPriority Edit]
-    whenRemoved = 
+    whenRemoved =
         concatMap (addEdit (\k _ -> TableRemoved k) TableConstraintRemoved tableConstraints) . M.toList
 
     go :: [WithPriority Edit] -> ((TableName, Table), (TableName, Table)) -> Diff
@@ -131,12 +136,12 @@ diffTablesReferenceImplementation hsTables dbTables = do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
 
-addEdit :: (k -> v -> Edit) 
-        -> (k -> c -> Edit) 
+addEdit :: (k -> v -> Edit)
+        -> (k -> c -> Edit)
         -> (v -> S.Set c)
         -> (k, v)
         -> [WithPriority Edit]
-addEdit onValue onConstr getConstr (k,v) = 
+addEdit onValue onConstr getConstr (k,v) =
     (mkEdit $ onValue k v) : map (mkEdit . onConstr k) (S.toList $ getConstr v)
 
 diffTableReferenceImplementation :: TableName -> Table -> Table -> Diff
@@ -156,9 +161,9 @@ diffTableReferenceImplementation tName hsTable dbTable = do
         pure $ map (mkEdit . TableConstraintRemoved tName) (S.toList constraintsRemoved)
   let colsAdded   = whenAdded columnsAdded
   let colsRemoved = whenRemoved columnsRemoved
-  pure $ (join $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved]) 
-      <> colsAdded 
-      <> colsRemoved 
+  pure $ (join $ catMaybes [tblConstraintsAdded, tblConstraintsRemoved])
+      <> colsAdded
+      <> colsRemoved
       <> whenBoth
   where
     go :: [WithPriority Edit] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
@@ -167,11 +172,11 @@ diffTableReferenceImplementation tName hsTable dbTable = do
       pure $ e <> d
 
     whenAdded :: Columns -> [WithPriority Edit]
-    whenAdded = 
+    whenAdded =
         concatMap (addEdit (ColumnAdded tName) (ColumnConstraintAdded tName) columnConstraints) . M.toList
 
     whenRemoved :: Columns -> [WithPriority Edit]
-    whenRemoved = 
+    whenRemoved =
         concatMap (addEdit (\k _ -> ColumnRemoved tName k) (ColumnConstraintRemoved tName) columnConstraints) . M.toList
 
 diffColumnReferenceImplementation :: TableName -> ColumnName -> Column -> Column -> Diff
@@ -221,7 +226,7 @@ computeEnumEdit :: EnumerationName -> [Text] -> [Text] -> [WithPriority Edit]
 computeEnumEdit _ []  []         = mempty
 computeEnumEdit _ []  (_:_)      = mempty
 computeEnumEdit eName (x:xs) []  = appendAfter eName xs x
-computeEnumEdit eName (x:xs) [y] = 
+computeEnumEdit eName (x:xs) [y] =
     if x == y then appendAfter eName xs y
               else (mkEdit $ EnumTypeValueAdded eName x Before y) : computeEnumEdit eName xs [y]
 computeEnumEdit eName (x:xs) (y:ys) =

@@ -24,6 +24,7 @@ library
                        Database.Beam.Migrate.Postgres
                        Database.Beam.Migrate.Types
                        Database.Beam.Migrate.Util
+                       Database.Beam.Migrate.Validity
                        Database.Beam.Migrate.Schema.Gen
                        Database.Beam.Migrate.BenchUtil
   other-modules:
