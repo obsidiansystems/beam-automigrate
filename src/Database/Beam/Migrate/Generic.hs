@@ -72,7 +72,7 @@ instance ( Generic (TableSkeleton (Mixin' tbl))
          , Beamable tbl
          ) => Beamable (Mixin' tbl) where
 
-    zipBeamFieldsM f (Mixin' x) (Mixin' y) = 
+    zipBeamFieldsM f (Mixin' x) (Mixin' y) =
         Mixin' <$> zipBeamFieldsM f x y
 
     tblSkeleton = Mixin' tblSkeleton
@@ -90,10 +90,10 @@ class GTables be db (anns :: [Annotation]) (x :: * -> *) where
     gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
 class GTableEntry (be :: *) (db :: DatabaseKind) (anns :: [Annotation]) (tableFound :: Bool) (x :: * -> *) where
-    gTableEntry :: AnnotatedDatabaseSettings be db 
-                -> Proxy anns 
+    gTableEntry :: AnnotatedDatabaseSettings be db
+                -> Proxy anns
                 -> Proxy tableFound
-                -> x p 
+                -> x p
                 -> (TableName, Table)
 
 class GTable be db (x :: * -> *) where
@@ -158,8 +158,8 @@ instance {-# OVERLAPS #-} (GEnums be db (Rep (sub f)), Generic (sub f))
     => GEnums be db (S1 m (K1 R (sub f))) where
     gEnums db (M1 (K1 e)) = gEnums db (from e)
 
-instance IsEnumeration ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
-    gEnums _ (M1 (K1 _)) = schemaEnums (Proxy @ty)
+instance HasColumnType ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
+    gEnums _ (M1 (K1 _)) = defaultEnums (Proxy @ty)
 
 -- primary-key-wrapped types do not yield any enumerations.
 
