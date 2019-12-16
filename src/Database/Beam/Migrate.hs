@@ -36,7 +36,6 @@ import           Lens.Micro                               ( (^.) )
 import           Data.Proxy
 import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
-import qualified Data.List                               as L
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
@@ -71,10 +70,10 @@ import qualified Database.Beam.Postgres.Syntax           as Pg
 --
 
 -- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
-defaultAnnotatedDbSettings :: forall be db. 
+defaultAnnotatedDbSettings :: forall be db.
                            ( Generic (db (DatabaseEntity be db))
                            , Generic (db (AnnotatedDatabaseEntity be db))
-                           , Database be db 
+                           , Database be db
                            , GZipDatabase be (DatabaseEntity be db)
                                              (AnnotatedDatabaseEntity be db)
                                              (AnnotatedDatabaseEntity be db)
@@ -82,7 +81,7 @@ defaultAnnotatedDbSettings :: forall be db.
                                              (Rep (db (AnnotatedDatabaseEntity be db)))
                                              (Rep (db (AnnotatedDatabaseEntity be db)))
                            )
-                           => DatabaseSettings be db 
+                           => DatabaseSettings be db
                            -> AnnotatedDatabaseSettings be db
 defaultAnnotatedDbSettings db = runIdentity $
   zipTables (Proxy @be) annotate db (undefined :: AnnotatedDatabaseSettings be db)
@@ -91,14 +90,14 @@ defaultAnnotatedDbSettings db = runIdentity $
     annotate :: ( Monad m
                 , IsAnnotatedDatabaseEntity be ty
                 , AnnotatedDatabaseEntityRegularRequirements be ty)
-             => DatabaseEntity be db ty 
-             -> AnnotatedDatabaseEntity be db ty 
+             => DatabaseEntity be db ty
+             -> AnnotatedDatabaseEntity be db ty
              -> m (AnnotatedDatabaseEntity be db ty)
-    annotate (DatabaseEntity edesc) _ = 
+    annotate (DatabaseEntity edesc) _ =
         pure $ AnnotatedDatabaseEntity (dbAnnotatedEntityAuto edesc) (DatabaseEntity edesc)
 
-deAnnotateDatabase :: forall be db. 
-                   ( Database be db 
+deAnnotateDatabase :: forall be db.
+                   ( Database be db
                    , Generic (db (DatabaseEntity be db))
                    , Generic (db (AnnotatedDatabaseEntity be db))
                    , GZipDatabase be (AnnotatedDatabaseEntity be db)
@@ -108,9 +107,9 @@ deAnnotateDatabase :: forall be db.
                                      (Rep (db (AnnotatedDatabaseEntity be db)))
                                      (Rep (db (DatabaseEntity be db)))
                    )
-                   => AnnotatedDatabaseSettings be db 
+                   => AnnotatedDatabaseSettings be db
                    -> DatabaseSettings be db
-deAnnotateDatabase db = 
+deAnnotateDatabase db =
     runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
@@ -126,15 +125,10 @@ fromAnnotatedDbSettings :: ( Database be db
                            , Generic (AnnotatedDatabaseSettings be db)
                            , GSchema be db anns (Rep (AnnotatedDatabaseSettings be db))
                            )
-                        => AnnotatedDatabaseSettings be db 
+                        => AnnotatedDatabaseSettings be db
                         -> Proxy (anns :: [Annotation])
                         -> Schema
 fromAnnotatedDbSettings db p = gSchema db p (from db)
-
--- | Sort edits according to their execution order, to make sure they don't reference something which
--- hasn't been created yet.
-sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
-sortEdits = L.sortOn (snd . unPriority)
 
 editsToPgSyntax :: [WithPriority Edit] -> [Pg.PgSyntax]
 editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
@@ -158,16 +152,16 @@ runMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
-    Right (sortEdits -> edits) -> 
+    Right (sortEdits -> edits) ->
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
--- Pg.PgCommandSyntax Pg.PgCommandTypeDdl 
+-- Pg.PgCommandSyntax Pg.PgCommandTypeDdl
 
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
-  TableAdded tblName tbl -> 
+  TableAdded tblName tbl ->
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
-                                   <> " (" 
+                                   <> " ("
                                    <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)))
                                    <> ")"
                 )
@@ -179,17 +173,17 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
   EnumTypeAdded   tyName vals -> createTypeSyntax tyName vals
   EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
-  EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint -> 
-      ddlSyntax ("ALTER TYPE " <> tyName 
-                               <> " ADD VALUE " 
-                               <> sqlSingleQuoted newVal 
-                               <> " " 
+  EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
+      ddlSyntax ("ALTER TYPE " <> tyName
+                               <> " ADD VALUE "
+                               <> sqlSingleQuoted newVal
+                               <> " "
                                <> renderInsertionOrder order
                                <> " "
                                <> sqlSingleQuoted insPoint
                 )
   ColumnAdded tblName colName col ->
-      updateSyntax (alterTable tblName 
+      updateSyntax (alterTable tblName
                                 <> "ADD COLUMN "
                                 <> sqlEscaped (columnName colName)
                                 <> " "
@@ -210,11 +204,11 @@ toSqlSyntax = \case
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 
       alterTable :: TableName -> Text
-      alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " " 
+      alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " "
 
       renderTableColumn :: (ColumnName, Column) -> Text
-      renderTableColumn (colName, col) = 
-          columnName colName <> " " 
+      renderTableColumn (colName, col) =
+          columnName colName <> " "
                              <> renderDataType (columnType col)
                              <> " "
                              <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
@@ -225,24 +219,24 @@ toSqlSyntax = \case
 
       renderCreateTableConstraint :: TableConstraint -> Text
       renderCreateTableConstraint = \case
-        Unique fname cols -> 
-            conKeyword <> sqlEscaped fname 
-                       <> " UNIQUE (" 
-                       <> T.intercalate ", " (map columnName (S.toList cols)) 
+        Unique fname cols ->
+            conKeyword <> sqlEscaped fname
+                       <> " UNIQUE ("
+                       <> T.intercalate ", " (map columnName (S.toList cols))
                        <> ")"
-        PrimaryKey fname cols -> 
-            conKeyword <> sqlEscaped fname 
-                       <> " PRIMARY KEY (" 
-                       <> T.intercalate ", " (map columnName (S.toList cols)) 
+        PrimaryKey fname cols ->
+            conKeyword <> sqlEscaped fname
+                       <> " PRIMARY KEY ("
+                       <> T.intercalate ", " (map columnName (S.toList cols))
                        <> ")"
         ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
             let (fkCols, referenced) = (map (columnName . fst) colPair, map (columnName . snd) colPair)
-            in conKeyword <> sqlEscaped fname 
-                          <> " FOREIGN KEY (" 
+            in conKeyword <> sqlEscaped fname
+                          <> " FOREIGN KEY ("
                           <> T.intercalate ", " fkCols
-                          <> ") REFERENCES " <> sqlEscaped tName 
-                          <> "(" <> T.intercalate ", " referenced <> ")" 
-                          <> renderAction "ON DELETE" onDelete 
+                          <> ") REFERENCES " <> sqlEscaped tName
+                          <> "(" <> T.intercalate ", " referenced <> ")"
+                          <> renderAction "ON DELETE" onDelete
                           <> renderAction "ON UPDATE" onUpdate
         where conKeyword = "CONSTRAINT "
 
@@ -312,7 +306,7 @@ toSqlSyntax = \case
             error "DataTypeRow not supported yet."
         SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
         -- text-based enum types
-        DbEnumeration (EnumerationName _) _ -> 
+        DbEnumeration (EnumerationName _) _ ->
             renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
         -- Json types
         PgSpecificType PgJson  -> "JSON"

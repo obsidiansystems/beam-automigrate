@@ -24,6 +24,7 @@ library
                        Database.Beam.Migrate.Postgres
                        Database.Beam.Migrate.Types
                        Database.Beam.Migrate.Util
+                       Database.Beam.Migrate.Validity
                        Database.Beam.Migrate.Schema.Gen
                        Database.Beam.Migrate.BenchUtil
   other-modules:
@@ -46,6 +47,7 @@ library
                      , postgresql-simple   < 0.7.0.0
                      , vector              < 0.13.0.0
                      , time
+                     , transformers
                      , scientific
                      -- Needed only for the examples, (re)move eventually.
                      , QuickCheck          < 2.15.0.0
