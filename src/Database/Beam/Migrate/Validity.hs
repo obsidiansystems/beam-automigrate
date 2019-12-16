@@ -108,7 +108,7 @@ validateSchemaTables s = forM_ (M.toList $ schemaTables s) validateTable
   where
     validateTable :: (TableName, Table) -> Either [ValidationFailed] ()
     validateTable (tName, tbl) = do
-      forM_ (tableConstraints tbl)        (bimap (:[]) id . validateTableConstraint s tName tbl)
+      forM_ (tableConstraints tbl)        (first (:[]) . validateTableConstraint s tName tbl)
       forM_ (M.toList $ tableColumns tbl) (validateColumn s tName)
 
 -- | Validate a 'TableConstraint', making sure referential integrity is not violated.
@@ -262,7 +262,7 @@ validateRemoveTableConstraint s tName c = case c of
     forM_ (M.toList allOtherTables) (checkIntegrity (map (Qualified tName) . S.toList $ cols))
   Unique     _ cols    ->
     forM_ (M.toList allOtherTables) (checkIntegrity (map (Qualified tName) . S.toList $ cols))
-  ForeignKey _ _ _ _ _ -> Right ()
+  ForeignKey{} -> Right ()
   where
     allOtherTables :: Tables
     allOtherTables = M.delete tName (schemaTables s)
@@ -304,8 +304,8 @@ validateRemoveColumnConstraint tbl (Qualified tName colName) = \case
         in if S.member colName cols
               then Left $ InvalidRemoveColumnConstraint (Qualified tName colName) reason
               else Right ()
-      ForeignKey _ _ _ _ _ -> Right ()
-      Unique _ _ -> Right ()
+      ForeignKey{} -> Right ()
+      Unique{} -> Right ()
 
 -- | Convert a 'ValidationFailed' into an 'ApplyFailed'.
 toApplyFailed :: Edit -> ValidationFailed -> ApplyFailed
@@ -393,7 +393,7 @@ removeColumn :: Edit -> Schema -> ColumnName -> TableName -> Table -> Either App
 removeColumn e s colName tName tbl = liftEither $ do
   columns' <- M.alterF (\case
     Nothing  -> Left (InvalidEdit e (ColumnDoesntExist colName))
-    Just _   -> bimap (toApplyFailed e) id (validateRemoveColumn s tName colName) >> pure Nothing
+    Just _   -> first (toApplyFailed e) (validateRemoveColumn s tName colName) >> pure Nothing
                       ) colName (tableColumns tbl)
   pure $ Just tbl { tableColumns = columns' }
 
@@ -549,5 +549,5 @@ addValueToEnum e eName addedValue insOrder insPoint (Enumeration vals) =
             let (hd, tl) = L.splitAt (ix - 1) vals
             in pure . Just $ Enumeration (hd <> (addedValue : tl))
       After  ->
-        let (hd, tl) = L.break ((==) insPoint) vals
+        let (hd, tl) = L.break (insPoint ==) vals
         in pure . Just $ Enumeration (hd <> (addedValue : tl))

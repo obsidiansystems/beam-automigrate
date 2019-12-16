@@ -1,6 +1,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
+
 module Database.Beam.Migrate.Schema.Gen
     ( genSchema
     , genSimilarSchemas
@@ -33,14 +33,7 @@ genColumnName = genName ColumnName
 -- schemas, if we delete any column which is referenced as part of this constraint, we also need to drop
 -- the constraint, and this is currently not something supported by the diff algorithm.
 genUniqueConstraint :: Columns -> Gen (Set TableConstraint)
-genUniqueConstraint allCols = do
-  if length allCols > 3
-     then do
-       --let cols = M.keys allCols
-       --colNum <- choose (1, 2)
-       --columns <- shuffle cols
-       pure mempty -- $ S.singleton (Unique "test_unique" (S.fromList $ take colNum columns))
-     else pure mempty
+genUniqueConstraint _allCols = pure mempty
 
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
@@ -95,45 +88,45 @@ genSimilarSchemas = do
 
 
 similarTables :: Tables -> Gen Tables
-similarTables tbls = flip execStateT tbls $ do
+similarTables tbls = flip execStateT tbls $
   forM_ (M.toList tbls) $ \(tName, tbl) -> do
-    tableEditAction <- lift $ frequency [ (1, pure AddTable)
-                                        , (1, pure DropTable)
-                                        , (1, pure ModifyTable)
-                                        , (15, pure LeaveTableAlone)
-                                        ]
-    case tableEditAction of
-      AddTable -> do
-          s <- get
-          newTableName <- lift genTableName
-          newTable <- lift $ genTable s
-          modify' (M.insert newTableName newTable)
-      DropTable -> modify' (M.delete tName)
-      ModifyTable -> do
-          table' <- lift $ similarTable tbl
-          modify' (M.insert tName table')
-      LeaveTableAlone -> pure ()
+  tableEditAction <- lift $ frequency [ (1, pure AddTable)
+                                      , (1, pure DropTable)
+                                      , (1, pure ModifyTable)
+                                      , (15, pure LeaveTableAlone)
+                                      ]
+  case tableEditAction of
+    AddTable -> do
+        s <- get
+        newTableName <- lift genTableName
+        newTable <- lift $ genTable s
+        modify' (M.insert newTableName newTable)
+    DropTable -> modify' (M.delete tName)
+    ModifyTable -> do
+        table' <- lift $ similarTable tbl
+        modify' (M.insert tName table')
+    LeaveTableAlone -> pure ()
 
 
 similarTable :: Table -> Gen Table
-similarTable tbl = flip execStateT tbl $ do
+similarTable tbl = flip execStateT tbl $
   forM_ (M.toList . tableColumns $ tbl) $ \(cName, col) -> do
-    tableEditAction <- lift $ frequency [ (1, pure AddColumn)
-                                        , (1, pure DropColumn)
-                                        , (1, pure ModifyColumn)
-                                        , (15, pure LeaveColumnAlone)
-                                        ]
-    case tableEditAction of
-      AddColumn -> do
-          s <- get
-          newColumnName <- lift genColumnName
-          newColumn <- lift $ genColumn (tableColumns s)
-          modify' (\st -> st { tableColumns = M.insert newColumnName newColumn (tableColumns st) })
-      DropColumn -> modify' (\st -> st { tableColumns = M.delete cName (tableColumns st) })
-      ModifyColumn -> do
-          col' <- lift $ similarColumn col
-          modify' (\st -> st { tableColumns = M.insert cName col' (tableColumns st) })
-      LeaveColumnAlone -> pure ()
+  tableEditAction <- lift $ frequency [ (1, pure AddColumn)
+                                      , (1, pure DropColumn)
+                                      , (1, pure ModifyColumn)
+                                      , (15, pure LeaveColumnAlone)
+                                      ]
+  case tableEditAction of
+    AddColumn -> do
+        s <- get
+        newColumnName <- lift genColumnName
+        newColumn <- lift $ genColumn (tableColumns s)
+        modify' (\st -> st { tableColumns = M.insert newColumnName newColumn (tableColumns st) })
+    DropColumn -> modify' (\st -> st { tableColumns = M.delete cName (tableColumns st) })
+    ModifyColumn -> do
+        col' <- lift $ similarColumn col
+        modify' (\st -> st { tableColumns = M.insert cName col' (tableColumns st) })
+    LeaveColumnAlone -> pure ()
 
 
 similarColumn :: Column -> Gen Column

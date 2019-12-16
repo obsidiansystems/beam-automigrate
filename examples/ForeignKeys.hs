@@ -34,7 +34,6 @@ import           Database.Beam.Migrate                    ( Schema
                                                           )
 
 import qualified Database.PostgreSQL.Simple              as Pg
-import           Database.Beam.Postgres                   ( runBeamPostgres )
 
 --
 -- Example

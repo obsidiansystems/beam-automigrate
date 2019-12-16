@@ -1,11 +1,7 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -148,7 +144,7 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          )
   => GEnums be db (S1 f (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))) where
   gEnums db (M1 (K1 annEntity)) =
-    gEnums db (from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
+    gEnums db (from (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
 
 instance (GEnums be db (Rep (tbl ty)), Generic (tbl ty))
     => GEnums be db (S1 f (K1 R (Mixin' tbl ty))) where
@@ -190,7 +186,7 @@ mkTableEntryNoFkDiscovery annEntity =
   let entity        = annEntity ^. deannotate
       tName         = entity ^. dbEntityDescriptor . dbEntityName
       pks           = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-      columns       = gColumns . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+      columns       = gColumns . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
   in  (TableName tName, Table (pks <> annotatedCons) columns)
 
@@ -205,7 +201,7 @@ mkTableEntryFkDiscovery :: ( GColumns (Rep (TableSchema tbl))
 mkTableEntryFkDiscovery db annEntity =
   let (tName, table) = mkTableEntryNoFkDiscovery annEntity
       discoveredCons =
-          gTableConstraintsColumns db tName . from $ (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))
+          gTableConstraintsColumns db tName . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
   in  (tName, table { tableConstraints = discoveredCons <> tableConstraints table })
 
 --
@@ -379,7 +375,7 @@ instance
 instance
   (GTableLookupTables sel tbl x k)
   => GTableLookupTables sel tbl (S1 f x) k where
-  gTableLookupTables sel tbl (M1 x) k = gTableLookupTables sel tbl x k
+  gTableLookupTables sel tbl (M1 x) = gTableLookupTables sel tbl x
 
 instance
   ( GTableLookupTables sel tbl a (b :*: k)
@@ -389,7 +385,7 @@ instance
 instance
   (GTableLookupTablesExpectFail sel tbl x k)
   => GTableLookupTablesExpectFail sel tbl (S1 f x) k where
-  gTableLookupTablesExpectFail sel tbl r (M1 x) k = gTableLookupTablesExpectFail sel tbl r x k
+  gTableLookupTablesExpectFail sel tbl r (M1 x) = gTableLookupTablesExpectFail sel tbl r x
 
 instance
   ( GTableLookupTablesExpectFail sel tbl a (b :*: k)
@@ -414,8 +410,8 @@ instance
   , Beamable tbl'
   ) =>
   GTableLookupTablesExpectFail sel tbl (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl'))) k where
-  gTableLookupTablesExpectFail sel tbl r (K1 _entity) k =
-    gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) sel tbl r k
+  gTableLookupTablesExpectFail sel tbl r (K1 _entity) =
+    gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) sel tbl r
 
 type family TestTableEqual (tbl1 :: TableKind) (tbl2 :: TableKind) :: Bool where
   TestTableEqual tbl tbl = True
