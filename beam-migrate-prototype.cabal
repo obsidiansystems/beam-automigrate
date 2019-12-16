@@ -27,9 +27,6 @@ library
                        Database.Beam.Migrate.Validity
                        Database.Beam.Migrate.Schema.Gen
                        Database.Beam.Migrate.BenchUtil
-  other-modules:
-                       Database.Beam.Migrate.Example
-                       Database.Beam.Migrate.Example.ForeignKeys
 
   hs-source-dirs:      src
 
@@ -66,8 +63,6 @@ library
   ghc-options:         -Wall
   if flag(werror)
     ghc-options:       -Werror
-  if flag(ghcipretty)
-    build-depends:     pretty-simple
 
 test-suite beam-migrate-prototype-tests
   type: exitcode-stdio-1.0
@@ -85,6 +80,25 @@ test-suite beam-migrate-prototype-tests
   default-language:     Haskell2010
   default-extensions:   OverloadedStrings
 
+executable beam-migrate-prototype-examples
+  hs-source-dirs:    examples
+  main-is:           Main.hs
+  other-modules:     Example
+                     ForeignKeys
+  build-depends:       aeson
+                     , base
+                     , beam-core
+                     , beam-migrate-prototype -any
+                     , beam-postgres
+                     , postgresql-simple
+                     , text
+                     , time
+  default-language:     Haskell2010
+  default-extensions:   OverloadedStrings
+  ghc-options:       -Wall -O2 -rtsopts
+  if flag(ghcipretty)
+    build-depends:     pretty-simple
+
 executable beam-migrate-prototype-large-migration-test
   hs-source-dirs: large-migration-test
   main-is: Main.hs
@@ -92,11 +106,8 @@ executable beam-migrate-prototype-large-migration-test
   build-depends:       base
                      , beam-migrate-prototype
                      , beam-postgres        >= 0.3     && < 0.6
-                     , bytestring
                      , containers
-                     , QuickCheck             < 2.15.0.0
                      , postgresql-simple   < 0.7.0.0
-                     , splitmix
                      , time
   default-language:     Haskell2010
   default-extensions:   OverloadedStrings

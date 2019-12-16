@@ -4,3 +4,4 @@ dist-newstyle
 .vim
 hie.yaml
 *.prof
+.stack-work

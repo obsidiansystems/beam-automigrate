@@ -1,7 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -280,13 +278,13 @@ toSqlSyntax = \case
             in ty <> sqlOptPrec prec
         SqlStdType (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
         SqlStdType (AST.DataTypeDecimal prec) -> "DOUBLE" <> sqlOptNumericPrec prec
-        SqlStdType (AST.DataTypeInteger) -> "INT"
-        SqlStdType (AST.DataTypeSmallInt) -> "SMALLINT"
-        SqlStdType (AST.DataTypeBigInt) -> "BIGINT"
+        SqlStdType AST.DataTypeInteger -> "INT"
+        SqlStdType AST.DataTypeSmallInt -> "SMALLINT"
+        SqlStdType AST.DataTypeBigInt -> "BIGINT"
         SqlStdType (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
-        SqlStdType (AST.DataTypeReal) -> "REAL"
-        SqlStdType (AST.DataTypeDoublePrecision) -> "DOUBLE PRECISION"
-        SqlStdType (AST.DataTypeDate) -> "DATE"
+        SqlStdType AST.DataTypeReal -> "REAL"
+        SqlStdType AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
+        SqlStdType AST.DataTypeDate -> "DATE"
         SqlStdType (AST.DataTypeTime prec withTz) ->
           let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
           in ty <> sqlOptPrec prec

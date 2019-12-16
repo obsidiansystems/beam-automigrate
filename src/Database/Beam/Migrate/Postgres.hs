@@ -44,7 +44,7 @@ import           Database.Beam.Migrate.Types
 -- Necessary types to make working with the underlying raw SQL a bit more pleasant
 --
 
-data SqlRawOtherConstraintType = 
+data SqlRawOtherConstraintType =
     SQL_raw_pk
   | SQL_raw_unique
   deriving (Show, Eq)
@@ -57,9 +57,9 @@ data SqlOtherConstraint = SqlOtherConstraint
     } deriving (Show, Eq)
 
 instance Pg.FromRow SqlOtherConstraint where
-  fromRow = SqlOtherConstraint <$> (fmap TableName field)
+  fromRow = SqlOtherConstraint <$> fmap TableName field
                                <*> field
-                               <*> (fmap (V.map ColumnName) field) 
+                               <*> fmap (V.map ColumnName) field
                                <*> field
 
 data SqlForeignConstraint = SqlForeignConstraint
@@ -73,10 +73,10 @@ data SqlForeignConstraint = SqlForeignConstraint
     } deriving (Show, Eq)
 
 instance Pg.FromRow SqlForeignConstraint where
-  fromRow = SqlForeignConstraint <$> (fmap TableName field)
-                                 <*> (fmap TableName field) 
-                                 <*> (fmap (V.map ColumnName) field) 
-                                 <*> (fmap (V.map ColumnName) field) 
+  fromRow = SqlForeignConstraint <$> fmap TableName field
+                                 <*> fmap TableName field
+                                 <*> fmap (V.map ColumnName) field
+                                 <*> fmap (V.map ColumnName) field
                                  <*> field
 
 instance FromField TableName where
@@ -130,7 +130,7 @@ enumerationsQ :: Pg.Query
 enumerationsQ = fromString $ unlines
   [ "SELECT t.typname, t.oid, array_agg(e.enumlabel ORDER BY e.enumsortorder)"
   , "FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid"
-  , "GROUP BY t.typname, t.oid" 
+  , "GROUP BY t.typname, t.oid"
   ]
 
 -- | Return all foreign key constraints for /all/ 'Table's.
@@ -205,17 +205,17 @@ getSchema conn = do
   pure $ Schema tables (M.fromList $ M.elems enumerationData)
 
   where
-    getEnumeration :: Map Pg.Oid (EnumerationName, Enumeration) 
-                   -> (Text, Pg.Oid, V.Vector Text) 
+    getEnumeration :: Map Pg.Oid (EnumerationName, Enumeration)
+                   -> (Text, Pg.Oid, V.Vector Text)
                    -> IO (Map Pg.Oid (EnumerationName, Enumeration))
     getEnumeration allEnums (enumName, oid, V.toList -> vals) =
-      pure $ M.insert oid (EnumerationName enumName, (Enumeration vals)) allEnums
+      pure $ M.insert oid (EnumerationName enumName, Enumeration vals) allEnums
 
     getTable :: AllDefaults
-             -> Map Pg.Oid (EnumerationName, Enumeration) 
-             -> AllTableConstraints 
-             -> Tables 
-             -> (Pg.Oid, Text) 
+             -> Map Pg.Oid (EnumerationName, Enumeration)
+             -> AllTableConstraints
+             -> Tables
+             -> (Pg.Oid, Text)
              -> IO Tables
     getTable allDefaults enumData allTableConstraints allTables (oid, TableName -> tName) = do
       pgColumns <- Pg.query conn tableColumnsQ (Pg.Only oid)
@@ -225,10 +225,10 @@ getSchema conn = do
       pure $ M.insert tName newTable allTables
 
     getColumns :: TableName
-               -> Map Pg.Oid (EnumerationName, Enumeration) 
+               -> Map Pg.Oid (EnumerationName, Enumeration)
                -> AllDefaults
-               -> Columns 
-               -> (ByteString, Pg.Oid, Int, Bool, ByteString) 
+               -> Columns
+               -> (ByteString, Pg.Oid, Int, Bool, ByteString)
                -> IO Columns
     getColumns tName enumData defaultData c (attname, atttypid, atttypmod, attnotnull, format_type) = do
       let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
@@ -255,10 +255,10 @@ getSchema conn = do
 -- Postgres type mapping
 --
 
-pgEnumTypeToColumnType :: Map Pg.Oid (EnumerationName, Enumeration) 
-                       -> Pg.Oid 
+pgEnumTypeToColumnType :: Map Pg.Oid (EnumerationName, Enumeration)
+                       -> Pg.Oid
                        -> Maybe ColumnType
-pgEnumTypeToColumnType enumData oid = 
+pgEnumTypeToColumnType enumData oid =
     (\(n, _) -> PgSpecificType (PgEnumeration n)) <$> M.lookup oid enumData
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
@@ -319,7 +319,7 @@ pgTypeToColumnType oid width
   = Just (PgSpecificType PgRangeTsTz)
   | Pg.typoid Pg.daterange == oid
   = Just (PgSpecificType PgRangeDate)
-  | otherwise 
+  | otherwise
   = Nothing
 
 --
@@ -346,8 +346,8 @@ getAllConstraints conn = do
     allForeignKeys <- Pg.fold_ conn foreignKeysQ mempty (\acc -> pure . addFkConstraint allActions acc)
     Pg.fold_ conn otherConstraintsQ allForeignKeys (\acc -> pure . addOtherConstraint acc)
   where
-      addFkConstraint :: ReferenceActions 
-                      -> AllTableConstraints 
+      addFkConstraint :: ReferenceActions
+                      -> AllTableConstraints
                       -> SqlForeignConstraint
                       -> AllTableConstraints
       addFkConstraint actions st SqlForeignConstraint{..} = flip execState st $ do
@@ -355,13 +355,13 @@ getAllConstraints conn = do
         let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
         -- Here we need to add two constraints: one for 'ForeignKey' and one for
         -- 'IsForeignKeyOf'.
-        let (onDelete, onUpdate) = 
+        let (onDelete, onUpdate) =
                 case M.lookup sqlFk_name (getActions actions) of
                   Nothing -> (NoAction, NoAction)
                   Just a  -> (actionOnDelete a, actionOnUpdate a)
         addTableConstraint currentTable (ForeignKey sqlFk_name sqlFk_primary_table columnSet onDelete onUpdate)
 
-      addOtherConstraint :: AllTableConstraints 
+      addOtherConstraint :: AllTableConstraints
                          -> SqlOtherConstraint
                          -> AllTableConstraints
       addOtherConstraint st SqlOtherConstraint{..} = flip execState st $ do
@@ -379,9 +379,9 @@ mkActions :: [RefEntry] -> ReferenceActions
 mkActions = ReferenceActions . M.fromList . map ((\(a,b,c) -> (a, Actions b c)) . unRefEntry)
 
 instance Pg.FromRow RefEntry where
-  fromRow = fmap RefEntry ((,,) <$> field 
-                                <*> (fmap mkAction field) 
-                                <*> (fmap mkAction field))
+  fromRow = fmap RefEntry ((,,) <$> field
+                                <*> fmap mkAction field
+                                <*> fmap mkAction field)
 
 data Actions = Actions {
     actionOnDelete :: ReferenceAction
@@ -404,8 +404,8 @@ mkAction c = case c of
 --
 
 addTableConstraint :: TableName
-                   -> TableConstraint 
+                   -> TableConstraint
                    -> State AllTableConstraints ()
 addTableConstraint tName cns =
-  modify' (\tcon -> M.alter (\case Nothing -> Just $ S.singleton cns
-                                   Just ss -> Just $ S.insert cns ss) tName tcon)
+  modify' (M.alter (\case Nothing -> Just $ S.singleton cns
+                          Just ss -> Just $ S.insert cns ss) tName)

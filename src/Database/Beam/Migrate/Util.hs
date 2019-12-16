@@ -30,7 +30,7 @@ import           Database.Beam.Migrate.Types    ( ColumnName(..) )
 --
 
 class HasColumnNames entity tbl where
-  colNames :: (tbl (Beam.TableField tbl)) -> (tbl (Beam.TableField tbl) -> entity) -> [ColumnName]
+  colNames :: tbl (Beam.TableField tbl) -> (tbl (Beam.TableField tbl) -> entity) -> [ColumnName]
 
 instance Beam.Beamable (PrimaryKey tbl)
     => HasColumnNames (PrimaryKey tbl (Beam.TableField c)) tbl where
@@ -41,7 +41,7 @@ instance Beam.Beamable (PrimaryKey tbl)
     colNames field fn = map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) (fn field))
 
 instance HasColumnNames (Beam.TableField tbl ty) tbl where
-    colNames field fn = [ColumnName $ (fn field ^. Beam.fieldName)]
+    colNames field fn = [ColumnName (fn field ^. Beam.fieldName)]
 
 --
 -- General utility functions

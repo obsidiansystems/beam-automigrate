@@ -8,7 +8,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE TypeFamilies       #-}
-module Database.Beam.Migrate.Example where
+module Example where
 
 import           Data.Text                      ( Text )
 import           Data.Proxy
@@ -53,10 +53,8 @@ import           Database.Beam.Migrate          ( Schema
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
-import           Database.Beam.Postgres (runBeamPostgresDebug, PgJSON(..))
 import qualified Database.Beam.Postgres as Pg
 
--- Needed only for the examples, (re)move eventually.
 import           Data.Int                       ( Int32
                                                 , Int64
                                                 )
@@ -207,16 +205,14 @@ hsSchema =
     -- fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 getDbSchema :: String -> IO Schema
-getDbSchema dbName = do
+getDbSchema dbName =
   bracket (connect defaultConnectInfo { connectUser = "adinapoli", connectDatabase = dbName }) close getSchema
 
 getFlowerDbSchema :: IO Schema
 getFlowerDbSchema = getDbSchema "beam-test-db"
 
 getSchemaDiff :: IO Diff
-getSchemaDiff = do
-  dbSchema <- getFlowerDbSchema
-  pure $ diff hsSchema dbSchema
+getSchemaDiff = diff hsSchema <$> getFlowerDbSchema
 
 getGroundhogSchema :: IO Schema
 getGroundhogSchema = getDbSchema "groundhog-test-db"

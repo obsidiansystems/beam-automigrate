@@ -5,7 +5,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Database.Beam.Migrate.Compat where
@@ -14,9 +13,8 @@ import           Data.Typeable
 import           Data.Text                                ( Text )
 import           Data.Scientific                          ( Scientific )
 import           Data.Time.Calendar                       ( Day )
-import           Data.Time                                ( TimeOfDay )
+import Data.Time ( TimeOfDay, UTCTime )
 import           Data.Int
-import           Data.Time                                ( UTCTime )
 import           Data.Word
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
@@ -138,7 +136,7 @@ instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
 
 instance HasColumnType Double where
-  defaultColumnType _ = SqlStdType $ doubleType
+  defaultColumnType _ = SqlStdType doubleType
 
 instance HasColumnType Scientific where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Just 10))
