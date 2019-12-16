@@ -264,45 +264,51 @@ toSqlSyntax = \case
       createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
+      renderStdType :: AST.DataType -> Text
+      renderStdType = \case
+        (AST.DataTypeChar varying prec charSet) ->
+            let ty = if varying then "VARCHAR" else "CHAR"
+            in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
+        (AST.DataTypeNationalChar varying prec) ->
+            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
+            in ty <> sqlOptPrec prec
+        (AST.DataTypeBit varying prec) ->
+            let ty = if varying then "BIT VARYING" else "BIT"
+            in ty <> sqlOptPrec prec
+        (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+        (AST.DataTypeDecimal prec) -> "DOUBLE" <> sqlOptNumericPrec prec
+        AST.DataTypeInteger -> "INT"
+        AST.DataTypeSmallInt -> "SMALLINT"
+        AST.DataTypeBigInt -> "BIGINT"
+        (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
+        AST.DataTypeReal -> "REAL"
+        AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
+        AST.DataTypeDate -> "DATE"
+        (AST.DataTypeTime prec withTz) ->
+          let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+          in ty <> sqlOptPrec prec
+        (AST.DataTypeTimeStamp prec withTz) ->
+          let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+          in ty <> sqlOptPrec prec
+        (AST.DataTypeInterval _i) ->
+          error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
+               <> " how to render it."
+        (AST.DataTypeIntervalFromTo _from _to) ->
+          error $ "Impossible: DataTypeIntervalFromTo doesn't map to any SQLXX beam typeclass, so we don't know"
+               <> " how to render it."
+        AST.DataTypeBoolean -> "BOOL"
+        AST.DataTypeBinaryLargeObject -> "BYTEA"
+        AST.DataTypeCharacterLargeObject -> "TEXT"
+        (AST.DataTypeArray dt sz) ->
+           renderStdType dt <> "[" <> T.pack (show sz) <> "]"
+        (AST.DataTypeRow _rows) ->
+            error "DataTypeRow not supported both for beam-postgres and this library."
+        (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+
       -- This function also overlaps with beam-migrate functionalities.
       renderDataType :: ColumnType -> Text
       renderDataType = \case
-        SqlStdType (AST.DataTypeChar varying prec charSet) ->
-            let ty = if varying then "VARCHAR" else "CHAR"
-            in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
-        SqlStdType (AST.DataTypeNationalChar varying prec) ->
-            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
-            in ty <> sqlOptPrec prec
-        SqlStdType (AST.DataTypeBit varying prec) ->
-            let ty = if varying then "BIT VARYING" else "BIT"
-            in ty <> sqlOptPrec prec
-        SqlStdType (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        SqlStdType (AST.DataTypeDecimal prec) -> "DOUBLE" <> sqlOptNumericPrec prec
-        SqlStdType AST.DataTypeInteger -> "INT"
-        SqlStdType AST.DataTypeSmallInt -> "SMALLINT"
-        SqlStdType AST.DataTypeBigInt -> "BIGINT"
-        SqlStdType (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
-        SqlStdType AST.DataTypeReal -> "REAL"
-        SqlStdType AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
-        SqlStdType AST.DataTypeDate -> "DATE"
-        SqlStdType (AST.DataTypeTime prec withTz) ->
-          let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        SqlStdType (AST.DataTypeTimeStamp prec withTz) ->
-          let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        SqlStdType (AST.DataTypeInterval _i) -> error "DataTypeInterval not supported yet."
-        SqlStdType (AST.DataTypeIntervalFromTo _from _to) -> error "DataTypeIntervalFromTo not supported yet."
-        SqlStdType AST.DataTypeBoolean -> "BOOL"
-        SqlStdType AST.DataTypeBinaryLargeObject ->
-            error "DataTypeBinaryLargeObject not supported yet."
-        SqlStdType AST.DataTypeCharacterLargeObject ->
-            error "DataTypeCharacterLargeObject not supported yet."
-        SqlStdType (AST.DataTypeArray _dt _int) ->
-            error "DataTypeArray not supported yet."
-        SqlStdType (AST.DataTypeRow _rows) ->
-            error "DataTypeRow not supported yet."
-        SqlStdType (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+        SqlStdType stdType -> renderStdType stdType
         -- text-based enum types
         DbEnumeration (EnumerationName _) _ ->
             renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
