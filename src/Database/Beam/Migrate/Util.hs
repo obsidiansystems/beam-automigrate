@@ -2,8 +2,12 @@
 {-# LANGUAGE FlexibleContexts     #-}
 module Database.Beam.Migrate.Util where
 
+import           Control.Applicative.Lift
+import           Control.Monad.Except
+
 import           Lens.Micro                     ( (^.) )
 
+import           Data.Functor.Constant
 import           Database.Beam.Schema           ( Beamable
                                                 , PrimaryKey
                                                 , TableEntity
@@ -63,3 +67,33 @@ allColumnNames :: Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) ->
 allColumnNames entity =
   let settings = dbTableSettings $ entity ^. dbEntityDescriptor
   in  map ColumnName (allBeamValues (\(Columnar' x) -> x ^. fieldName) settings)
+
+--
+-- Reporting multiple errors at once
+--
+-- See https://teh.id.au/posts/2017/03/13/accumulating-errors/index.html
+
+
+hoistErrors :: Either e a -> Errors e a
+hoistErrors e =
+  case e of
+    Left es ->
+      Other (Constant es)
+    Right a ->
+      Pure a
+
+-- | Like 'sequence', but accumulating all errors in case of at least one 'Left'.
+sequenceEither :: (Monoid e, Traversable f) => f (Either e a) -> Either e (f a)
+sequenceEither =
+  runErrors . traverse hoistErrors
+
+
+-- | Evaluate each action in sequence, accumulating all errors in case of a failure.
+-- Note that this means each action will be run independently, regardless of failure.
+sequenceExceptT ::
+    (Monad m, Monoid w, Traversable t)
+  => t (ExceptT w m a)
+  -> ExceptT w m (t a)
+sequenceExceptT es = do
+  es' <- lift (traverse runExceptT es)
+  ExceptT (return (sequenceEither es'))

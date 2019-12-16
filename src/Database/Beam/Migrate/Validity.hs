@@ -1,7 +1,17 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE TupleSections #-}
-module Database.Beam.Migrate.Validity where
+module Database.Beam.Migrate.Validity
+  ( -- * Types
+    Reason(..)
+    -- * Applying edits to a 'Schema'
+  , applyEdits
+    -- * Validing a 'Schema'
+  , validateSchema
+  , validateSchemaTables
+  , validateSchemaEnums
+  , validateTableConstraint
+  , validateColumn
+  ) where
 
 import           Control.Monad
 import           Control.Monad.Except
@@ -17,40 +27,163 @@ import           Data.Text                                ( Text )
 import           Database.Beam.Migrate.Diff
 import           Database.Beam.Migrate.Types
 
--- Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
+-- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).
-data Qualified a = Qualified TableName a deriving Show
+data Qualified a = Qualified TableName a deriving (Show, Eq)
 
 data Reason =
     TableDoesntExist   TableName
+  -- ^ The 'Table' we were trying to edit didn't exist.
   | TableAlreadyExist  TableName Table
+  -- ^ The 'Table' we were trying to create already existed.
   | TableConstraintAlreadyExist TableName TableConstraint
+  -- ^ The 'TableConstraint' we were trying to add already existed.
   | TableConstraintDoesntExist  TableName TableConstraint
+  -- ^ The 'TableConstraint' we were trying to delete didn't exist.
   | ColumnDoesntExist  ColumnName
+  -- ^ The 'Column' we were trying to edit didn't exist.
   | ColumnAlreadyExist ColumnName Column
+  -- ^ The 'Column' we were trying to add already existed.
   | ColumnTypeMismatch ColumnName Column ColumnType
+  -- ^ The old type for the input 'Column' didn't match the type contained in the 'Edit' step.
   | ColumnConstraintAlreadyExist (Qualified ColumnName) ColumnConstraint
+  -- ^ The 'ColumnConstraint' we were trying to add already existed.
   | ColumnConstraintDoesntExist  (Qualified ColumnName) ColumnConstraint
+  -- ^ The 'ColumnConstraint' we were trying to delete didn't exist.
   | EnumDoesntExist    EnumerationName
+  -- ^ The 'Enum' we were trying to edit didn't exist.
   | EnumAlreadyExist   EnumerationName Enumeration
+  -- ^ The 'Enum' we were trying to add already existed.
   | EnumInsertionPointDoesntExist EnumerationName Enumeration Text
+  -- ^ The value in this 'Enum' to be used to insert a new one before/after it didn't exist.
   | TableReferencesDeletedColumnInConstraint TableName (Qualified ColumnName) TableConstraint
-  | ColumnReferencesDeletedEnum (Qualified ColumnName)
+  -- ^ This 'Table' references a deleted 'Column' in one of its 'TableConstraint's.
+  | ColumnReferencesNonExistingEnum (Qualified ColumnName) EnumerationName
+  -- ^ This 'Column' references an 'Enum' which doesn't exist.
   | ColumnInPrimaryKeyCantBeNull (Qualified ColumnName)
+  -- ^ This 'Column' allows NULL values but it has been selected as a PRIMARY key.
+  | ColumnsInFkAreNotUniqueOrPrimaryKeyFields TableName [Qualified ColumnName]
+  -- ^ This 'Table' has a 'ForeignKey' constaint in it which references external columns which are either
+  -- not unique or not fields of a PRIMARY KEY.
   | NotAllColumnsExist TableName (S.Set ColumnName) (S.Set ColumnName)
+  -- ^ This 'TableConstraint' references one or more 'Column's which don't exist.
   | DeletedConstraintAffectsExternalTables (TableName, TableConstraint) (Qualified ColumnName, TableConstraint)
-  deriving Show
+  -- ^ Deleting this 'TableConstraint' would affect the selected external 'Column's and some external
+  -- 'TableConstraint's.
+  | EnumContainsDuplicateValues EnumerationName [Text]
+  deriving (Show, Eq)
 
-data ApplyFailed = InvalidEdit Edit Reason deriving Show
+data ApplyFailed =
+  InvalidEdit Edit Reason
+  deriving (Show, Eq)
 
 data ValidationFailed =
     InvalidTableConstraint TableConstraint               Reason
   | InvalidRemoveTable     TableName                     Reason
   | InvalidRemoveColumn    (Qualified ColumnName)        Reason
   | InvalidRemoveEnum      EnumerationName               Reason
+  | InvalidEnum            EnumerationName               Reason
+  | InvalidColumn          (Qualified ColumnName)        Reason
   | InvalidRemoveColumnConstraint (Qualified ColumnName) Reason
   | InvalidRemoveTableConstraint  TableName              Reason
-  deriving Show
+  deriving (Show, Eq)
+
+--
+-- Validating a Schema and a set of edit actions.
+--
+
+-- | Validate a 'Schema', returning an error in case the validation didn't succeed. We never contemplate
+-- the case where any of the entities names are empty (i.e. the empty string) as that clearly indicates a
+-- bug in the library, not a user error that needs to be reported.
+validateSchema :: Schema -> Either [ValidationFailed] ()
+validateSchema s = runExcept $ do
+  liftEither (validateSchemaTables s)
+  liftEither (validateSchemaEnums s)
+
+-- | A 'Table' is not valid if:
+-- 1. Any of its 'Column's are not valid;
+-- 2. Any of its 'TableConstraint's are not valid.
+validateSchemaTables :: Schema -> Either [ValidationFailed] ()
+validateSchemaTables s = forM_ (M.toList $ schemaTables s) validateTable
+  where
+    validateTable :: (TableName, Table) -> Either [ValidationFailed] ()
+    validateTable (tName, tbl) = do
+      forM_ (tableConstraints tbl)        (bimap (:[]) id . validateTableConstraint s tName tbl)
+      forM_ (M.toList $ tableColumns tbl) (validateColumn s tName)
+
+-- | Validate a 'TableConstraint', making sure referential integrity is not violated.
+-- A Table constraint is valid IFF:
+-- 1. For a 'PrimaryKey', all the referenced columns must exist in the 'Table';
+-- 2. For a 'Unique', all the referenced columns must exist in the 'Table';
+-- 3. For a 'ForeignKey', all the columns (both local and referenced) must exist;
+-- 4. For a 'ForeignKey', the referenced columns must all be UNIQUE or PRIMARY keys.
+validateTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
+validateTableConstraint s tName tbl c = case c of
+  PrimaryKey _ cols | cols `S.isSubsetOf` allTblColumns  -> Right ()
+  PrimaryKey _ cols ->
+    Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
+  ForeignKey _ referencedTable columnPairs _ _ -> checkFkIntegrity referencedTable columnPairs
+  Unique _ cols | cols `S.isSubsetOf` allTblColumns -> Right ()
+  Unique _ cols ->
+    Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
+  where
+    allTblColumns :: S.Set ColumnName
+    allTblColumns = M.keysSet . tableColumns $ tbl
+
+    checkFkIntegrity :: TableName -> S.Set (ColumnName, ColumnName) -> Either ValidationFailed ()
+    checkFkIntegrity referencedTable columnPairs = runExcept $ liftEither $
+      case M.lookup referencedTable (schemaTables s) of
+        Nothing     -> throwError $ InvalidTableConstraint c (TableDoesntExist referencedTable)
+        Just extTbl -> do
+          let allExtColumns = M.keysSet (tableColumns extTbl)
+          let (localCols, referencedCols) = (S.map fst columnPairs, S.map snd columnPairs)
+          if | not (localCols `S.isSubsetOf` allTblColumns) ->
+               throwError $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference localCols allTblColumns) allTblColumns)
+             | not (referencedCols `S.isSubsetOf` allExtColumns) ->
+               throwError $ InvalidTableConstraint c (NotAllColumnsExist referencedTable (S.difference referencedCols allTblColumns) allExtColumns)
+             | otherwise -> checkColumnsIntegrity referencedTable extTbl referencedCols
+
+    -- Check that all these columns are either 'UNIQUE' or 'PRIMARY KEY' in the input 'Table'.
+    checkColumnsIntegrity :: TableName -> Table -> S.Set ColumnName -> Either ValidationFailed ()
+    checkColumnsIntegrity extName extTbl referencedCols =
+        let checkConstraint extCon = case extCon of
+              ForeignKey{} -> Nothing
+              PrimaryKey _ cols | referencedCols `S.isSubsetOf` cols -> Just ()
+              PrimaryKey{} -> Nothing
+              Unique _ cols | referencedCols `S.isSubsetOf` cols -> Just ()
+              Unique{}     -> Nothing
+        in case asum (map checkConstraint (S.toList $ tableConstraints extTbl)) of
+          Nothing ->
+            let reason = ColumnsInFkAreNotUniqueOrPrimaryKeyFields tName (map (Qualified extName) (S.toList referencedCols))
+            in Left $ InvalidTableConstraint c reason
+          Just () -> Right ()
+
+-- | Validate 'Column'.
+-- NOTE(adn) For now in this context a 'Column' is always considered valid, /except/ if it references an
+-- 'Enum' type which doesn't exist.
+validateColumn :: Schema -> TableName -> (ColumnName, Column) -> Either [ValidationFailed] ()
+validateColumn s tName (colName, col) =
+  when (isPgEnum $ columnType col) $
+    forM_ (M.keys $ schemaEnumerations s) $ \eName ->
+    case getAlt $ lookupEnumRef eName (colName, col) of
+      Nothing ->
+        let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
+        in Left [InvalidColumn (Qualified tName colName) reason]
+      Just _ -> Right ()
+  where
+    isPgEnum :: ColumnType -> Bool
+    isPgEnum (PgSpecificType (PgEnumeration _)) = True
+    isPgEnum _ = False
+
+-- | A 'Schema' enum is considered always valid in this context /except/ if it contains duplicate values.
+validateSchemaEnums :: Schema -> Either [ValidationFailed] ()
+validateSchemaEnums s = forM_ (M.toList $ schemaEnumerations s) validateEnum
+  where
+    validateEnum :: (EnumerationName, Enumeration) -> Either [ValidationFailed] ()
+    validateEnum (eName, (Enumeration vals)) =
+        if length vals /= length (S.fromList vals)
+           then Left [InvalidEnum eName (EnumContainsDuplicateValues eName vals)]
+           else Right ()
 
 -- | Validate removal of a 'Table'.
 -- Removing a 'Table' is valid if none of the column fields are referenced in any of the other tables.
@@ -68,7 +201,8 @@ validateRemoveTable s tName tbl = do
           let reason = TableReferencesDeletedColumnInConstraint tName qualifiedColName constr
           in Left $ InvalidRemoveTable tName reason
 
--- | Lookup the input 'ColumnName' in any of the constraints of this 'Table'.
+-- | The workhorse of the validation engine. It lookups the input 'ColumnName' in any of the constraints
+-- of the input 'Table'.
 lookupColumnRef :: TableName
                 -> Table
                 -> Qualified ColumnName
@@ -90,6 +224,14 @@ lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName
         if S.member colName cols then Just (Qualified thisTable colName, con) else Nothing
       Unique _ _ -> Nothing
 
+-- | Check that the input 'Column's type matches the input 'EnumerationName'.
+lookupEnumRef :: EnumerationName -> (ColumnName, Column) -> Alt Maybe ColumnName
+lookupEnumRef eName (colName, col) = Alt $
+  case columnType col of
+    PgSpecificType (PgEnumeration eName') ->
+        if eName' == eName then Just colName else Nothing
+    _ -> Nothing
+
 -- | Removing an 'Enum' is valid if none of the 'Schema's tables have columns of this type.
 validateRemoveEnum :: Schema -> EnumerationName -> Either ValidationFailed ()
 validateRemoveEnum s eName =
@@ -98,49 +240,15 @@ validateRemoveEnum s eName =
   where
     checkIntegrity :: (TableName, Table) -> Either ValidationFailed ()
     checkIntegrity (tName, tbl) =
-      case getAlt $ asum (map lookupEnumRef (M.toList $ tableColumns tbl)) of
+      case getAlt $ asum (map (lookupEnumRef eName) (M.toList $ tableColumns tbl)) of
         Nothing -> pure ()
         Just colName ->
-          let reason = ColumnReferencesDeletedEnum (Qualified tName colName)
+          let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
           in Left $ InvalidRemoveEnum eName reason
 
-    lookupEnumRef :: (ColumnName, Column) -> Alt Maybe ColumnName
-    lookupEnumRef (colName, col) = Alt $
-      case columnType col of
-        PgSpecificType (PgEnumeration eName') ->
-            if eName' == eName then Just colName else Nothing
-        _ -> Nothing
-
--- | Adding a Table constraint is valid IFF:
--- 1. For a 'PrimaryKey', all the referenced columns must exist in the 'Table';
--- 2. For a 'Unique', all the referenced columns must exist in the 'Table';
--- 3. For a 'ForeignKey', all the columns (both local and referenced) must exist;
--- 4. For a 'ForeignKey', the referenced columns must all be UNIQUE or PRIMARY keys.
+-- | Validate that adding a new 'TableConstraint' doesn't violate referential integrity.
 validateAddTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
-validateAddTableConstraint s tName tbl c = case c of
-  PrimaryKey _ cols | cols `S.isSubsetOf` allTblColumns  -> Right ()
-  PrimaryKey _ cols ->
-    Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
-  ForeignKey _ referencedTable columnPairs _ _ -> checkIntegrity referencedTable columnPairs
-  Unique _ cols | cols `S.isSubsetOf` allTblColumns -> Right ()
-  Unique _ cols ->
-    Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
-  where
-    allTblColumns :: S.Set ColumnName
-    allTblColumns = M.keysSet . tableColumns $ tbl
-
-    checkIntegrity :: TableName -> S.Set (ColumnName, ColumnName) -> Either ValidationFailed ()
-    checkIntegrity referencedTable columnPairs = runExcept $ liftEither $
-      case M.lookup referencedTable (schemaTables s) of
-        Nothing     -> throwError $ InvalidTableConstraint c (TableDoesntExist referencedTable)
-        Just extTbl -> do
-          let allExtColums = M.keysSet (tableColumns extTbl)
-          let (localCols, referencedCols) = (S.map fst columnPairs, S.map snd columnPairs)
-          if | not (localCols `S.isSubsetOf` allTblColumns) ->
-               throwError $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference localCols allTblColumns) allTblColumns)
-             | not (referencedCols `S.isSubsetOf` allExtColums) ->
-               throwError $ InvalidTableConstraint c (NotAllColumnsExist referencedTable (S.difference referencedCols allTblColumns) allExtColums)
-             | otherwise -> Right () -- TODO(and) Check UNIQUE or PK constraint.
+validateAddTableConstraint = validateTableConstraint
 
 -- | Removing a Table constraint is valid IFF:
 -- 1. For a 'PrimaryKey' we need to check that none of the columns appears in any 'ForeignKey' constraints
@@ -205,10 +313,13 @@ toApplyFailed e (InvalidTableConstraint _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveTable     _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveColumn    _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveEnum      _ reason)        = InvalidEdit e reason
+toApplyFailed e (InvalidEnum _ reason)                   = InvalidEdit e reason
+toApplyFailed e (InvalidColumn _ reason)                 = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveColumnConstraint _ reason) = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveTableConstraint _ reason)  = InvalidEdit e reason
 
--- | Tries to apply a list of edits to a 'Schema' to generate a new one.
+-- | Tries to apply a list of edits to a 'Schema' to generate a new one. Fails with an 'ApplyFailed' error
+-- if the input list of 'Edit's would generate an invalid 'Schema'.
 applyEdits :: [WithPriority Edit] -> Schema -> Either ApplyFailed Schema
 applyEdits (sortEdits -> edits) s = foldM applyEdit s (map (fst . unPriority) edits)
 
