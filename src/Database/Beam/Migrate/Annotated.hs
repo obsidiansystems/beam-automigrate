@@ -15,18 +15,28 @@
 module Database.Beam.Migrate.Annotated where
 
 import           Data.Kind
-
 import           Data.Proxy
-import qualified Lens.Micro as Lens
-import           Lens.Micro                               ( SimpleGetter, (^.) )
+import qualified Lens.Micro                              as Lens
+import           Lens.Micro                               ( SimpleGetter
+                                                          , (^.)
+                                                          )
 import           GHC.Generics                            as Generic
-import qualified Data.Text as T
+import qualified Data.Text                               as T
 import           Data.Text                                ( Text )
-import           Data.Set (Set)
-import qualified Data.Set as S
-import           Data.Monoid (Endo(..))
+import           Data.Time                                ( UTCTime )
+import           Data.Set                                 ( Set )
+import qualified Data.Set                                as S
+import           Data.Monoid                              ( Endo(..) )
 
 import qualified Database.Beam                           as Beam
+import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
+                                                          , displaySyntax
+                                                          , BeamSqlBackend
+                                                          , timestampType
+                                                          )
+import qualified Database.Beam.Postgres.Syntax           as Pg
+import           Database.Beam.Postgres                   ( Postgres )
+import           Database.Beam.Query                      ( QExpr )
 import           Database.Beam.Schema.Tables              ( PrimaryKey )
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Migrate.Compat
@@ -248,16 +258,32 @@ annotateTableFields modFields =
                             }) e))
 
 --
--- Specifying default values
+-- Specifying default values (Postgres-specific)
 --
 
-defaultsTo :: Show ty => ty -> FieldModification (TableFieldSchema tbl) (Maybe ty)
+utctime :: BeamSqlBackend be => Beam.DataType be UTCTime
+utctime = Beam.DataType (timestampType Nothing False)
+
+defaultsTo :: HasSqlValueSyntax Pg.PgValueSyntax ty
+           => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
+           -> FieldModification (TableFieldSchema tbl) ty
 defaultsTo tyVal = FieldModification $ \old ->
     case tableFieldSchema old of
       FieldSchema ty c -> old {
-          -- Postgres converts the default values all lowercase, so we need to abide to this format.
-          tableFieldSchema = FieldSchema ty $ S.singleton (Default $ T.toLower $ T.pack $ show tyVal) <> c
+          tableFieldSchema =
+            FieldSchema ty $ S.singleton (
+              Default . T.pack . displaySyntax $ Pg.fromPgExpression $ defaultTo_ tyVal) <> c
         }
+  where
+    -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
+    -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,
+    -- which only purpose is to define an instance for 'FieldReturnType' (cfr.
+    -- /Database.Beam.Migrate.SQL.Tables/) and the underlying 'BeamSqlBackendExpressionSyntax' is used to
+    -- call 'columnSchemaSyntax', which is then used in /their own/ definition of `FieldSchema`, which we
+    -- don't follow.
+    -- NOTE(adn) It's unclear what \"t\" stands for here. Not documented in `beam-migrate` itself.
+    defaultTo_ :: (forall s. QExpr Postgres s a) -> Pg.PgExpressionSyntax
+    defaultTo_ (Beam.QExpr e) = e "t"
 
 --
 -- Specifying uniqness constrainst

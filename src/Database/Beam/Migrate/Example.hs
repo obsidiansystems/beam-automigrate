@@ -32,6 +32,7 @@ import           Database.Beam.Schema           ( Beamable
                                                 )
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
+import           Database.Beam.Query            (val_, cast_, currentTimestamp_)
 
 import           Database.Beam.Migrate.Annotated
 
@@ -187,12 +188,13 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
 
 annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
-  { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo True }
-               <> annotateTableFields tableModification { flowerPrice = defaultsTo 10.0 }
+  { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo (val_ $ Just True) }
+               <> annotateTableFields tableModification { flowerPrice = defaultsTo (val_ $ Just 10.0) }
                <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
-  , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo False }
+  , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo (val_ $ Just False) }
                <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
-  , dbOrders = foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
+  , dbOrders = annotateTableFields tableModification { orderTime = defaultsTo (cast_ currentTimestamp_ utctime) }
+             <> foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
              <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
   --                          lineItemTwoFk `References` LineItemID
