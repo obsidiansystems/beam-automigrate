@@ -15,8 +15,8 @@ Table of Contents
 
 # Getting started (User guide/reference)
 
-For a complete working example refer to the `src/Database/Beam/Migrate/Example.hs` module. There is also
-a smaller-scale example available at `src/Database/Beam/Migrate/Example/ForeignKeys.hs`, which has been used
+For a complete working example refer to the `examples` folder. There is also
+a smaller-scale example available at `example/ForeignKeys.hs`, which has been used
 to write this guide.
 
 ## Deriving an AnnotatedDatabaseSettings

@@ -34,13 +34,13 @@ genColumnName = genName ColumnName
 -- the constraint, and this is currently not something supported by the diff algorithm.
 genUniqueConstraint :: Columns -> Gen (Set TableConstraint)
 genUniqueConstraint allCols = do
-  if length allCols > 3 
+  if length allCols > 3
      then do
        --let cols = M.keys allCols
        --colNum <- choose (1, 2)
        --columns <- shuffle cols
        pure mempty -- $ S.singleton (Unique "test_unique" (S.fromList $ take colNum columns))
-     else pure mempty 
+     else pure mempty
 
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
@@ -149,5 +149,5 @@ similarColumn col = do
       ChangeConstraints -> do
         constNum <- choose (0, 2)
         constrs <- vectorOf constNum (elements [NotNull, Default "FALSE"])
-        pure $ col { columnType = SqlStdType AST.DataTypeBoolean, columnConstraints = (S.fromList constrs) }
+        pure $ col { columnType = SqlStdType AST.DataTypeBoolean, columnConstraints = S.fromList constrs }
       NoChange -> pure col

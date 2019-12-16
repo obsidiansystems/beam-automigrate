@@ -8,7 +8,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE TypeFamilies       #-}
-module Database.Beam.Migrate.Example where
+module Example where
 
 import           Data.Text                      ( Text )
 import           Data.Proxy
