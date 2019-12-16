@@ -39,13 +39,6 @@ import           Database.Beam.Schema.Tables    ( dbEntityDescriptor
 import           Database.Beam.Migrate.Annotated
 import           Database.Beam.Migrate.Compat
 
--- | To make kind signatures more readable.
-type DatabaseKind = (Type -> Type) -> Type
-
--- | To make kind signatures more readable.
-type TableKind    = (Type -> Type) -> Type
-
-
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
 --
@@ -185,6 +178,13 @@ instance ( GColumns (Rep (TableSchema tbl))
          , GTableEntry be db xs (TestTableEqual tbl tbl') (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
          )
   => GTableEntry be db (UserDefinedFk tbl' ': xs) 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
+  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+
+instance ( GColumns (Rep (TableSchema tbl))
+         , Generic (TableSchema tbl)
+         , Beam.Table tbl
+         )
+  => GTableEntry be db (UserDefinedFk tbl' ': xs) 'True (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
   gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
 
 -- At this point we explored the full list and the previous equality check yielded 'True, which means a

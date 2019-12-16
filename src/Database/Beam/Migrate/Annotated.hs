@@ -56,10 +56,34 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
 
 --
 -- Annotating a 'DatabaseSettings' with meta information.
+
+-- | To make kind signatures more readable.
+type DatabaseKind = (Type -> Type) -> Type
+
+-- | To make kind signatures more readable.
+type TableKind    = (Type -> Type) -> Type
+
 --
 
+-- A user-defined annotation. Currently the only possible annotation is the ability to specify for which
+-- tables the FK-discovery algorithm is \"turned\" off.
 data Annotation where
-    UserDefinedFk :: ((* -> *) -> *) -> Annotation
+    -- | Specifies that the given 'TableKind' (i.e. a table) has user-specified FK constraints. This is
+    -- useful in case of ambiguity, i.e. when the automatic FK-discovery algorithm is not capable to
+    -- infer the correct 'ForeignKey' constraints for a 'Table'. This can happen when the 'PrimaryKey' type
+    -- family is not injective, which means there are multiple tables of table 'FooT' in the DB. Consider a
+    -- situation where we have a table 'BarT' having a field of type 'barField :: PrimaryKey FooT f' but
+    -- (crucially) there are two tables with type 'f (TableEntity FooT)' in the final database. In this
+    -- circumstance the FK-discovery algorithm will bail out with a (static) error, and this is where this
+    -- annotation comes into play: it allows us to selectively \"disable\" the discovery for the given
+    -- table(s), and manually override the FKs.
+    --
+    -- /Caveat emptor/: Due to what we said earlier (namely that we cannot enforce that tables are not
+    -- repeated multiple times within a DB) there might be situations where also the specified 'TableKind'
+    -- is not unique. In this case the annotation would affect all the tables of the same type, but that is
+    -- usually unavoidable, as the ambiguity was already present the minute we introduced in the DB two tables
+    -- of the same type, and so it makes sense for the user to fully resolve the ambiguity manually.
+    UserDefinedFk :: TableKind -> Annotation
 
 -- | NOTE(adn) Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it works by
 -- supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as witnesses,
