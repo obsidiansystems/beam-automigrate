@@ -41,13 +41,13 @@ import           Data.Aeson                              as JSON
 -- Specifying SQL data types and constraints
 --
 
-class HasDefaultSqlDataType ty where
+class HasColumnType ty where
 
   -- | Provide a data type for the given type
-  defaultSqlDataType :: Proxy ty       -- ^ Concrete representation of the type
-                     -> Bool           -- ^ 'True' if this field is in an embedded
-                                       --   key or table, 'False' otherwise
-                     -> ColumnType
+  defaultColumnType :: Proxy ty -> ColumnType
+
+  defaultEnums      :: Proxy ty -> Enumerations
+  defaultEnums _ = mempty
 
 
 class Ord (SchemaConstraint ty) => HasSchemaConstraints ty where
@@ -62,12 +62,6 @@ class Ord (SchemaConstraint ty) => HasSchemaConstraints' (nullary :: Bool) ty wh
   -- | Provide arbitrary constraints on a field of the requested type. See
   -- 'FieldCheck' for more information on the formatting of constraints.
   schemaConstraints' :: Proxy nullary -> Proxy ty -> Set (SchemaConstraint ty)
-
-class IsEnumeration' (isEnum :: Bool) ty where
-  schemaEnums' :: Proxy isEnum -> Proxy ty -> Enumerations
-
-class IsEnumeration ty where
-  schemaEnums :: Proxy ty -> Enumerations
 
 type family SchemaConstraint (k :: *) where
     SchemaConstraint (Beam.TableEntity e)  = TableConstraint
@@ -109,88 +103,67 @@ instance ( IsMaybe a ~ nullary
          ) => HasSchemaConstraints a where
   schemaConstraints = schemaConstraints' (Proxy :: Proxy nullary)
 
--- Default instances for enum discovery.
-
-instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (PgEnum a) where
-  schemaEnums' Proxy Proxy = 
-      let (PgSpecificType (PgEnumeration ty)) = defaultSqlDataType (Proxy @(PgEnum a)) False
-          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
-      in M.singleton ty vals
-
-instance (Show a, Typeable a, Enum a, Bounded a) => IsEnumeration' 'True (DbEnum a) where
-  schemaEnums' Proxy Proxy = M.singleton ty vals
-    where ty   = EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
-          vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
-
-instance IsEnumeration' 'False a where
-  schemaEnums' Proxy Proxy = mempty
-
-instance ( IsPgEnum a ~ isPgEnum
-         , IsEnumeration' isPgEnum a
-         ) => IsEnumeration a where
-  schemaEnums = schemaEnums' (Proxy :: Proxy isPgEnum)
-
 --
 -- Sql datatype instances for the most common types.
 --
 
-instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Beam.TableField e ty) where
-  defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
+instance HasColumnType ty => HasColumnType (Beam.TableField e ty) where
+  defaultColumnType _ = defaultColumnType (Proxy @ty)
 
-instance HasDefaultSqlDataType ty => HasDefaultSqlDataType (Maybe ty) where
-  defaultSqlDataType _ = defaultSqlDataType (Proxy @ty)
+instance HasColumnType ty => HasColumnType (Maybe ty) where
+  defaultColumnType _ = defaultColumnType (Proxy @ty)
 
-instance HasDefaultSqlDataType Int where
-  defaultSqlDataType _ _ = SqlStdType intType
-instance HasDefaultSqlDataType Int32 where
-  defaultSqlDataType _ _ = SqlStdType intType
-instance HasDefaultSqlDataType Int16 where
-  defaultSqlDataType _ _ = SqlStdType intType
-instance HasDefaultSqlDataType Int64 where
-  defaultSqlDataType _ _ = SqlStdType bigIntType
+instance HasColumnType Int where
+  defaultColumnType _ = SqlStdType intType
+instance HasColumnType Int32 where
+  defaultColumnType _ = SqlStdType intType
+instance HasColumnType Int16 where
+  defaultColumnType _ = SqlStdType intType
+instance HasColumnType Int64 where
+  defaultColumnType _ = SqlStdType bigIntType
 
-instance HasDefaultSqlDataType Word where
-  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (10, Nothing))
+instance HasColumnType Word where
+  defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
 
-instance HasDefaultSqlDataType Word16 where
-  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (5, Nothing))
-instance HasDefaultSqlDataType Word32 where
-  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (10, Nothing))
-instance HasDefaultSqlDataType Word64 where
-  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (20, Nothing))
+instance HasColumnType Word16 where
+  defaultColumnType _ = SqlStdType $ numericType (Just (5, Nothing))
+instance HasColumnType Word32 where
+  defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
+instance HasColumnType Word64 where
+  defaultColumnType _ = SqlStdType $ numericType (Just (20, Nothing))
 
-instance HasDefaultSqlDataType Text where
-  defaultSqlDataType _ _ = SqlStdType $ varCharType Nothing Nothing
-instance HasDefaultSqlDataType SqlBitString where
-  defaultSqlDataType _ _ = SqlStdType $ varBitType Nothing
+instance HasColumnType Text where
+  defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
+instance HasColumnType SqlBitString where
+  defaultColumnType _ = SqlStdType $ varBitType Nothing
 
-instance HasDefaultSqlDataType Double where
-  defaultSqlDataType _ _ = SqlStdType $ doubleType
+instance HasColumnType Double where
+  defaultColumnType _ = SqlStdType $ doubleType
 
-instance HasDefaultSqlDataType Scientific where
-  defaultSqlDataType _ _ = SqlStdType $ numericType (Just (20, Just 10))
+instance HasColumnType Scientific where
+  defaultColumnType _ = SqlStdType $ numericType (Just (20, Just 10))
 
-instance HasDefaultSqlDataType Day where
-  defaultSqlDataType _ _ = SqlStdType dateType
+instance HasColumnType Day where
+  defaultColumnType _ = SqlStdType dateType
 
-instance HasDefaultSqlDataType TimeOfDay where
-  defaultSqlDataType _ _ = SqlStdType $ timeType Nothing False
+instance HasColumnType TimeOfDay where
+  defaultColumnType _ = SqlStdType $ timeType Nothing False
 
-instance HasDefaultSqlDataType Bool where
-  defaultSqlDataType _ _ = SqlStdType booleanType
+instance HasColumnType Bool where
+  defaultColumnType _ = SqlStdType booleanType
 
-instance HasDefaultSqlDataType UTCTime where
-  defaultSqlDataType _ _ = SqlStdType $ timestampType Nothing False
+instance HasColumnType UTCTime where
+  defaultColumnType _ = SqlStdType $ timestampType Nothing False
 
 --
 -- support for json types
 --
 
-instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSON a) where
-  defaultSqlDataType _ _ = PgSpecificType PgJson
+instance (FromJSON a, ToJSON a) => HasColumnType (Pg.PgJSON a) where
+  defaultColumnType _ = PgSpecificType PgJson
 
-instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
-  defaultSqlDataType _ _ = PgSpecificType PgJsonB
+instance (FromJSON a, ToJSON a) => HasColumnType (Pg.PgJSONB a) where
+  defaultColumnType _ = PgSpecificType PgJsonB
 
 
 
@@ -199,34 +172,38 @@ instance (FromJSON a, ToJSON a) => HasDefaultSqlDataType (Pg.PgJSONB a) where
 -- support for pg range types
 --
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt4Range a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeInt4
+instance HasColumnType (Pg.PgRange Pg.PgInt4Range a) where
+  defaultColumnType _ = PgSpecificType PgRangeInt4
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgInt8Range a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeInt8
+instance HasColumnType (Pg.PgRange Pg.PgInt8Range a) where
+  defaultColumnType _ = PgSpecificType PgRangeInt8
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgNumRange a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeNum
+instance HasColumnType (Pg.PgRange Pg.PgNumRange a) where
+  defaultColumnType _ = PgSpecificType PgRangeNum
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsRange a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeTs
+instance HasColumnType (Pg.PgRange Pg.PgTsRange a) where
+  defaultColumnType _ = PgSpecificType PgRangeTs
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgTsTzRange a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeTsTz
+instance HasColumnType (Pg.PgRange Pg.PgTsTzRange a) where
+  defaultColumnType _ = PgSpecificType PgRangeTsTz
 
-instance HasDefaultSqlDataType (Pg.PgRange Pg.PgDateRange a) where
-  defaultSqlDataType _ _ = PgSpecificType PgRangeDate
+instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
+  defaultColumnType _ = PgSpecificType PgRangeDate
 
 --
 -- support for enum types
 --
 
-instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (PgEnum a) where
-  defaultSqlDataType (Proxy :: (Proxy (PgEnum a))) _ = 
+instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) where
+  defaultColumnType (Proxy :: (Proxy (PgEnum a))) =
     -- Postgres converts enumeration types to lowercase, so we need to call 'toLower' here.
     PgSpecificType (PgEnumeration $ EnumerationName (T.toLower . T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
+  defaultEnums p@(Proxy :: (Proxy (PgEnum a))) =
+    let (PgSpecificType (PgEnumeration ty)) = defaultColumnType p
+        vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
+    in M.singleton ty vals
 
-instance (Show a, Typeable a, Enum a, Bounded a) => HasDefaultSqlDataType (DbEnum a) where
-  defaultSqlDataType (Proxy :: (Proxy (DbEnum a))) _ = 
+instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) where
+  defaultColumnType (Proxy :: (Proxy (DbEnum a))) =
     let vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
     in DbEnumeration (EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)) vals

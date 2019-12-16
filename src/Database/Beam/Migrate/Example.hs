@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -46,6 +47,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , DbEnum
                                                 , PgEnum
                                                 , ReferenceAction(..)
+                                                , HasColumnType
                                                 )
 import           Database.Beam.Migrate.Postgres ( getSchema )
 
@@ -72,11 +74,18 @@ data MyJson = MyJson {
 
 deriveJSON defaultOptions ''MyJson
 
-data FlowerType = 
+data FlowerType =
     Rose
   | Sunflower
   | Tulip
   deriving (Show, Enum, Bounded)
+
+data Foo =
+    Bar
+  | Baz
+  | Quux
+  deriving (Show, Enum, Bounded)
+  deriving HasColumnType via (PgEnum Foo)
 
 -- A mixin embedded into another (i.e. 'Address').
 data AddressRegion f
@@ -101,7 +110,7 @@ data FlowerT f = Flower
   , flowerSchemaOne  :: Columnar f (PgJSON MyJson)
   , flowerSchemaTwo  :: Columnar f (PgJSONB MyJson)
   , flowerType       :: Columnar f (DbEnum FlowerType)
-  , flowerPgType     :: Columnar f (PgEnum FlowerType)
+  , flowerPgType     :: Columnar f Foo
   , flowerAddress    :: Address f
   }
   deriving (Generic, Beamable)
@@ -171,7 +180,7 @@ flowerDB = defaultDbSettings `withDbModification` dbModification
   , dbLineItems = modifyTableFields tableModification { lineItemFlowerID = FlowerID "flower_id"
                                                       , lineItemOrderID  = OrderID "order_id"
                                                       , lineItemQuantity = fieldNamed "quantity"
-                                                      , lineItemNullableRef = 
+                                                      , lineItemNullableRef =
                                                           OrderID "external_nullable_ref"
                                                       }
   }
@@ -191,7 +200,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
   }
 
 hsSchema :: Schema
-hsSchema = 
+hsSchema =
     fromAnnotatedDbSettings annotatedDB (Proxy @'[ 'UserDefinedFk LineItemT ])
     -- fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
