@@ -30,7 +30,7 @@ instance NFData SpineStrict where
 
 predictableSchemas :: Int -> IO (Schema, Schema)
 predictableSchemas tableNum = do
-    let g = unGen genSimilarSchemas 
+    let g = unGen genSimilarSchemas
     let r = QCGen (mkSMGen 42)
     return (g r tableNum)
 
@@ -43,7 +43,7 @@ setupDatabase dbSchema = do
   Pg.withTransaction conn $
     runBeamPostgres conn $ do
       let mig = createMigration (diff dbSchema noSchema)
-      runMigration mig -- At this point the DB contains the full schema.
+      unsafeRunMigration mig -- At this point the DB contains the full schema.
   pure conn
 
 tearDownDatabase :: Pg.Connection -> IO ()

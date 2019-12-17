@@ -1,18 +1,48 @@
-{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE GADTs #-}
-module Database.Beam.Migrate.Annotated where
+
+{- | This module provides an 'AnnotatedDatabaseSettings' type to be used as a drop-in replacement for the
+standard 'DatabaseSettings'. Is it possible to \"downcast\" an 'AnnotatedDatabaseSettings' to a standard
+'DatabaseSettings' simply by calling 'deAnnotateDatabase'.
+-}
+
+module Database.Beam.Migrate.Annotated (
+  -- * User annotations
+    Annotation(..)
+  -- * Annotating a 'DatabaseSettings'
+  , AnnotatedDatabaseSettings
+  , AnnotatedDatabaseEntity(..)
+  , IsAnnotatedDatabaseEntity(..)
+  , TableSchema
+  , TableFieldSchema(..)
+  , FieldSchema(..)
+  , dbAnnotatedSchema
+  , dbAnnotatedConstraints
+  , annotatedDescriptor
+  , defaultTableSchema
+  -- * Downcasting annotated types
+  , lowerEntityDescriptor
+  , deannotate
+  -- * Specifying constraints
+  , annotateTableFields
+  , utctime
+  , defaultsTo
+  , UniqueConstraint(..)
+  , uniqueFields
+  , ForeignKeyConstraint(..)
+  , foreignKeyOnPk
+  , foreignKeyOn
+  -- * Other types and functions
+  , TableKind
+  , DatabaseKind
+  , zipTables
+  , GZipDatabase
+  ) where
 
 import           Data.Kind
 import           Data.Proxy
@@ -37,11 +67,11 @@ import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import           Database.Beam.Postgres                   ( Postgres )
 import           Database.Beam.Query                      ( QExpr )
-import           Database.Beam.Schema.Tables              ( PrimaryKey )
 import           Database.Beam.Migrate.Types
 import           Database.Beam.Migrate.Compat
 import           Database.Beam.Migrate.Util
-import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
+import           Database.Beam.Schema.Tables              ( PrimaryKey
+                                                          , IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
                                                           , TableEntity
                                                           , DatabaseEntity
@@ -56,6 +86,7 @@ import           Database.Beam.Schema.Tables              ( IsDatabaseEntity
 
 --
 -- Annotating a 'DatabaseSettings' with meta information.
+--
 
 -- | To make kind signatures more readable.
 type DatabaseKind = (Type -> Type) -> Type
@@ -63,9 +94,7 @@ type DatabaseKind = (Type -> Type) -> Type
 -- | To make kind signatures more readable.
 type TableKind    = (Type -> Type) -> Type
 
---
-
--- A user-defined annotation. Currently the only possible annotation is the ability to specify for which
+-- | A user-defined annotation. Currently the only possible annotation is the ability to specify for which
 -- tables the FK-discovery algorithm is \"turned\" off.
 data Annotation where
     -- | Specifies that the given 'TableKind' (i.e. a table) has user-specified FK constraints. This is
@@ -83,7 +112,7 @@ data Annotation where
     -- is not unique. In this case the annotation would affect all the tables of the same type, but that is
     -- usually unavoidable, as the ambiguity was already present the minute we introduced in the DB two tables
     -- of the same type, and so it makes sense for the user to fully resolve the ambiguity manually.
-    UserDefinedFk :: TableKind -> Annotation
+    UserDefinedFk ::TableKind -> Annotation
 
 -- | NOTE(adn) Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it works by
 -- supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as witnesses,
@@ -92,40 +121,47 @@ data Annotation where
 -- 'GZipDatabase' from 'beam-core', so we had to re-implement this ourselves for now.
 zipTables :: ( Generic (db f), Generic (db g), Generic (db h)
              , Monad m
-             , GZipDatabase be f g h
-                            (Rep (db f)) (Rep (db g)) (Rep (db h)) ) =>
-             Proxy be ->
-             (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl)) ->
-             db f -> db g -> m (db h)
-    -- We need the pattern type signature on 'combine' to get around a type checking bug in GHC 8.0.1. In future releases,
-    -- we will switch to the standard forall.
+             , GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
+             )
+          => Proxy be
+          -> (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl))
+          -> db f
+          -> db g
+          -> m (db h)
+-- We need the pattern type signature on 'combine' to get around a type checking bug in GHC 8.0.1.
+-- In future releases, we will switch to the standard forall.
 zipTables be combine (f :: db f) (g :: db g) =
-      refl $ \h ->
-        to <$> gZipDatabase (Proxy @f, Proxy @g, h, be) combine (from f) (from g)
-      where
-        -- For GHC 8.0.1 renamer bug
-        refl :: (Proxy h -> m (db h)) -> m (db h)
-        refl fn = fn Proxy
+  refl $ \h ->
+    to <$> gZipDatabase (Proxy @f, Proxy @g, h, be) combine (from f) (from g)
+  where
+    -- For GHC 8.0.1 renamer bug
+    refl :: (Proxy h -> m (db h)) -> m (db h)
+    refl fn = fn Proxy
 
 -- See above on why this has been re-implemented.
 class GZipDatabase be f g h x y z where
-  gZipDatabase :: Monad m =>
-                  (Proxy f, Proxy g, Proxy h, Proxy be)
+  gZipDatabase :: Monad m
+               => (Proxy f, Proxy g, Proxy h, Proxy be)
                -> (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl))
-               -> x () -> y () -> m (z ())
-instance GZipDatabase be f g h x y z =>
-  GZipDatabase be f g h (M1 a b x) (M1 a b y) (M1 a b z) where
-  gZipDatabase p combine ~(M1 f) ~(M1 g) = M1 <$> gZipDatabase p combine f g
-instance ( GZipDatabase be f g h ax ay az
-         , GZipDatabase be f g h bx by bz ) =>
-  GZipDatabase be f g h (ax :*: bx) (ay :*: by) (az :*: bz) where
-  gZipDatabase p combine ~(ax :*: bx) ~(ay :*: by) =
-    do a <- gZipDatabase p combine ax ay
-       b <- gZipDatabase p combine bx by
-       pure (a :*: b)
-instance (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) =>
-  GZipDatabase be f g h (K1 Generic.R (f tbl)) (K1 Generic.R (g tbl)) (K1 Generic.R (h tbl)) where
+               -> x ()
+               -> y ()
+               -> m (z ())
 
+instance GZipDatabase be f g h x y z => GZipDatabase be f g h (M1 a b x) (M1 a b y) (M1 a b z) where
+  gZipDatabase p combine ~(M1 f) ~(M1 g) = M1 <$> gZipDatabase p combine f g
+
+instance ( GZipDatabase be f g h ax ay az
+         , GZipDatabase be f g h bx by bz
+         )
+         => GZipDatabase be f g h (ax :*: bx) (ay :*: by) (az :*: bz) where
+  gZipDatabase p combine ~(ax :*: bx) ~(ay :*: by) = do
+    a <- gZipDatabase p combine ax ay
+    b <- gZipDatabase p combine bx by
+    pure (a :*: b)
+
+instance ( IsAnnotatedDatabaseEntity be tbl
+         , AnnotatedDatabaseEntityRegularRequirements be tbl
+         ) => GZipDatabase be f g h (K1 Generic.R (f tbl)) (K1 Generic.R (g tbl)) (K1 Generic.R (h tbl)) where
   gZipDatabase _ combine ~(K1 x) ~(K1 y) =
     K1 <$> combine x y
 
@@ -133,8 +169,17 @@ instance (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequir
 -- An annotated Database settings.
 --
 
+-- | An 'AnnotatedDatabaseSettings' is similar in spirit to a @beam-core@ 'DatabaseSettings', but it
+-- embellish the latter with extra metadata this library can use to derive more information about the input
+-- DB, like table and column constraints.
 type AnnotatedDatabaseSettings be db = db (AnnotatedDatabaseEntity be db)
 
+-- | An 'AnnotatedDatabaseEntity' wraps the underlying 'DatabaseEntity' together with an annotated
+-- description called 'AnnotatedDatabaseEntityDescriptor', which is once again similar to the standard
+-- 'DatabaseEntityDescriptor' from Beam.
+--
+-- An 'AnnotatedDatabaseEntityDescriptor' is not a concrete type, but rather a data family provided by the
+-- 'IsAnnotatedDatabaseEntity'.
 data AnnotatedDatabaseEntity be (db :: (* -> *) -> *) entityType where
   AnnotatedDatabaseEntity :: (IsAnnotatedDatabaseEntity be entityType, IsDatabaseEntity be entityType)
                           => AnnotatedDatabaseEntityDescriptor be entityType

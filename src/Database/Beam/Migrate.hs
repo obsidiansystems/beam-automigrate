@@ -7,6 +7,10 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
+
+{- | This module provides the high-level API to migrate a database.
+-}
+
 module Database.Beam.Migrate
   ( fromAnnotatedDbSettings
   , defaultAnnotatedDbSettings
@@ -18,7 +22,9 @@ module Database.Beam.Migrate
   , runMigration
   , printMigration
   , createMigration
-    -- * Handy re-exports
+  -- Unsafe functions
+  , unsafeRunMigration
+  -- * Handy re-exports
   , module Exports
   )
 where
@@ -60,12 +66,9 @@ import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Backend.SQL         hiding ( tableName )
 
+import qualified Database.PostgreSQL.Simple              as Pg
 import qualified Database.Beam.Postgres                  as Pg
 import qualified Database.Beam.Postgres.Syntax           as Pg
-
---
--- Potential API (sketched)
---
 
 -- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
 defaultAnnotatedDbSettings :: forall be db.
@@ -84,7 +87,6 @@ defaultAnnotatedDbSettings :: forall be db.
 defaultAnnotatedDbSettings db = runIdentity $
   zipTables (Proxy @be) annotate db (undefined :: AnnotatedDatabaseSettings be db)
   where
-
     annotate :: ( Monad m
                 , IsAnnotatedDatabaseEntity be ty
                 , AnnotatedDatabaseEntityRegularRequirements be ty)
@@ -108,7 +110,7 @@ deAnnotateDatabase :: forall be db.
                    => AnnotatedDatabaseSettings be db
                    -> DatabaseSettings be db
 deAnnotateDatabase db =
-    runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
+  runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
 fromAnnotatedDbSettings :: ( Database be db
@@ -134,6 +136,8 @@ editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
 -- | A database 'Migration'.
 type Migration m = ExceptT DiffError (StateT [WithPriority Edit] m) ()
 
+-- | Given a 'Connection' to a database and a 'Schema' (which can be generated using 'fromAnnotatedDbSettings')
+-- it returns a 'Migration', which can then be executed via 'runMigration'.
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
     dbSchema <- lift . liftIO $ getSchema conn
@@ -142,18 +146,19 @@ migrate conn hsSchema = do
       Left e -> throwError e
       Right edits -> lift (put edits)
 
--- | Runs the input 'Migration'.
--- NOTE(adn) Currently this works only against the \"beam-postgres\" backend, as we are using the concrete
--- 'PgCommandSyntax' here.
-runMigration :: (MonadBeam Pg.Postgres m, MonadIO m) => Migration m -> m ()
-runMigration m = do
+-- | Runs the input 'Migration' in a concrete 'Postgres' backend.
+-- __IMPORTANT:__ This function /does not/ run inside a SQL transaction.
+unsafeRunMigration :: (MonadBeam Pg.Postgres m, MonadIO m) => Migration m -> m ()
+unsafeRunMigration m = do
   migs <- evalMigration m
   case migs of
     Left e -> liftIO $ throwIO e
     Right (sortEdits -> edits) ->
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
--- Pg.PgCommandSyntax Pg.PgCommandTypeDdl
+-- | Runs the input 'Migration' in a concrete 'Postgres' backend.
+runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
+runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
 
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
