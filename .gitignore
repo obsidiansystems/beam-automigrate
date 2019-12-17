@@ -5,3 +5,4 @@ dist-newstyle
 hie.yaml
 *.prof
 .stack-work
+cabal.project.freeze
