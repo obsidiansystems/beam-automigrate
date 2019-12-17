@@ -4,6 +4,7 @@
 module Database.Beam.Migrate.Schema.Gen
     ( genSchema
     , genSimilarSchemas
+    , shrinkSchema
     ) where
 
 import           Control.Monad
@@ -144,3 +145,23 @@ similarColumn col = do
         constrs <- vectorOf constNum (elements [NotNull, Default "FALSE"])
         pure $ col { columnType = SqlStdType AST.DataTypeBoolean, columnConstraints = S.fromList constrs }
       NoChange -> pure col
+
+--
+-- Shrinking a Schema
+--
+
+shrinkSchema :: Schema -> [Schema]
+shrinkSchema s =
+  concatMap shrinkTable (M.toList (schemaTables s))
+  where
+    shrinkTable :: (TableName, Table) -> [Schema]
+    shrinkTable (tName, tbl) =
+      s { schemaTables = M.delete tName (schemaTables s) } :
+      concatMap (shrinkColumns tName tbl) (M.toList (tableColumns tbl))
+
+    shrinkColumns :: TableName -> Table -> (ColumnName, Column) -> [Schema]
+    shrinkColumns tName tbl (cName, col) =
+      let tbl' = tbl { tableColumns = M.delete cName (tableColumns tbl) }
+      in [s { schemaTables = M.insert tName tbl' (schemaTables s) }]
+
+

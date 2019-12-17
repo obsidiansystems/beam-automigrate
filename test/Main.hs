@@ -4,9 +4,12 @@ import Database.Beam.Migrate
 import Database.Beam.Migrate.Validity
 
 import qualified Data.List as L
+import qualified Data.Text.Lazy as TL
 import           Test.Tasty
 import           Test.Tasty.QuickCheck         as QC
 import           Test.QuickCheck
+
+import Text.Pretty.Simple (pShowNoColor)
 
 import Test.Database.Beam.Migrate.Arbitrary
 
@@ -26,9 +29,32 @@ diffProps = testGroup "Diff algorithm properties"
       \(SimilarSchemas (hsSchema, dbSchema)) ->
           fmap (L.sort . map show) (diffReferenceImplementation hsSchema dbSchema) ===
           fmap (L.sort . map show) (diff hsSchema dbSchema)
-  --, QC.testProperty "reverse applying the edits of the diff algorithm yield back the Haskell schema" $
-  --    \(SimilarSchemas (hsSchema, dbSchema)) ->
-  --        case diff hsSchema dbSchema of
-  --          Left e -> error (show e)
-  --          Right edits -> applyEdits edits dbSchema === Right hsSchema
+  , QC.testProperty "reverse applying the edits of the diff algorithm yield back the Haskell schema" $
+      \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
+          case diff hsSchema dbSchema of
+            Left e -> error (show e)
+            Right edits -> (sortEdits edits, dbSchema) `sameSchema` hsSchema
+  , QC.testProperty "reverse applying the edits of the diff algorithm yield back a valid schema" $
+      \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
+          case diff hsSchema dbSchema of
+            Left e -> error (show e)
+            Right edits ->
+              case applyEdits edits dbSchema of
+                Left e' -> error (show e')
+                Right s -> validateSchema s === Right ()
   ]
+
+
+sameSchema :: ([WithPriority Edit], Schema) -> Schema -> Property
+sameSchema (fullEdits, dbSchema) hsSchema =
+  counterexample (pretty fullEdits ++ pretty schema' ++ interpret res ++ pretty hsSchema) res
+  where
+    pretty :: Show a => a -> String
+    pretty = TL.unpack . pShowNoColor
+
+    schema' :: Either ApplyFailed Schema
+    schema' = applyEdits fullEdits dbSchema
+
+    res = schema' == Right hsSchema
+    interpret True  = " == "
+    interpret False = " /= "

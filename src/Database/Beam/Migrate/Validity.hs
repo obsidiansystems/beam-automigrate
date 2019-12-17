@@ -3,6 +3,7 @@
 module Database.Beam.Migrate.Validity
   ( -- * Types
     Reason(..)
+  , ApplyFailed
     -- * Applying edits to a 'Schema'
   , applyEdits
     -- * Validing a 'Schema'
@@ -433,14 +434,14 @@ removeColumnConstraint e tbl tName colName constr col = do
   let constraints = columnConstraints col
   constraints' <-
     if S.member constr constraints
-       then Left (InvalidEdit e (ColumnConstraintDoesntExist (Qualified tName colName) constr))
-       else removeConstraint constraints
+       then removeConstraint constraints
+       else Left (InvalidEdit e (ColumnConstraintDoesntExist (Qualified tName colName) constr))
   pure . Just $ col { columnConstraints = constraints' }
   where
     removeConstraint :: S.Set ColumnConstraint -> Either ApplyFailed (S.Set ColumnConstraint)
     removeConstraint constraints = runExcept . withExcept (toApplyFailed e) . liftEither $ do
        validateRemoveColumnConstraint tbl (Qualified tName colName) constr
-       pure (S.insert constr constraints)
+       pure (S.delete constr constraints)
 
 -- | Performs an action over an existing 'Table', failing if the 'Table' doesn't exist.
 withExistingTable :: TableName

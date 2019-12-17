@@ -77,6 +77,7 @@ test-suite beam-migrate-prototype-tests
                      , QuickCheck
                      , beam-migrate-prototype -any
                      , containers
+                     , pretty-simple
                      , tasty
                      , tasty-quickcheck
                      , text

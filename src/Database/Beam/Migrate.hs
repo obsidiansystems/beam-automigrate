@@ -176,7 +176,7 @@ migrate conn hsSchema = do
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
 --
--- __IMPORTANT:__ This function /does not/ run inside a SQL transaction.
+-- __IMPORTANT:__ This function /does not/ run inside a SQL transaction, hence the @unsafe@ prefix.
 unsafeRunMigration :: (MonadBeam Pg.Postgres m, MonadIO m) => Migration m -> m ()
 unsafeRunMigration m = do
   migs <- evalMigration m

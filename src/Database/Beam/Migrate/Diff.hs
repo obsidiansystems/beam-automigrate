@@ -56,23 +56,23 @@ newtype WithPriority a = WithPriority { unPriority :: (a, Priority) } deriving (
 editPriority :: Edit -> Priority
 editPriority = \case
   -- Operations that create tables or enums have top priority
-  EnumTypeAdded{}           -> Priority 0
-  TableAdded{}              -> Priority 1
+  EnumTypeAdded{}                     -> Priority 0
+  TableAdded{}                        -> Priority 1
   -- We cannot create a column if the relevant table (or enum type) is not there.
-  ColumnAdded{}             -> Priority 2
+  ColumnAdded{}                       -> Priority 2
   -- Operations that set constraints or change the shape of a type have lower priority
-  ColumnTypeChanged{}       -> Priority 3
-  EnumTypeRemoved{}         -> Priority 3
-  EnumTypeValueAdded{}      -> Priority 3
+  ColumnTypeChanged{}                 -> Priority 3
+  EnumTypeValueAdded{}                -> Priority 4
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
-  TableConstraintAdded _ ForeignKey{} -> Priority 4
-  TableConstraintAdded _ _              -> Priority 3
-  TableConstraintRemoved{}  -> Priority 5
-  ColumnConstraintAdded{}   -> Priority 5
-  ColumnConstraintRemoved{} -> Priority 5
+  TableConstraintAdded _ ForeignKey{} -> Priority 5
+  TableConstraintAdded _ _            -> Priority 6
+  ColumnConstraintAdded{}             -> Priority 7
+  TableConstraintRemoved{}            -> Priority 8
+  ColumnConstraintRemoved{}           -> Priority 9
   -- Destructive operations go last
-  ColumnRemoved{}           -> Priority 5
-  TableRemoved{}            -> Priority 6
+  ColumnRemoved{}                     -> Priority 10
+  TableRemoved{}                      -> Priority 11
+  EnumTypeRemoved{}                   -> Priority 12
 
 mkEdit :: Edit -> WithPriority Edit
 mkEdit e = WithPriority (e, editPriority e)
