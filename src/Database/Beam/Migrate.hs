@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -88,23 +89,25 @@ import qualified Database.Beam.Postgres.Syntax           as Pg
 -- 2. If you are starting from an existing 'DatabaseSettings', then simply call 'defaultAnnotatedDbSettings'
 --    passing your existing 'DatabaseSettings'.
 
--- | Simple class to make the signatures for 'defaultAnnotatedDbSettings' and 'fromAnnotatedDbSettings'
+-- | Simple synonym to make the signatures for 'defaultAnnotatedDbSettings' and 'fromAnnotatedDbSettings'
 -- less scary. From a user's standpoint, there is nothing you have to implement.
-class ( Generic (db (e1 be db))
-      , Generic (db (e2 be db))
-      , Database be db
-      , GZipDatabase be (e1 be db)            (e2 be db)            (e2 be db)
-                        (Rep (db (e1 be db))) (Rep (db (e2 be db))) (Rep (db (e2 be db)))
-      ) => ToAnnotated (be :: *) (db :: DatabaseKind) e1 e2
+type ToAnnotated (be :: *) (db :: DatabaseKind) e1 e2 =
+  ( Generic (db (e1 be db))
+  , Generic (db (e2 be db))
+  , Database be db
+  , GZipDatabase be (e1 be db)            (e2 be db)            (e2 be db)
+                    (Rep (db (e1 be db))) (Rep (db (e2 be db))) (Rep (db (e2 be db)))
+  )
 
 -- | Simple class to make the signatures for 'defaultAnnotatedDbSettings' and 'fromAnnotatedDbSettings'
 -- less scary. From a user's standpoint, there is nothing you have to implement.
-class ( Generic (db (e1 be db))
-      , Generic (db (e2 be db))
-      , Database be db
-      , GZipDatabase be (e2 be db)            (e2 be db)            (e1 be db)
-                        (Rep (db (e2 be db))) (Rep (db (e2 be db))) (Rep (db (e1 be db)))
-      ) => FromAnnotated (be :: *) (db :: DatabaseKind) e1 e2
+type FromAnnotated (be :: *) (db :: DatabaseKind) e1 e2 =
+  ( Generic (db (e1 be db))
+  , Generic (db (e2 be db))
+  , Database be db
+  , GZipDatabase be (e2 be db)            (e2 be db)            (e1 be db)
+                    (Rep (db (e2 be db))) (Rep (db (e2 be db))) (Rep (db (e1 be db)))
+  )
 
 -- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
 defaultAnnotatedDbSettings :: forall be db. ToAnnotated be db DatabaseEntity AnnotatedDatabaseEntity
