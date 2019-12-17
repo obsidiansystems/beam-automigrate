@@ -29,17 +29,25 @@ module Database.Beam.Migrate.Annotated (
   , lowerEntityDescriptor
   , deannotate
   -- * Specifying constraints
+  -- $specifyingConstraints
   , annotateTableFields
   , utctime
+  -- * Specifying Column constraints
+  -- $specifyingColumnConstraints
   , defaultsTo
+  -- * Specifying Table constraints
+  -- $specifyingTableConstraints
   , UniqueConstraint(..)
+  -- ** Unique constraint
   , uniqueFields
+  -- ** Foreign key constraint
   , ForeignKeyConstraint(..)
   , foreignKeyOnPk
   , foreignKeyOn
   -- * Other types and functions
   , TableKind
   , DatabaseKind
+  -- * Ports from Beam
   , zipTables
   , GZipDatabase
   ) where
@@ -100,9 +108,9 @@ data Annotation where
     -- | Specifies that the given 'TableKind' (i.e. a table) has user-specified FK constraints. This is
     -- useful in case of ambiguity, i.e. when the automatic FK-discovery algorithm is not capable to
     -- infer the correct 'ForeignKey' constraints for a 'Table'. This can happen when the 'PrimaryKey' type
-    -- family is not injective, which means there are multiple tables of table 'FooT' in the DB. Consider a
-    -- situation where we have a table 'BarT' having a field of type 'barField :: PrimaryKey FooT f' but
-    -- (crucially) there are two tables with type 'f (TableEntity FooT)' in the final database. In this
+    -- family is not injective, which means there are multiple tables of table @FooT@ in the DB. Consider a
+    -- situation where we have a table @BarT@ having a field of type @barField :: PrimaryKey FooT f@ but
+    -- (crucially) there are two tables with type @f (TableEntity FooT)@ in the final database. In this
     -- circumstance the FK-discovery algorithm will bail out with a (static) error, and this is where this
     -- annotation comes into play: it allows us to selectively \"disable\" the discovery for the given
     -- table(s), and manually override the FKs.
@@ -114,9 +122,10 @@ data Annotation where
     -- of the same type, and so it makes sense for the user to fully resolve the ambiguity manually.
     UserDefinedFk ::TableKind -> Annotation
 
--- | NOTE(adn) Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it works by
--- supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as witnesses,
--- we we need the annotated counterparts instead.
+-- | Zip tables together. Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it
+-- works by supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as
+-- witnesses, we we need the annotated counterparts instead.
+--
 -- This function can be written without the need of a typeclass, but alas it requires the /unexported/
 -- 'GZipDatabase' from 'beam-core', so we had to re-implement this ourselves for now.
 zipTables :: ( Generic (db f), Generic (db g), Generic (db h)
@@ -138,7 +147,7 @@ zipTables be combine (f :: db f) (g :: db g) =
     refl :: (Proxy h -> m (db h)) -> m (db h)
     refl fn = fn Proxy
 
--- See above on why this has been re-implemented.
+-- | See above on why this class has been re-implemented.
 class GZipDatabase be f g h x y z where
   gZipDatabase :: Monad m
                => (Proxy f, Proxy g, Proxy h, Proxy be)
@@ -317,7 +326,29 @@ to' = to
 -- Annotating 'Table's and 'Field's after the default 'AnnotatedDatabaseSettings' has been instantiated.
 --
 
+-- $specifyingConstraints
+-- Once an 'AnnotatedDatabaseSettings' has been acquired, the user is able to customise the default
+-- medatata associated with it. In order to do so, one can reuse the existing machinery from Beam, in
+-- particular the `withDbModification`. For example:
+--
+-- > annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
+-- > annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
+-- >   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo (val_ $ Just True)
+-- >                                                         , flowerPrice = defaultsTo (val_ $ Just 10.0)
+-- >                                                         }
+-- >                <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
+-- >   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo (val_ $ Just False) }
+-- >                <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
+-- >   , dbOrders = annotateTableFields tableModification { orderTime = defaultsTo (cast_ currentTimestamp_ utctime) }
+-- >              <> foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
+-- >              <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
+-- >   }
+--
+-- Refer to the rest of the documentation for this module for more information about 'annotateTableFields',
+-- 'uniqueFields' and 'foreignKeyOnPk'.
 
+-- | Annotate the table fields for a given 'AnnotatedDatabaseEntity'. Refer to the $specifyingConstraints
+-- section for an example.
 annotateTableFields :: tbl (FieldModification (TableFieldSchema tbl))
                     -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 annotateTableFields modFields =
@@ -333,6 +364,17 @@ annotateTableFields modFields =
 utctime :: BeamSqlBackend be => Beam.DataType be UTCTime
 utctime = Beam.DataType (timestampType Nothing False)
 
+-- $specifyingColumnConstraints
+-- Due to the fact most column constraints can span /multiple/ columns (think about @UNIQUE@ or
+-- @FOREIGN KEY@) the only constraint associated to a 'TableFieldSchema' we allow to customise at the
+-- \"single-column-granularity\" is @DEFAULT@.
+
+-- | Specify a default value for an entity. The relevant migration will generate an associated SQL
+-- @DEFAULT@. This function accepts any Beam's expression that also the standard 'field' machinery would
+-- accept, for example:
+--
+-- > defaultsTo (val_ $ Just 10)
+--
 defaultsTo :: HasSqlValueSyntax Pg.PgValueSyntax ty
            => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
            -> FieldModification (TableFieldSchema tbl) ty
@@ -355,12 +397,19 @@ defaultsTo tyVal = FieldModification $ \old ->
     defaultTo_ (Beam.QExpr e) = e "t"
 
 --
--- Specifying uniqness constrainst
+-- Specifying uniqueness constraints
 --
 
+-- $specifyingTableConstraints
+-- Is it possible to annotate an 'AnnotatedDatabaseEntity' with @UNIQUE@ and @FOREIGN KEY@ constraints.
+
 data UniqueConstraint (tbl :: ((* -> *) -> *)) where
+  -- | Use this to \"tag\" a standard Beam 'TableField' selector or 'PrimaryKey'.
   U   :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
 
+-- | Given a list of 'TableField' selectors wrapped in a 'UniqueConstraint' type constructor, it adds
+-- to the relevant 'AnnotatedDatabaseEntity' a new @UNIQUE@ 'TableConstraint'. If a 'PrimaryKey' is passed
+-- as input, it will desugar under the hood into as many columns as the primary key refers to.
 uniqueFields :: [UniqueConstraint tbl]
              -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 uniqueFields us =

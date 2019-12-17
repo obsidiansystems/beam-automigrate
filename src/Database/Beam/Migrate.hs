@@ -8,8 +8,7 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 
-{- | This module provides the high-level API to migrate a database.
--}
+{- | This module provides the high-level API to migrate a database. -}
 
 module Database.Beam.Migrate
   ( -- * Annotating a database
