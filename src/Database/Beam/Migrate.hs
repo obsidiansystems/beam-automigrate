@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -8,24 +9,32 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
 
-{- | This module provides the high-level API to migrate a database.
--}
+{- | This module provides the high-level API to migrate a database. -}
 
 module Database.Beam.Migrate
-  ( fromAnnotatedDbSettings
-  , defaultAnnotatedDbSettings
-  -- * Converting from an annotated to a simple 'DatabaseSettings'
+  ( -- * Annotating a database
+    -- $annotatingDbSettings
+    defaultAnnotatedDbSettings
+    -- * Generating a Schema
+    -- $generatingASchema
+  , fromAnnotatedDbSettings
+  -- * Downcasting an AnnotatedDatabaseSettings into a simple DatabaseSettings
   , deAnnotateDatabase
-  -- * Migrations
+  -- * Generating and running migrations
   , Migration
   , migrate
   , runMigration
-  , printMigration
+  -- * Creating a migration from a Diff
   , createMigration
-  -- Unsafe functions
+  -- * Printing migrations for debugging purposes
+  , printMigration
+  -- * Unsafe functions
   , unsafeRunMigration
   -- * Handy re-exports
   , module Exports
+  -- * Internals
+  , FromAnnotated
+  , ToAnnotated
   )
 where
 
@@ -70,18 +79,38 @@ import qualified Database.PostgreSQL.Simple              as Pg
 import qualified Database.Beam.Postgres                  as Pg
 import qualified Database.Beam.Postgres.Syntax           as Pg
 
+-- $annotatingDbSettings
+-- The first thing to do in order to be able to use this library is to convert a Beam's 'DatabaseSettings'
+-- into an 'AnnotatedDatabaseSettings'. You typically have two options in order to do that:
+--
+-- 1. If you don't have an existing 'DatabaseSettings' from a previous application, you can simply call
+--    'defaultAnnotatedDbSettings' with 'defaultDbSettings', as in @defaultAnnotatedDbSettings defaultDbSettings@;
+--
+-- 2. If you are starting from an existing 'DatabaseSettings', then simply call 'defaultAnnotatedDbSettings'
+--    passing your existing 'DatabaseSettings'.
+
+-- | Simple synonym to make the signatures for 'defaultAnnotatedDbSettings' and 'fromAnnotatedDbSettings'
+-- less scary. From a user's standpoint, there is nothing you have to implement.
+type ToAnnotated (be :: *) (db :: DatabaseKind) e1 e2 =
+  ( Generic (db (e1 be db))
+  , Generic (db (e2 be db))
+  , Database be db
+  , GZipDatabase be (e1 be db)            (e2 be db)            (e2 be db)
+                    (Rep (db (e1 be db))) (Rep (db (e2 be db))) (Rep (db (e2 be db)))
+  )
+
+-- | Simple class to make the signatures for 'defaultAnnotatedDbSettings' and 'fromAnnotatedDbSettings'
+-- less scary. From a user's standpoint, there is nothing you have to implement.
+type FromAnnotated (be :: *) (db :: DatabaseKind) e1 e2 =
+  ( Generic (db (e1 be db))
+  , Generic (db (e2 be db))
+  , Database be db
+  , GZipDatabase be (e2 be db)            (e2 be db)            (e1 be db)
+                    (Rep (db (e2 be db))) (Rep (db (e2 be db))) (Rep (db (e1 be db)))
+  )
+
 -- | Turns a Beam's 'DatabaseSettings' into an 'AnnotatedDatabaseSettings'.
-defaultAnnotatedDbSettings :: forall be db.
-                           ( Generic (db (DatabaseEntity be db))
-                           , Generic (db (AnnotatedDatabaseEntity be db))
-                           , Database be db
-                           , GZipDatabase be (DatabaseEntity be db)
-                                             (AnnotatedDatabaseEntity be db)
-                                             (AnnotatedDatabaseEntity be db)
-                                             (Rep (db (DatabaseEntity be db)))
-                                             (Rep (db (AnnotatedDatabaseEntity be db)))
-                                             (Rep (db (AnnotatedDatabaseEntity be db)))
-                           )
+defaultAnnotatedDbSettings :: forall be db. ToAnnotated be db DatabaseEntity AnnotatedDatabaseEntity
                            => DatabaseSettings be db
                            -> AnnotatedDatabaseSettings be db
 defaultAnnotatedDbSettings db = runIdentity $
@@ -94,35 +123,34 @@ defaultAnnotatedDbSettings db = runIdentity $
              -> AnnotatedDatabaseEntity be db ty
              -> m (AnnotatedDatabaseEntity be db ty)
     annotate (DatabaseEntity edesc) _ =
-        pure $ AnnotatedDatabaseEntity (dbAnnotatedEntityAuto edesc) (DatabaseEntity edesc)
+      pure $ AnnotatedDatabaseEntity (dbAnnotatedEntityAuto edesc) (DatabaseEntity edesc)
 
-deAnnotateDatabase :: forall be db.
-                   ( Database be db
-                   , Generic (db (DatabaseEntity be db))
-                   , Generic (db (AnnotatedDatabaseEntity be db))
-                   , GZipDatabase be (AnnotatedDatabaseEntity be db)
-                                     (AnnotatedDatabaseEntity be db)
-                                     (DatabaseEntity be db)
-                                     (Rep (db (AnnotatedDatabaseEntity be db)))
-                                     (Rep (db (AnnotatedDatabaseEntity be db)))
-                                     (Rep (db (DatabaseEntity be db)))
-                   )
+-- | Downcast an 'AnnotatedDatabaseSettings' into Beam's standard 'DatabaseSettings'.
+deAnnotateDatabase :: forall be db. FromAnnotated be db DatabaseEntity AnnotatedDatabaseEntity
                    => AnnotatedDatabaseSettings be db
                    -> DatabaseSettings be db
 deAnnotateDatabase db =
   runIdentity $ zipTables (Proxy @be) (\ann _ -> pure $ ann ^. deannotate) db db
 
--- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'.
-fromAnnotatedDbSettings :: ( Database be db
-                           , Generic (db (DatabaseEntity be db))
-                           , Generic (db (AnnotatedDatabaseEntity be db))
-                           , GZipDatabase be (AnnotatedDatabaseEntity be db)
-                                             (AnnotatedDatabaseEntity be db)
-                                             (DatabaseEntity be db)
-                                             (Rep (db (AnnotatedDatabaseEntity be db)))
-                                             (Rep (db (AnnotatedDatabaseEntity be db)))
-                                             (Rep (db (DatabaseEntity be db)))
-                           , Generic (AnnotatedDatabaseSettings be db)
+-- $generatingASchema
+-- Once you have an 'AnnotatedDatabaseSettings', you can produce a 'Schema' simply by calling
+-- 'fromAnnotatedDbSettings'. The second parameter can be used to selectively turn off automatic FK-discovery
+-- for one or more tables. For more information about specifying your own table constraints, refer to the
+-- 'Database.Beam.Migrate.Annotated' module.
+
+-- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'. Under the hood, this function will do the
+-- following:
+--
+-- * It will turn each 'TableEntity' of your database into a 'Table';
+-- * It will turn each 'PgEnum' enumeration type into an 'Enumeration', which will map to an @ENUM@ type in the DB;
+-- * It will run what we call the __/automatic FK-discovery algorithm/__. What this means practically speaking
+--   is that if a reference to an external 'PrimaryKey' is found, and such 'PrimaryKey' uniquely identifies
+--   another 'TableEntity' in your database, the automatic FK-discovery algorithm will turn into into a
+--   'ForeignKey' 'TableConstraint', without any user intervention. In case there is ambiguity instead, the
+--   library will fail with a static error until the user won't disable the relevant tables (via the provided
+--  'Proxy' type) and annotate them to do the \"right thing\".
+--
+fromAnnotatedDbSettings :: ( FromAnnotated be db DatabaseEntity AnnotatedDatabaseEntity
                            , GSchema be db anns (Rep (AnnotatedDatabaseSettings be db))
                            )
                         => AnnotatedDatabaseSettings be db
@@ -147,6 +175,7 @@ migrate conn hsSchema = do
       Right edits -> lift (put edits)
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
+--
 -- __IMPORTANT:__ This function /does not/ run inside a SQL transaction.
 unsafeRunMigration :: (MonadBeam Pg.Postgres m, MonadIO m) => Migration m -> m ()
 unsafeRunMigration m = do
@@ -160,6 +189,7 @@ unsafeRunMigration m = do
 runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
 runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
 
+-- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
   TableAdded tblName tbl ->

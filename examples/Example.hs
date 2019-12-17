@@ -42,7 +42,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , fromAnnotatedDbSettings
                                                 , defaultAnnotatedDbSettings
                                                 , diff
-                                                , runMigration
+                                                , unsafeRunMigration
                                                 , printMigration
                                                 , migrate
                                                 , DbEnum
@@ -241,4 +241,4 @@ withBeamTestDb action = do
       action mig
 
 exampleAutoMigration :: IO ()
-exampleAutoMigration = withBeamTestDb runMigration
+exampleAutoMigration = withBeamTestDb unsafeRunMigration

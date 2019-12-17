@@ -21,7 +21,7 @@ pgMigrate conn hsSchema =
   Pg.withTransaction conn $
     runBeamPostgres conn $ do
       dbSchema <- liftIO (getSchema conn)
-      runMigration (createMigration (diff hsSchema dbSchema))
+      unsafeRunMigration (createMigration (diff hsSchema dbSchema))
 
 main :: IO ()
 main = do
@@ -31,8 +31,8 @@ main = do
   putStrLn $ "Generated schema with " ++  show (M.size . schemaTables $ hsSchema) ++ " tables."
   bracket (setupDatabase dbSchema) tearDownDatabase $ \conn -> do
     putStrLn "Starting the migration.."
-    startTime <- getCurrentTime 
-    pgMigrate conn hsSchema 
+    startTime <- getCurrentTime
+    pgMigrate conn hsSchema
     stopTime  <- getCurrentTime
     putStrLn $ "Total time (seconds): " <> show (round (stopTime `diffUTCTime` startTime))
 

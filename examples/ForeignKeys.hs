@@ -30,7 +30,7 @@ import           Database.Beam.Migrate                    ( Schema
                                                           , Migration
                                                           , printMigration
                                                           , migrate
-                                                          , runMigration
+                                                          , unsafeRunMigration
                                                           )
 
 import qualified Database.PostgreSQL.Simple              as Pg
@@ -88,4 +88,4 @@ withBeamTestDb action = do
       action mig
 
 exampleAutoMigration :: IO ()
-exampleAutoMigration = withBeamTestDb runMigration
+exampleAutoMigration = withBeamTestDb unsafeRunMigration

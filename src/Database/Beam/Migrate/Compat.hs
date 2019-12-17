@@ -1,19 +1,21 @@
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+
+{- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
+     without the extra complication of importing and using the library itself.
+-}
+
 module Database.Beam.Migrate.Compat where
 
 import           Data.Typeable
 import           Data.Text                                ( Text )
 import           Data.Scientific                          ( Scientific )
 import           Data.Time.Calendar                       ( Day )
-import Data.Time ( TimeOfDay, UTCTime )
+import           Data.Time                                ( TimeOfDay
+                                                          , UTCTime
+                                                          )
 import           Data.Int
 import           Data.Word
 import           Data.Set                                 ( Set )
@@ -31,49 +33,42 @@ import           Data.Aeson                              as JSON
                                                           , ToJSON
                                                           )
 
-{- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
-     without the extra complication of importing and using the library itself.
--}
-
 --
 -- Specifying SQL data types and constraints
 --
 
 class HasColumnType ty where
 
-  -- | Provide a data type for the given type
+  -- | Provide a 'ColumnType' for the given type
   defaultColumnType :: Proxy ty -> ColumnType
 
+  -- | If @ty@ maps to a DB @ENUM@, use this method to specify which one.
   defaultEnums      :: Proxy ty -> Enumerations
   defaultEnums _ = mempty
 
-
 class Ord (SchemaConstraint ty) => HasSchemaConstraints ty where
-  -- | Provide arbitrary constraints on a field of the requested type. See
-  -- 'FieldCheck' for more information on the formatting of constraints.
-  schemaConstraints :: Proxy ty
-                    -- ^ Concrete representation of the type
-                    -> Set (SchemaConstraint ty)
+
+  -- | Provide arbitrary constraints on a field of the requested type.
+  schemaConstraints :: Proxy ty -> Set (SchemaConstraint ty)
   schemaConstraints _ = mempty
 
 class Ord (SchemaConstraint ty) => HasSchemaConstraints' (nullary :: Bool) ty where
-  -- | Provide arbitrary constraints on a field of the requested type. See
-  -- 'FieldCheck' for more information on the formatting of constraints.
+
   schemaConstraints' :: Proxy nullary -> Proxy ty -> Set (SchemaConstraint ty)
 
 type family SchemaConstraint (k :: *) where
-    SchemaConstraint (Beam.TableEntity e)  = TableConstraint
-    SchemaConstraint (Beam.TableField e t) = ColumnConstraint
+  SchemaConstraint (Beam.TableEntity e)  = TableConstraint
+  SchemaConstraint (Beam.TableField e t) = ColumnConstraint
 
 type family IsMaybe (k :: *) :: Bool where
-    IsMaybe (Maybe x)                     = 'True
-    IsMaybe (Beam.TableField t (Maybe x)) = 'True
-    IsMaybe (Beam.TableField t _)         = 'False
-    IsMaybe _                             = 'False
+  IsMaybe (Maybe x)                     = 'True
+  IsMaybe (Beam.TableField t (Maybe x)) = 'True
+  IsMaybe (Beam.TableField t _)         = 'False
+  IsMaybe _                             = 'False
 
 type family IsPgEnum (k :: *) :: Bool where
-    IsPgEnum (PgEnum x)                    = 'True
-    IsPgEnum _                             = 'False
+  IsPgEnum (PgEnum x)                    = 'True
+  IsPgEnum _                             = 'False
 
 -- Default /table-level/ constraints.
 instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
@@ -113,10 +108,13 @@ instance HasColumnType ty => HasColumnType (Maybe ty) where
 
 instance HasColumnType Int where
   defaultColumnType _ = SqlStdType intType
+
 instance HasColumnType Int32 where
   defaultColumnType _ = SqlStdType intType
+
 instance HasColumnType Int16 where
   defaultColumnType _ = SqlStdType intType
+
 instance HasColumnType Int64 where
   defaultColumnType _ = SqlStdType bigIntType
 
@@ -125,13 +123,16 @@ instance HasColumnType Word where
 
 instance HasColumnType Word16 where
   defaultColumnType _ = SqlStdType $ numericType (Just (5, Nothing))
+
 instance HasColumnType Word32 where
   defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
+
 instance HasColumnType Word64 where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Nothing))
 
 instance HasColumnType Text where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
+
 instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
 
@@ -163,9 +164,6 @@ instance (FromJSON a, ToJSON a) => HasColumnType (Pg.PgJSON a) where
 instance (FromJSON a, ToJSON a) => HasColumnType (Pg.PgJSONB a) where
   defaultColumnType _ = PgSpecificType PgJsonB
 
-
-
-
 --
 -- support for pg range types
 --
@@ -196,6 +194,7 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
   defaultColumnType (Proxy :: (Proxy (PgEnum a))) =
     -- Postgres converts enumeration types to lowercase, so we need to call 'toLower' here.
     PgSpecificType (PgEnumeration $ EnumerationName (T.toLower . T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
+
   defaultEnums p@(Proxy :: (Proxy (PgEnum a))) =
     let (PgSpecificType (PgEnumeration ty)) = defaultColumnType p
         vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
@@ -205,3 +204,4 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) whe
   defaultColumnType (Proxy :: (Proxy (DbEnum a))) =
     let vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
     in DbEnumeration (EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)) vals
+
