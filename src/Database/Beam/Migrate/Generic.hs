@@ -1,40 +1,36 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ConstraintKinds #-}
-{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 module Database.Beam.Migrate.Generic where
 
-import           Database.Beam.Migrate.Util     ( pkFieldNames )
+import           Database.Beam.Migrate.Util               ( pkFieldNames )
 import           Database.Beam.Migrate.Types
 import           Data.Kind
 import           Data.Proxy
-import qualified Data.Map.Strict               as M
-import qualified Data.Set                      as S
-import qualified Data.List                     as L
-import           Lens.Micro                     ( (^.) )
+import qualified Data.Map.Strict                         as M
+import qualified Data.Set                                as S
+import qualified Data.List                               as L
+import           Lens.Micro                               ( (^.) )
 
 import           GHC.Generics
 import           GHC.TypeLits
 
-import           Database.Beam.Schema           ( PrimaryKey
-                                                , TableEntity
-                                                )
-import qualified Database.Beam.Schema          as Beam
-import           Database.Beam.Schema.Tables    ( dbEntityDescriptor
-                                                , dbEntityName
-                                                , Beamable(..)
-                                                )
+import           Database.Beam.Schema                     ( PrimaryKey
+                                                          , TableEntity
+                                                          )
+import qualified Database.Beam.Schema                    as Beam
+import           Database.Beam.Schema.Tables              ( dbEntityDescriptor
+                                                          , dbEntityName
+                                                          , Beamable(..)
+                                                          )
 
 import           Database.Beam.Migrate.Annotated
 import           Database.Beam.Migrate.Compat
@@ -44,41 +40,41 @@ import           Database.Beam.Migrate.Compat
 --
 
 class GSchema be db (anns :: [Annotation]) (x :: * -> *) where
-    gSchema :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Schema
+  gSchema :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Schema
 
 -- Table-specific classes
 
 class GTables be db (anns :: [Annotation]) (x :: * -> *) where
-    gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
+  gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
 class GTableEntry (be :: *) (db :: DatabaseKind) (anns :: [Annotation]) (tableFound :: Bool) (x :: * -> *) where
-    gTableEntry :: AnnotatedDatabaseSettings be db
-                -> Proxy anns
-                -> Proxy tableFound
-                -> x p
-                -> (TableName, Table)
+  gTableEntry :: AnnotatedDatabaseSettings be db
+              -> Proxy anns
+              -> Proxy tableFound
+              -> x p
+              -> (TableName, Table)
 
 class GTable be db (x :: * -> *) where
-    gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
+  gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
 
 -- Enumerations-specific classes
 
 class GEnums be db x where
-    gEnums :: AnnotatedDatabaseSettings be db -> x p -> Enumerations
+  gEnums :: AnnotatedDatabaseSettings be db -> x p -> Enumerations
 
 -- Column-specific classes
 
 class GColumns (x :: * -> *) where
-    gColumns :: x p -> Columns
+  gColumns :: x p -> Columns
 
 class GTableConstraintColumns be db x where
-    gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
+  gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
 
 class GColumnEntry (x :: * -> *) where
-    gColumnEntry :: x p -> (ColumnName, Column)
+  gColumnEntry :: x p -> (ColumnName, Column)
 
 class GColumn (x :: * -> *) where
-    gColumn :: x p -> Column
+  gColumn :: x p -> Column
 
 --
 -- Deriving information about 'Schema's
@@ -113,19 +109,19 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
     gEnums db (from (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
 
 instance {-# OVERLAPS #-} (GEnums be db (Rep (sub f)), Generic (sub f))
-    => GEnums be db (S1 m (K1 R (sub f))) where
-    gEnums db (M1 (K1 e)) = gEnums db (from e)
+   => GEnums be db (S1 m (K1 R (sub f))) where
+  gEnums db (M1 (K1 e)) = gEnums db (from e)
 
 instance HasColumnType ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
-    gEnums _ (M1 (K1 _)) = defaultEnums (Proxy @ty)
+  gEnums _ (M1 (K1 _)) = defaultEnums (Proxy @ty)
 
 -- primary-key-wrapped types do not yield any enumerations.
 
 instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (TableFieldSchema tbl2)))) where
-    gEnums _ (M1 (K1 _)) = mempty
+  gEnums _ (M1 (K1 _)) = mempty
 
 instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))) where
-    gEnums _ (M1 (K1 _)) = mempty
+  gEnums _ (M1 (K1 _)) = mempty
 
 --
 -- Deriving information about 'Table's.
