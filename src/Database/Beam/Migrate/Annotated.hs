@@ -31,7 +31,6 @@ module Database.Beam.Migrate.Annotated (
   -- * Specifying constraints
   -- $specifyingConstraints
   , annotateTableFields
-  , utctime
   -- * Specifying Column constraints
   -- $specifyingColumnConstraints
   , defaultsTo
@@ -61,7 +60,6 @@ import           Lens.Micro                               ( SimpleGetter
 import           GHC.Generics                            as Generic
 import qualified Data.Text                               as T
 import           Data.Text                                ( Text )
-import           Data.Time                                ( UTCTime )
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
 import           Data.Monoid                              ( Endo(..) )
@@ -69,8 +67,6 @@ import           Data.Monoid                              ( Endo(..) )
 import qualified Database.Beam                           as Beam
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
                                                           , displaySyntax
-                                                          , BeamSqlBackend
-                                                          , timestampType
                                                           )
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import           Database.Beam.Postgres                   ( Postgres )
@@ -360,9 +356,6 @@ annotateTableFields modFields =
 --
 -- Specifying default values (Postgres-specific)
 --
-
-utctime :: BeamSqlBackend be => Beam.DataType be UTCTime
-utctime = Beam.DataType (timestampType Nothing False)
 
 -- $specifyingColumnConstraints
 -- Due to the fact most column constraints can span /multiple/ columns (think about @UNIQUE@ or

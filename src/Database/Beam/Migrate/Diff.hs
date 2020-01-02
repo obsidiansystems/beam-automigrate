@@ -64,15 +64,16 @@ editPriority = \case
   ColumnTypeChanged{}                 -> Priority 3
   EnumTypeValueAdded{}                -> Priority 4
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
-  TableConstraintAdded _ ForeignKey{} -> Priority 5
-  TableConstraintAdded _ _            -> Priority 6
-  ColumnConstraintAdded{}             -> Priority 7
-  TableConstraintRemoved{}            -> Priority 8
-  ColumnConstraintRemoved{}           -> Priority 9
+  TableConstraintAdded _ Unique{}     -> Priority 5
+  TableConstraintAdded _ PrimaryKey{} -> Priority 6
+  TableConstraintAdded _ ForeignKey{} -> Priority 7
+  ColumnConstraintAdded{}             -> Priority 8
+  TableConstraintRemoved{}            -> Priority 9
+  ColumnConstraintRemoved{}           -> Priority 10
   -- Destructive operations go last
-  ColumnRemoved{}                     -> Priority 10
-  TableRemoved{}                      -> Priority 11
-  EnumTypeRemoved{}                   -> Priority 12
+  ColumnRemoved{}                     -> Priority 11
+  TableRemoved{}                      -> Priority 12
+  EnumTypeRemoved{}                   -> Priority 13
 
 mkEdit :: Edit -> WithPriority Edit
 mkEdit e = WithPriority (e, editPriority e)

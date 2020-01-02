@@ -14,7 +14,7 @@ import           Data.Text                                ( Text )
 import           Data.Scientific                          ( Scientific )
 import           Data.Time.Calendar                       ( Day )
 import           Data.Time                                ( TimeOfDay
-                                                          , UTCTime
+                                                          , LocalTime
                                                           )
 import           Data.Int
 import           Data.Word
@@ -151,7 +151,7 @@ instance HasColumnType TimeOfDay where
 instance HasColumnType Bool where
   defaultColumnType _ = SqlStdType booleanType
 
-instance HasColumnType UTCTime where
+instance HasColumnType LocalTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing False
 
 --

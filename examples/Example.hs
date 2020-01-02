@@ -32,7 +32,7 @@ import           Database.Beam.Schema           ( Beamable
                                                 )
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
-import           Database.Beam.Query            (val_, cast_, currentTimestamp_)
+import           Database.Beam.Query            (val_, currentTimestamp_)
 
 import           Database.Beam.Migrate.Annotated
 
@@ -58,7 +58,7 @@ import qualified Database.Beam.Postgres as Pg
 import           Data.Int                       ( Int32
                                                 , Int64
                                                 )
-import           Data.Time                      ( UTCTime )
+import           Data.Time                      ( LocalTime )
 import           Data.Aeson.TH
 
 --
@@ -116,7 +116,7 @@ data FlowerT f = Flower
 
 data OrderT f = Order
   { orderID          :: Columnar f Int32
-  , orderTime        :: Columnar f UTCTime
+  , orderTime        :: Columnar f LocalTime
   , orderFlowerIdRef :: PrimaryKey FlowerT f
   , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
   , orderAddress     :: Address f
@@ -191,7 +191,7 @@ annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModific
                <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo (val_ $ Just False) }
                <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
-  , dbOrders = annotateTableFields tableModification { orderTime = defaultsTo (cast_ currentTimestamp_ utctime) }
+  , dbOrders = annotateTableFields tableModification { orderTime = defaultsTo currentTimestamp_ }
              <> foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
              <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [

@@ -202,6 +202,14 @@ unsafeRunMigration m = do
 runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
 runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
 
+-- Unfortunately Postgres' syntax is different when setting or dropping constaints. For example when we
+-- drop the default value we /don't/ repeat which was the original default value (which makes sense), but
+-- doing so means we have to discriminate between these two events to render the SQL fragment correctly.
+data AlterTableAction =
+    SetConstraint
+  | DropConstraint
+  deriving (Show, Eq)
+
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax = \case
@@ -235,16 +243,25 @@ toSqlSyntax = \case
                                 <> " "
                                 <> renderDataType (columnType col)
                                 <> " "
-                                <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+                                <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
                    )
   ColumnRemoved tblName colName ->
       updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
   ColumnTypeChanged tblName colName _old new ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " TYPE " <> renderDataType new)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN "
+                                       <> sqlEscaped (columnName colName)
+                                       <> " TYPE "
+                                       <> renderDataType new)
   ColumnConstraintAdded tblName colName cstr ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " SET " <> renderColumnConstraint cstr)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN "
+                                       <> sqlEscaped (columnName colName)
+                                       <> " SET "
+                                       <> renderColumnConstraint SetConstraint cstr)
   ColumnConstraintRemoved tblName colName cstr ->
-      updateSyntax (alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " DROP " <> renderColumnConstraint cstr)
+      updateSyntax (alterTable tblName <> "ALTER COLUMN "
+                                       <> sqlEscaped (columnName colName)
+                                       <> " DROP "
+                                       <> renderColumnConstraint DropConstraint cstr)
   where
       ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
@@ -257,7 +274,7 @@ toSqlSyntax = \case
           sqlEscaped (columnName colName) <> " "
                                           <> renderDataType (columnType col)
                                           <> " "
-                                          <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+                                          <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
 
       renderInsertionOrder :: InsertionOrder -> Text
       renderInsertionOrder Before = "BEFORE"
@@ -304,10 +321,11 @@ toSqlSyntax = \case
         SetNull    -> " " <> actionPrefix <> " " <> "SET NULL "
         SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
 
-      renderColumnConstraint :: ColumnConstraint -> Text
-      renderColumnConstraint = \case
-        NotNull -> "NOT NULL"
-        Default defValue -> "DEFAULT " <> defValue
+      renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
+      renderColumnConstraint act = \case
+        NotNull                                 -> "NOT NULL"
+        Default defValue | act == SetConstraint -> "DEFAULT " <> defValue
+        Default _                               -> "DEFAULT"
 
       createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
       createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
