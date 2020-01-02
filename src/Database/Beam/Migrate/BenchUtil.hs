@@ -20,7 +20,6 @@ import           Database.Beam.Migrate
 import           Database.Beam.Migrate.Schema.Gen         ( genSimilarSchemas )
 
 import qualified Database.PostgreSQL.Simple              as Pg
-import           Database.Beam.Postgres                   ( runBeamPostgres )
 
 
 newtype SpineStrict = SS { unSS :: Diff }
@@ -42,10 +41,8 @@ connInfo = "host=localhost port=5432 dbname=beam-migrate-prototype-bench"
 setupDatabase :: Schema -> IO Pg.Connection
 setupDatabase dbSchema = do
   conn <- Pg.connectPostgreSQL connInfo
-  Pg.withTransaction conn $
-    runBeamPostgres conn $ do
-      let mig = createMigration (diff dbSchema noSchema)
-      unsafeRunMigration mig -- At this point the DB contains the full schema.
+  let mig = createMigration (diff dbSchema noSchema)
+  runMigration conn mig -- At this point the DB contains the full schema.
   pure conn
 
 cleanDatabase :: Pg.Connection -> IO ()

@@ -153,7 +153,6 @@ foreignKeysQ = fromString $ unlines
   , "          and rco.unique_constraint_name = rel_kcu.constraint_name"
   , "          and kcu.ordinal_position = rel_kcu.ordinal_position"
   , "GROUP BY foreign_table, primary_table, cname"
-  , "ORDER BY primary_table"
   ]
 
 -- | Return /all other constraints that are not FKs/ (i.e. 'PRIMARY KEY', 'UNIQUE', etc) for all the tables.
@@ -164,19 +163,11 @@ otherConstraintsQ = fromString $ unlines
   , "       array_agg(kcu.column_name)::text[] as fk_columns,"
   , "       kcu.constraint_name as cname"
   , "FROM information_schema.table_constraints tco"
-  , "RIGHT JOIN information_schema.key_column_usage kcu"
-  , "           on tco.constraint_schema = kcu.constraint_schema"
-  , "           and tco.constraint_name = kcu.constraint_name"
-  , "LEFT JOIN  information_schema.referential_constraints rco"
-  , "           on tco.constraint_schema = rco.constraint_schema"
-  , "           and tco.constraint_name = rco.constraint_name"
-  , "LEFT JOIN  information_schema.key_column_usage rel_kcu"
-  , "           on rco.unique_constraint_schema = rel_kcu.constraint_schema"
-  , "           and rco.unique_constraint_name = rel_kcu.constraint_name"
-  , "           and kcu.ordinal_position = rel_kcu.ordinal_position"
+  , "JOIN information_schema.key_column_usage kcu"
+  , "     ON  tco.constraint_schema = kcu.constraint_schema"
+  , "     AND tco.constraint_name = kcu.constraint_name"
   , "WHERE tco.constraint_type = 'PRIMARY KEY' OR tco.constraint_type = 'UNIQUE'"
   , "GROUP BY foreign_table, ctype, cname"
-  , "ORDER BY ctype"
   ]
 
 -- | Return all \"action types\" for /all/ the constraints.
@@ -353,8 +344,6 @@ getAllConstraints conn = do
       addFkConstraint actions st SqlForeignConstraint{..} = flip execState st $ do
         let currentTable = sqlFk_foreign_table
         let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
-        -- Here we need to add two constraints: one for 'ForeignKey' and one for
-        -- 'IsForeignKeyOf'.
         let (onDelete, onUpdate) =
                 case M.lookup sqlFk_name (getActions actions) of
                   Nothing -> (NoAction, NoAction)

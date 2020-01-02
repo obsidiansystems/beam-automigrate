@@ -4,6 +4,7 @@ module Database.Beam.Migrate.Validity
   ( -- * Types
     Reason(..)
   , ApplyFailed
+  , ValidationFailed
     -- * Applying edits to a 'Schema'
   , applyEdits
     -- * Validing a 'Schema'

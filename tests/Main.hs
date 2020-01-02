@@ -22,10 +22,7 @@ tests :: TestTree
 tests = testGroup "Tests" [properties]
 
 properties :: TestTree
-properties = testGroup "Properties" [diffProps]
-
-diffProps :: TestTree
-diffProps = testGroup "Diff algorithm properties"
+properties = testGroup "Diff algorithm properties"
   [ QC.testProperty "diff algoritm behaves the same as the reference implementation" $
       \(SimilarSchemas (hsSchema, dbSchema)) ->
           fmap (L.sort . map show) (diffReferenceImplementation hsSchema dbSchema) ===

@@ -39,7 +39,7 @@ module Database.Beam.Migrate
   )
 where
 
-import           Control.Exception                        ( throwIO )
+import           Control.Exception                        ( throwIO, Exception )
 import           Control.Monad.Identity                   (runIdentity)
 import           Control.Monad.State.Strict
 import           Control.Monad.Except
@@ -53,6 +53,7 @@ import           Data.String                              ( fromString )
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
+import           Data.Bifunctor                           ( first )
 import qualified Data.Text                               as T
 import qualified Data.Text.Encoding                      as TE
 
@@ -71,6 +72,7 @@ import           Database.Beam.Migrate.Generic           as Exports
 import           Database.Beam.Migrate.Types             as Exports
 import           Database.Beam.Migrate.Diff              as Exports
 import           Database.Beam.Migrate.Compat            as Exports
+import           Database.Beam.Migrate.Validity          as Exports
 import           Database.Beam.Migrate.Postgres           ( getSchema )
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
@@ -163,16 +165,26 @@ editsToPgSyntax :: [WithPriority Edit] -> [Pg.PgSyntax]
 editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
 
 -- | A database 'Migration'.
-type Migration m = ExceptT DiffError (StateT [WithPriority Edit] m) ()
+type Migration m = ExceptT MigrationError (StateT [WithPriority Edit] m) ()
+
+data MigrationError =
+    DiffFailed DiffError
+  | HaskellSchemaValidationFailed  [ValidationFailed]
+  | DatabaseSchemaValidationFailed [ValidationFailed]
+  deriving Show
+
+instance Exception MigrationError
 
 -- | Given a 'Connection' to a database and a 'Schema' (which can be generated using 'fromAnnotatedDbSettings')
 -- it returns a 'Migration', which can then be executed via 'runMigration'.
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
     dbSchema <- lift . liftIO $ getSchema conn
+    liftEither $ first HaskellSchemaValidationFailed  (validateSchema hsSchema)
+    liftEither $ first DatabaseSchemaValidationFailed (validateSchema dbSchema)
     let schemaDiff = diff hsSchema dbSchema
     case schemaDiff of
-      Left e -> throwError e
+      Left e -> throwError (DiffFailed e)
       Right edits -> lift (put edits)
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
@@ -256,15 +268,16 @@ toSqlSyntax = \case
         Unique fname cols ->
             conKeyword <> sqlEscaped fname
                        <> " UNIQUE ("
-                       <> T.intercalate ", " (map columnName (S.toList cols))
+                       <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
                        <> ")"
         PrimaryKey fname cols ->
             conKeyword <> sqlEscaped fname
                        <> " PRIMARY KEY ("
-                       <> T.intercalate ", " (map columnName (S.toList cols))
+                       <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
                        <> ")"
         ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
-            let (fkCols, referenced) = (map (columnName . fst) colPair, map (columnName . snd) colPair)
+            let (fkCols, referenced) = ( map (sqlEscaped . columnName . fst) colPair
+                                       , map (sqlEscaped . columnName . snd) colPair)
             in conKeyword <> sqlEscaped fname
                           <> " FOREIGN KEY ("
                           <> T.intercalate ", " fkCols
@@ -383,16 +396,16 @@ sqlOptNumericPrec Nothing = mempty
 sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
 sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
 
-evalMigration :: Monad m => Migration m -> m (Either DiffError [WithPriority Edit])
+evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do
   (a, s) <- runStateT (runExceptT m) mempty
   case a of
-    Left e    -> pure (Left e)
+    Left e    -> pure (Left  e)
     Right ()  -> pure (Right s)
 
 -- | Create the migration from a 'Diff'.
 createMigration :: Monad m => Diff -> Migration m
-createMigration (Left e) = throwError e
+createMigration (Left e) = throwError (DiffFailed e)
 createMigration (Right edits) = ExceptT $ do
   put edits
   pure (Right ())

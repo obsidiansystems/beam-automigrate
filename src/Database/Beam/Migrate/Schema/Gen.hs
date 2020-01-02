@@ -15,6 +15,7 @@ import           Control.Monad
 import           Control.Monad.State.Strict
 import           Data.Foldable                            ( foldlM )
 import           Data.Set                                 ( Set )
+import           Data.Functor.Identity
 import           Data.Text                                ( Text )
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
@@ -53,11 +54,17 @@ genTableName = genName TableName
 genColumnName :: Gen ColumnName
 genColumnName = genName ColumnName
 
--- | TODO(adn) Generating a 'Unique' constraint is not hard, but at the same time when we /diff/ two
--- schemas, if we delete any column which is referenced as part of this constraint, we also need to drop
--- the constraint, and this is currently not something supported by the diff algorithm.
 genUniqueConstraint :: Columns -> Gen (Set TableConstraint)
-genUniqueConstraint _allCols = pure mempty
+genUniqueConstraint allCols = do
+  someCols        <- take 32 <$> listOf1 (elements $ M.keys allCols) -- indexes are capped to 32 colums.
+  constraintName  <- runIdentity <$> genName Identity
+  pure $ S.singleton $ Unique (constraintName <> "_unique") (S.fromList someCols)
+
+genTableConstraints :: Tables -> Columns -> Gen (Set TableConstraint)
+genTableConstraints _allOtherTables ourColums =
+  frequency [(60, pure mempty)
+            ,(30, genUniqueConstraint ourColums)
+            ]
 
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
@@ -73,9 +80,9 @@ genColumns = do
 
 -- | Generate a new 'Table' using the already existing tables to populate the constraints.
 genTable :: Tables -> Gen Table
-genTable _currentTables = do
+genTable currentTables = do
     cols <- genColumns
-    Table <$> genUniqueConstraint cols <*> pure cols
+    Table <$> genTableConstraints currentTables cols <*> pure cols
 
 genSchema :: Gen Schema
 genSchema = sized $ \tableNum -> do
@@ -146,11 +153,26 @@ similarTable tbl = flip execStateT tbl $
         newColumnName <- lift genColumnName
         newColumn <- lift $ genColumn (tableColumns s)
         modify' (\st -> st { tableColumns = M.insert newColumnName newColumn (tableColumns st) })
-    DropColumn -> modify' (\st -> st { tableColumns = M.delete cName (tableColumns st) })
+    -- If we drop or modify a column we need to delete all constraints referencing that column.
+    DropColumn -> modify' (\st -> st { tableColumns     = M.delete cName (tableColumns st)
+                                     , tableConstraints = deleteConstraintReferencing cName (tableConstraints st)
+                                     })
     ModifyColumn -> do
         col' <- lift $ similarColumn col
-        modify' (\st -> st { tableColumns = M.insert cName col' (tableColumns st) })
+        modify' (\st -> st { tableColumns = M.insert cName col' (tableColumns st)
+                           , tableConstraints = deleteConstraintReferencing cName (tableConstraints st)
+                           })
     LeaveColumnAlone -> pure ()
+
+
+deleteConstraintReferencing :: ColumnName -> Set TableConstraint -> Set TableConstraint
+deleteConstraintReferencing cName conss = S.filter (not . doesReference) conss
+  where
+    doesReference :: TableConstraint -> Bool
+    doesReference = \case
+      PrimaryKey _ refs -> S.member cName refs
+      ForeignKey _ _ refs _ _ -> let ours = S.map snd refs in S.member cName ours
+      Unique _ refs -> S.member cName refs
 
 
 similarColumn :: Column -> Gen Column
@@ -175,7 +197,7 @@ similarColumn col = do
 
 shrinkSchema :: Schema -> [Schema]
 shrinkSchema s =
-  concatMap shrinkTable (M.toList (schemaTables s))
+  noSchema : concatMap shrinkTable (M.toList (schemaTables s))
   where
     shrinkTable :: (TableName, Table) -> [Schema]
     shrinkTable (tName, tbl) =
