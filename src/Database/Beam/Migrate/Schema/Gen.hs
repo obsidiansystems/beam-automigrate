@@ -60,10 +60,28 @@ genUniqueConstraint allCols = do
   constraintName  <- runIdentity <$> genName Identity
   pure $ S.singleton $ Unique (constraintName <> "_unique") (S.fromList someCols)
 
+-- Generate a PK constraint.
+-- /nota bene/: we have to require each and every column that compose this PK to be 'NotNull'. This is
+-- important because otherwise Postgres will assume so even though we didn't generate this constraint in
+-- the first place, and our roundtrip tests will fail.
+genPkConstraint :: Columns -> Gen (Set TableConstraint)
+genPkConstraint allCols = do
+  someCols        <- take 32 . filter notNull <$> listOf1 (elements $ M.toList allCols) -- indexes are capped to 32 colums.
+  case someCols of
+    [] -> pure mempty
+    _  -> do
+      constraintName  <- runIdentity <$> genName Identity
+      pure $ S.singleton $ PrimaryKey (constraintName <> "_pk") (S.fromList $ map fst someCols)
+  where
+    notNull :: (ColumnName, Column) -> Bool
+    notNull (_, col) = NotNull `S.member` columnConstraints col
+
 genTableConstraints :: Tables -> Columns -> Gen (Set TableConstraint)
 genTableConstraints _allOtherTables ourColums =
   frequency [(60, pure mempty)
             ,(30, genUniqueConstraint ourColums)
+            ,(30, genPkConstraint ourColums)
+            ,(15, mappend <$> genPkConstraint ourColums <*> genUniqueConstraint ourColums)
             ]
 
 genColumn :: Columns -> Gen Column
@@ -206,7 +224,9 @@ shrinkSchema s =
 
     shrinkColumns :: TableName -> Table -> (ColumnName, Column) -> [Schema]
     shrinkColumns tName tbl (cName, _col) =
-      let tbl' = tbl { tableColumns = M.delete cName (tableColumns tbl) }
+      let tbl' = tbl { tableColumns = M.delete cName (tableColumns tbl)
+                     , tableConstraints = deleteConstraintReferencing cName (tableConstraints tbl)
+                     }
       in [s { schemaTables = M.insert tName tbl' (schemaTables s) }]
 
 
