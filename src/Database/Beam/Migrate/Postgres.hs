@@ -50,17 +50,17 @@ data SqlRawOtherConstraintType =
   deriving (Show, Eq)
 
 data SqlOtherConstraint = SqlOtherConstraint
-    { sqlCon_table :: TableName
+    { sqlCon_name :: Text
     , sqlCon_constraint_type :: SqlRawOtherConstraintType
+    , sqlCon_table :: TableName
     , sqlCon_fk_colums :: V.Vector ColumnName
-    , sqlCon_name :: Text
     } deriving (Show, Eq)
 
 instance Pg.FromRow SqlOtherConstraint where
-  fromRow = SqlOtherConstraint <$> fmap TableName field
+  fromRow = SqlOtherConstraint <$> field
                                <*> field
+                               <*> fmap TableName field
                                <*> fmap (V.map ColumnName) field
-                               <*> field
 
 data SqlForeignConstraint = SqlForeignConstraint
     { sqlFk_foreign_table   :: TableName
@@ -89,8 +89,8 @@ instance FromField SqlRawOtherConstraintType where
   fromField f dat = do
       t <- fromField f dat
       case t of
-        "PRIMARY KEY" -> pure SQL_raw_pk
-        "UNIQUE"      -> pure SQL_raw_unique
+        "p" -> pure SQL_raw_pk
+        "u" -> pure SQL_raw_unique
         _ -> fail ("Unexpected costraint type: " <> t)
 
 --
@@ -158,16 +158,18 @@ foreignKeysQ = fromString $ unlines
 -- | Return /all other constraints that are not FKs/ (i.e. 'PRIMARY KEY', 'UNIQUE', etc) for all the tables.
 otherConstraintsQ :: Pg.Query
 otherConstraintsQ = fromString $ unlines
-  [ "SELECT kcu.table_name as foreign_table,"
-  , "       tco.constraint_type as ctype,"
-  , "       array_agg(kcu.column_name)::text[] as fk_columns,"
-  , "       kcu.constraint_name as cname"
-  , "FROM information_schema.table_constraints tco"
-  , "JOIN information_schema.key_column_usage kcu"
-  , "     ON  tco.constraint_schema = kcu.constraint_schema"
-  , "     AND tco.constraint_name = kcu.constraint_name"
-  , "WHERE tco.constraint_type = 'PRIMARY KEY' OR tco.constraint_type = 'UNIQUE'"
-  , "GROUP BY foreign_table, ctype, cname"
+  [ "SELECT c.conname                                AS constraint_name,"
+  , "  c.contype                                     AS constraint_type,"
+  , "  tbl.relname                                   AS \"table\","
+  , "  ARRAY_AGG(col.attname ORDER BY u.attposition) AS columns"
+  , "FROM pg_constraint c"
+  , "     JOIN LATERAL UNNEST(c.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE"
+  , "     JOIN pg_class tbl ON tbl.oid = c.conrelid"
+  , "     JOIN pg_namespace sch ON sch.oid = tbl.relnamespace"
+  , "     JOIN pg_attribute col ON (col.attrelid = tbl.oid AND col.attnum = u.attnum)"
+  , "WHERE c.contype = 'u' OR c.contype = 'p'"
+  , "GROUP BY constraint_name, constraint_type, \"table\""
+  , "ORDER BY c.contype"
   ]
 
 -- | Return all \"action types\" for /all/ the constraints.
