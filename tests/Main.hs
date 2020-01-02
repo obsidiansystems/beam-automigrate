@@ -1,6 +1,7 @@
 module Main where
 
 import Database.Beam.Migrate
+import Database.Beam.Migrate.Schema.Gen
 import Database.Beam.Migrate.Validity
 
 import qualified Data.List as L
@@ -29,12 +30,12 @@ diffProps = testGroup "Diff algorithm properties"
       \(SimilarSchemas (hsSchema, dbSchema)) ->
           fmap (L.sort . map show) (diffReferenceImplementation hsSchema dbSchema) ===
           fmap (L.sort . map show) (diff hsSchema dbSchema)
-  , QC.testProperty "reverse applying the edits of the diff algorithm yield back the Haskell schema" $
+  , QC.testProperty "reverse applying the edits of the diff algorithm yields back the Haskell schema" $
       \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
           case diff hsSchema dbSchema of
             Left e -> error (show e)
             Right edits -> (sortEdits edits, dbSchema) `sameSchema` hsSchema
-  , QC.testProperty "reverse applying the edits of the diff algorithm yield back a valid schema" $
+  , QC.testProperty "reverse applying the edits of the diff algorithm yields back a valid schema" $
       \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
           case diff hsSchema dbSchema of
             Left e -> error (show e)

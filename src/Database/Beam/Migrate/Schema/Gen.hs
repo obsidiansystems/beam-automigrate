@@ -1,25 +1,48 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Database.Beam.Migrate.Schema.Gen
     ( genSchema
     , genSimilarSchemas
+    , SimilarSchemas(..)
     , shrinkSchema
     ) where
 
+import           GHC.Generics
 import           Control.Monad
 import           Control.Monad.State.Strict
-import           Data.Foldable                  ( foldlM )
-import           Data.Set                       ( Set )
-import           Data.Text                      ( Text )
-import qualified Data.Set                      as S
-import qualified Data.Map.Strict               as M
-import qualified Data.Text                     as T
+import           Data.Foldable                            ( foldlM )
+import           Data.Set                                 ( Set )
+import           Data.Text                                ( Text )
+import qualified Data.Set                                as S
+import qualified Data.Map.Strict                         as M
+import qualified Data.Text                               as T
 
 import           Database.Beam.Migrate.Types
-import qualified Database.Beam.Backend.SQL.AST as AST
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Test.QuickCheck
+
+--
+-- Arbitrary instances
+--
+
+instance Arbitrary Schema where
+    arbitrary = genSchema
+    shrink = shrinkSchema
+
+newtype SimilarSchemas =
+    SimilarSchemas { unSchemas :: (Schema, Schema) } deriving (Generic, Show)
+
+instance Arbitrary SimilarSchemas where
+    arbitrary = SimilarSchemas <$> genSimilarSchemas
+    shrink    = genericShrink
+
+--
+-- Generators
+--
 
 genName :: (Text -> a) -> Gen a
 genName f = f . T.pack <$> vectorOf 10 (elements $ ['a' .. 'z'] ++ ['A' .. 'Z'])
@@ -160,7 +183,7 @@ shrinkSchema s =
       concatMap (shrinkColumns tName tbl) (M.toList (tableColumns tbl))
 
     shrinkColumns :: TableName -> Table -> (ColumnName, Column) -> [Schema]
-    shrinkColumns tName tbl (cName, col) =
+    shrinkColumns tName tbl (cName, _col) =
       let tbl' = tbl { tableColumns = M.delete cName (tableColumns tbl) }
       in [s { schemaTables = M.insert tName tbl' (schemaTables s) }]
 

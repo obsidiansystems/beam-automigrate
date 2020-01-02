@@ -4,12 +4,14 @@ module Database.Beam.Migrate.BenchUtil
     , predictableSchemas
     , connInfo
     , setupDatabase
+    , cleanDatabase
     , tearDownDatabase
     ) where
 
 import           System.Random.SplitMix                   ( mkSMGen )
 import           Data.ByteString                          ( ByteString )
 import           Control.DeepSeq
+import           Control.Exception                        ( finally )
 
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Random
@@ -46,8 +48,8 @@ setupDatabase dbSchema = do
       unsafeRunMigration mig -- At this point the DB contains the full schema.
   pure conn
 
-tearDownDatabase :: Pg.Connection -> IO ()
-tearDownDatabase conn = do
+cleanDatabase :: Pg.Connection -> IO ()
+cleanDatabase conn = do
    Pg.withTransaction conn $ do
      -- Delete all tables to start from a clean slate
      _ <- Pg.execute_ conn "DROP SCHEMA public CASCADE"
@@ -55,4 +57,6 @@ tearDownDatabase conn = do
      _ <- Pg.execute_ conn "GRANT USAGE ON SCHEMA public TO public"
      _ <- Pg.execute_ conn "GRANT CREATE ON SCHEMA public TO public"
      pure ()
-   Pg.close conn
+
+tearDownDatabase :: Pg.Connection -> IO ()
+tearDownDatabase conn = cleanDatabase conn `finally` Pg.close conn

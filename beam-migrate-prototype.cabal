@@ -70,7 +70,7 @@ library
 
 test-suite beam-migrate-prototype-tests
   type:                exitcode-stdio-1.0
-  hs-source-dirs:      test
+  hs-source-dirs:      tests
   main-is:             Main.hs
   other-modules:       Test.Database.Beam.Migrate.Arbitrary
   build-depends:       base
@@ -83,6 +83,26 @@ test-suite beam-migrate-prototype-tests
                      , text
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings
+
+test-suite beam-migrate-prototype-integration-tests
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      integration-tests
+  main-is:             Main.hs
+  build-depends:       base
+                     , QuickCheck
+                     , beam-migrate-prototype -any
+                     , containers
+                     , postgresql-simple
+                     , pretty-simple
+                     , tasty
+                     , tasty-quickcheck
+                     , text
+                     , tmp-postgres >= 1.31.0.1 && < 1.35.0.0
+  default-language:    Haskell2010
+  default-extensions:  OverloadedStrings
+                       ScopedTypeVariables
+  if !flag(integration-tests)
+    buildable:         False
 
 executable beam-migrate-prototype-examples
   hs-source-dirs:      examples
@@ -142,5 +162,10 @@ flag werror
 
 flag ghcipretty
   description: Enable pretty-show for pretty-printing purposes
+  default:     False
+  manual:      True
+
+flag integration-tests
+  description: Enable integration tests that talks to a Postgres DB.
   default:     False
   manual:      True

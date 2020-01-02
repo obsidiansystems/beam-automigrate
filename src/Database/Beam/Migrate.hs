@@ -28,6 +28,7 @@ module Database.Beam.Migrate
   , createMigration
   -- * Printing migrations for debugging purposes
   , printMigration
+  , printMigrationIO
   -- * Unsafe functions
   , unsafeRunMigration
   -- * Handy re-exports
@@ -241,10 +242,10 @@ toSqlSyntax = \case
 
       renderTableColumn :: (ColumnName, Column) -> Text
       renderTableColumn (colName, col) =
-          columnName colName <> " "
-                             <> renderDataType (columnType col)
-                             <> " "
-                             <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
+          sqlEscaped (columnName colName) <> " "
+                                          <> renderDataType (columnType col)
+                                          <> " "
+                                          <> T.intercalate " " (map renderColumnConstraint (S.toList $ columnConstraints col))
 
       renderInsertionOrder :: InsertionOrder -> Text
       renderInsertionOrder Before = "BEFORE"
@@ -384,22 +385,25 @@ sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", 
 
 evalMigration :: Monad m => Migration m -> m (Either DiffError [WithPriority Edit])
 evalMigration m = do
-    (a, s) <- runStateT (runExceptT m) mempty
-    case a of
-      Left e    -> pure (Left e)
-      Right ()  -> pure (Right s)
+  (a, s) <- runStateT (runExceptT m) mempty
+  case a of
+    Left e    -> pure (Left e)
+    Right ()  -> pure (Right s)
 
 -- | Create the migration from a 'Diff'.
 createMigration :: Monad m => Diff -> Migration m
 createMigration (Left e) = throwError e
 createMigration (Right edits) = ExceptT $ do
-    put edits
-    pure (Right ())
+  put edits
+  pure (Right ())
 
 -- | Prints the migration to stdout. Useful for debugging and diagnostic.
 printMigration :: MonadIO m => Migration m -> m ()
 printMigration m = do
-    (a, sortedEdits) <- fmap sortEdits <$> runStateT (runExceptT m) mempty
-    case a of
-      Left e    -> liftIO $ throwIO e
-      Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sortedEdits)
+  (a, sortedEdits) <- fmap sortEdits <$> runStateT (runExceptT m) mempty
+  case a of
+    Left e    -> liftIO $ throwIO e
+    Right ()  -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sortedEdits)
+
+printMigrationIO :: Migration Pg.Pg -> IO ()
+printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMigration mig
