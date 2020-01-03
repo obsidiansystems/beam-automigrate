@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -109,7 +110,7 @@ userTablesQ = fromString $ unlines
 -- | Get information about default values for /all/ tables.
 defaultsQ :: Pg.Query
 defaultsQ = fromString $ unlines
-  [ "SELECT col.table_name, col.column_name, col.column_default "
+  [ "SELECT col.table_name, col.column_name, col.column_default, col.data_type "
   , "FROM information_schema.columns col "
   , "WHERE col.column_default IS NOT NULL "
   , "AND col.table_schema NOT IN('information_schema', 'pg_catalog') "
@@ -224,7 +225,15 @@ getSchema conn = do
                -> (ByteString, Pg.Oid, Int, Bool, ByteString)
                -> IO Columns
     getColumns tName enumData defaultData c (attname, atttypid, atttypmod, attnotnull, format_type) = do
-      let mbPrecision = if atttypmod == -1 then Nothing else Just (atttypmod - 4)
+      -- /NOTA BENE(adn)/: The atttypmod - 4 was originally taken from 'beam-migrate'
+      -- (see: https://github.com/tathougies/beam/blob/d87120b58373df53f075d92ce12037a98ca709ab/beam-postgres/Database/Beam/Postgres/Migrate.hs#L343)
+      -- but there are cases where this is not correct, for example in the case of bitstrings.
+      -- See for example: https://stackoverflow.com/questions/52376045/why-does-atttypmod-differ-from-character-maximum-length
+      let mbPrecision =
+            if | atttypmod == -1 -> Nothing
+               | Pg.typoid Pg.bit    == atttypid -> Just atttypmod
+               | Pg.typoid Pg.varbit == atttypid -> Just atttypmod
+               | otherwise -> Just (atttypmod - 4)
       case pgTypeToColumnType atttypid mbPrecision <|> pgEnumTypeToColumnType enumData atttypid of
         Just cType -> do
           let nullConstraint  = if attnotnull then S.fromList [NotNull] else mempty
@@ -275,9 +284,12 @@ pgTypeToColumnType oid width
   | Pg.typoid Pg.numeric == oid
   = let decimals = fromMaybe 0 width .&. 0xFFFF
         prec     = (fromMaybe 0 width `shiftR` 16) .&. 0xFFFF
-    in  Just (SqlStdType $ numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
+    in  case (prec, decimals) of
+      (0, 0) -> Just (SqlStdType $ numericType Nothing)
+      (p, 0) -> Just (SqlStdType $ numericType $ Just (fromIntegral p, Nothing))
+      _      -> Just (SqlStdType $ numericType (Just (fromIntegral prec, Just (fromIntegral decimals))))
   | Pg.typoid Pg.float4 == oid
-  = Just (SqlStdType $ floatType (fromIntegral <$> width))
+  = Just (SqlStdType realType)
   | Pg.typoid Pg.float8 == oid
   = Just (SqlStdType doubleType)
   | Pg.typoid Pg.date == oid
@@ -323,12 +335,45 @@ type AllTableConstraints = Map TableName (Set TableConstraint)
 type AllDefaults    = Map TableName Defaults
 type Defaults       = Map ColumnName ColumnConstraint
 
+-- Get all defaults values for /all/ the columns.
+-- FIXME(adn) __IMPORTANT:__ This function currently __always_ attach an explicit type annotation to the
+-- default value, by reading its 'date_type' field, to resolve potential ambiguities.
+-- The reason for this is that we cannot reliably guarantee a convertion between default values are read
+-- by postgres and values we infer on the Schema side (using the 'beam-core' machinery). In theory we
+-- wouldn't need to explicitly annotate the types before generating a 'Default' constraint on the 'Schema'
+-- side, but this doesn't always work. For example, if we **always** specify a \"::numeric\" annotation for
+-- an 'Int', Postgres might yield \"-1::integer\" for non-positive values and simply \"-1\" for all the rest.
+-- To complicate the situation /even if/ we explicitly specify the cast
+-- (i.e. \"SET DEFAULT '?::character varying'), Postgres will ignore this when reading the default back.
+-- What we do here is obviously not optimal, but on the other hand it's not clear to me how to solve this
+-- in a meaningful and non-invasive way, for a number of reasons:
+--
+-- * For example \"beam-migrate"\ seems to resort to be using explicit serialisation for the types, although
+--   I couldn't find explicit trace if that applies for defaults explicitly.
+--   (cfr. the \"Database.Beam.Migrate.Serialization\" module in \"beam-migrate\").
+--
+-- * Another big problem is __rounding__: For example if we insert as \"double precision\" the following:
+--   Default "'-0.22030397057804563'" , Postgres will round the value and return Default "'-0.220303970578046'".
+--   Again, it's not clear to me how to prevent the users from shooting themselves here.
+--
+-- * Another quirk is with dates: \"beam\" renders a date like \'1864-05-10\' (note the single quotes) but
+--   Postgres strip those when reading the default value back.
+--
+-- * Range types are also tricky to infer. 'beam-core' escapes the range type name when rendering its default
+--   value, whereas Postgres annotates each individual field and yield the unquoted identifier. Compare:
+--   1. Beam:     \""numrange"(0, 2, '[)')\"
+--   2. Postgres: \"numrange((0)::numeric, (2)::numeric, '[)'::text)\"
+--
 getAllDefaults :: Pg.Connection -> IO AllDefaults
 getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
   where
-      addDefault :: AllDefaults -> (TableName, ColumnName, Text) -> AllDefaults
-      addDefault m (tName, colName, defValue) =
-          let entry = M.singleton colName (Default defValue)
+      addDefault :: AllDefaults -> (TableName, ColumnName, Text, Text) -> AllDefaults
+      addDefault m (tName, colName, defValue, dataType) =
+          let cleanedDefault = case T.breakOn "::" defValue of
+                (uncasted, defMb) | T.null defMb ->
+                  "'" <> T.dropAround ((==) '\'') uncasted <> "'::" <> dataType
+                _ -> defValue
+              entry = M.singleton colName (Default cleanedDefault)
           in M.alter (\case Nothing -> Just entry
                             Just ss -> Just $ ss <> entry
                      ) tName m

@@ -36,6 +36,8 @@ module Database.Beam.Migrate
   -- * Internals
   , FromAnnotated
   , ToAnnotated
+  , sqlSingleQuoted
+  , sqlEscaped
   )
 where
 
@@ -48,6 +50,7 @@ import           Control.Monad.IO.Class                   ( liftIO
                                                           )
 import           Lens.Micro                               ( (^.) )
 import           Data.Proxy
+import           Data.Maybe                               ( fromMaybe )
 import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
 import qualified Data.Set                                as S
@@ -333,9 +336,12 @@ toSqlSyntax = \case
 
       renderStdType :: AST.DataType -> Text
       renderStdType = \case
-        (AST.DataTypeChar varying prec charSet) ->
-            let ty = if varying then "VARCHAR" else "CHAR"
-            in ty <> sqlOptPrec prec <> sqlOptCharSet charSet
+        -- From the Postgres' documentation:
+        -- \"character without length specifier is equivalent to character(1).\"
+        (AST.DataTypeChar False prec charSet) ->
+          "CHAR" <> sqlOptPrec (Just $ fromMaybe 1 prec) <> sqlOptCharSet charSet
+        (AST.DataTypeChar True prec charSet) ->
+          "VARCHAR" <> sqlOptPrec prec <> sqlOptCharSet charSet
         (AST.DataTypeNationalChar varying prec) ->
             let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
             in ty <> sqlOptPrec prec
@@ -343,7 +349,11 @@ toSqlSyntax = \case
             let ty = if varying then "BIT VARYING" else "BIT"
             in ty <> sqlOptPrec prec
         (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        (AST.DataTypeDecimal prec) -> "DOUBLE" <> sqlOptNumericPrec prec
+        -- Even though beam emits 'DOUBLE here'
+        -- (see: https://github.com/tathougies/beam/blob/b245bf2c0b4c810dbac334d08ca572cec49e4d83/beam-postgres/Database/Beam/Postgres/Syntax.hs#L544)
+        -- the \"double\" type doesn't exist in Postgres.
+        -- Rather, the "NUMERIC" and "DECIMAL" types are equivalent in Postgres, and that's what we use here.
+        (AST.DataTypeDecimal prec) -> "NUMERIC" <> sqlOptNumericPrec prec
         AST.DataTypeInteger -> "INT"
         AST.DataTypeSmallInt -> "SMALLINT"
         AST.DataTypeBigInt -> "BIGINT"

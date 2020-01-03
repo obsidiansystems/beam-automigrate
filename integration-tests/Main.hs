@@ -19,6 +19,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Monadic
 
 import qualified Database.Postgres.Temp                  as Tmp
+import qualified Test.Database.Beam.Migrate.Arbitrary as Pretty
 
 
 main :: IO ()
@@ -36,7 +37,7 @@ properties = testGroup "Integration tests"
         let mig = migrate dbConn hsSchema
         runMigration dbConn mig
         dbSchema <- getSchema dbConn
-        pure $ hsSchema === dbSchema
+        pure $ hsSchema Pretty.=== dbSchema
   , -- We test that after a successful migration, calling 'diff' should yield no edits.
     dbResource $ \getResource -> QC.testProperty "Diffing after a migration yields no edits" $
       \hsSchema -> hsSchema /= noSchema ==> dbProperty getResource $ \dbConn -> liftIO $ do

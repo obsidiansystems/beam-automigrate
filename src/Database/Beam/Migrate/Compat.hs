@@ -42,6 +42,9 @@ class HasColumnType ty where
   -- | Provide a 'ColumnType' for the given type
   defaultColumnType :: Proxy ty -> ColumnType
 
+  defaultTypeCast   :: Proxy ty -> Maybe Text
+  defaultTypeCast _ = Nothing
+
   -- | If @ty@ maps to a DB @ENUM@, use this method to specify which one.
   defaultEnums      :: Proxy ty -> Enumerations
   defaultEnums _ = mempty
@@ -108,48 +111,62 @@ instance HasColumnType ty => HasColumnType (Maybe ty) where
 
 instance HasColumnType Int where
   defaultColumnType _ = SqlStdType intType
+  defaultTypeCast   _ = Just "integer"
 
 instance HasColumnType Int32 where
   defaultColumnType _ = SqlStdType intType
+  defaultTypeCast   _ = Just "integer"
 
 instance HasColumnType Int16 where
   defaultColumnType _ = SqlStdType intType
+  defaultTypeCast   _ = Just "integer"
 
 instance HasColumnType Int64 where
   defaultColumnType _ = SqlStdType bigIntType
+  defaultTypeCast   _ = Just "bigint"
 
 instance HasColumnType Word where
   defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
+  defaultTypeCast   _ = Just "numeric"
 
 instance HasColumnType Word16 where
   defaultColumnType _ = SqlStdType $ numericType (Just (5, Nothing))
+  defaultTypeCast   _ = Just "numeric"
 
 instance HasColumnType Word32 where
   defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
+  defaultTypeCast   _ = Just "numeric"
 
 instance HasColumnType Word64 where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Nothing))
+  defaultTypeCast   _ = Just "numeric"
 
 instance HasColumnType Text where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
+  defaultTypeCast   _ = Just "character varying"
 
 instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
+  defaultTypeCast _   = Just "bit"
 
 instance HasColumnType Double where
   defaultColumnType _ = SqlStdType doubleType
+  defaultTypeCast   _ = Just "double precision"
 
 instance HasColumnType Scientific where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Just 10))
+  defaultTypeCast   _ = Just "numeric"
 
 instance HasColumnType Day where
   defaultColumnType _ = SqlStdType dateType
+  defaultTypeCast   _ = Just "date"
 
 instance HasColumnType TimeOfDay where
   defaultColumnType _ = SqlStdType $ timeType Nothing False
 
 instance HasColumnType Bool where
   defaultColumnType _ = SqlStdType booleanType
+  defaultTypeCast   _ = Just "boolean"
 
 instance HasColumnType LocalTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing False

@@ -12,7 +12,7 @@ import           Test.QuickCheck
 
 import Text.Pretty.Simple (pShowNoColor)
 
-import Test.Database.Beam.Migrate.Arbitrary
+import Test.Database.Beam.Migrate.Arbitrary hiding ((===))
 
 
 main :: IO ()
