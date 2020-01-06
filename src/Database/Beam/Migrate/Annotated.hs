@@ -31,7 +31,6 @@ module Database.Beam.Migrate.Annotated (
   -- * Specifying constraints
   -- $specifyingConstraints
   , annotateTableFields
-  , utctime
   -- * Specifying Column constraints
   -- $specifyingColumnConstraints
   , defaultsTo
@@ -50,6 +49,8 @@ module Database.Beam.Migrate.Annotated (
   -- * Ports from Beam
   , zipTables
   , GZipDatabase
+  -- * Internals
+  , pgDefaultConstraint
   ) where
 
 import           Data.Kind
@@ -61,7 +62,6 @@ import           Lens.Micro                               ( SimpleGetter
 import           GHC.Generics                            as Generic
 import qualified Data.Text                               as T
 import           Data.Text                                ( Text )
-import           Data.Time                                ( UTCTime )
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
 import           Data.Monoid                              ( Endo(..) )
@@ -69,8 +69,6 @@ import           Data.Monoid                              ( Endo(..) )
 import qualified Database.Beam                           as Beam
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
                                                           , displaySyntax
-                                                          , BeamSqlBackend
-                                                          , timestampType
                                                           )
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import           Database.Beam.Postgres                   ( Postgres )
@@ -361,9 +359,6 @@ annotateTableFields modFields =
 -- Specifying default values (Postgres-specific)
 --
 
-utctime :: BeamSqlBackend be => Beam.DataType be UTCTime
-utctime = Beam.DataType (timestampType Nothing False)
-
 -- $specifyingColumnConstraints
 -- Due to the fact most column constraints can span /multiple/ columns (think about @UNIQUE@ or
 -- @FOREIGN KEY@) the only constraint associated to a 'TableFieldSchema' we allow to customise at the
@@ -375,16 +370,28 @@ utctime = Beam.DataType (timestampType Nothing False)
 --
 -- > defaultsTo (val_ $ Just 10)
 --
-defaultsTo :: HasSqlValueSyntax Pg.PgValueSyntax ty
+defaultsTo :: (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty)
            => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
            -> FieldModification (TableFieldSchema tbl) ty
 defaultsTo tyVal = FieldModification $ \old ->
     case tableFieldSchema old of
       FieldSchema ty c -> old {
           tableFieldSchema =
-            FieldSchema ty $ S.singleton (
-              Default . T.pack . displaySyntax $ Pg.fromPgExpression $ defaultTo_ tyVal) <> c
+            FieldSchema ty $ S.singleton (pgDefaultConstraint tyVal) <> c
         }
+
+-- | Postgres-specific function to convert any 'QGenExpr' into a meaningful 'PgExpressionSyntax', so
+-- that it can be rendered inside a 'Default' column constraint.
+pgDefaultConstraint :: forall ty. (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty)
+                    => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
+                    -> ColumnConstraint
+pgDefaultConstraint tyVal =
+  let syntaxFragment = T.pack . displaySyntax . Pg.fromPgExpression $ defaultTo_ tyVal
+      dVal = case defaultTypeCast (Proxy @ty) of
+            Nothing -> syntaxFragment
+            Just tc | T.head syntaxFragment == '\'' -> syntaxFragment <> "::" <> tc
+            Just tc -> "'" <> syntaxFragment <> "'::" <> tc
+  in Default dVal
   where
     -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
     -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,
@@ -392,7 +399,8 @@ defaultsTo tyVal = FieldModification $ \old ->
     -- /Database.Beam.Migrate.SQL.Tables/) and the underlying 'BeamSqlBackendExpressionSyntax' is used to
     -- call 'columnSchemaSyntax', which is then used in /their own/ definition of `FieldSchema`, which we
     -- don't follow.
-    -- NOTE(adn) It's unclear what \"t\" stands for here. Not documented in `beam-migrate` itself.
+    -- NOTE(adn) It's unclear what \"t\" stands for here, probably \"TablePrefix\". Not documented in
+    -- `beam-migrate` itself.
     defaultTo_ :: (forall s. QExpr Postgres s a) -> Pg.PgExpressionSyntax
     defaultTo_ (Beam.QExpr e) = e "t"
 
