@@ -29,8 +29,11 @@ import           Data.Int                                 ( Int16
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import qualified Data.Text                               as T
+import           Data.Scientific                          ( Scientific, scientific )
 import           Text.Printf                              ( printf )
 import           Data.Time                                ( Day
+                                                          , TimeOfDay
+                                                          , LocalTime
                                                           )
 
 import           Database.Beam.Migrate.Types
@@ -46,8 +49,6 @@ import           Database.Beam.Migrate.Annotated          ( pgDefaultConstraint 
 import           Database.Beam.Query                      ( val_ )
 
 import           Test.QuickCheck
-import           Test.QuickCheck.Instances.Text           ( )
-import           Test.QuickCheck.Instances.Scientific     ( )
 import           Test.QuickCheck.Instances.Time           ( )
 
 --
@@ -145,12 +146,17 @@ genSqlStdType = oneof [
   , genType arbitrary    (Proxy @Word64)
   , genType genAlphaName (Proxy @Text)
   , genBitStringType
-  -- , genType arbitrary (Proxy @Double) -- Unfortunately subject to rounding errors.
-  -- , genType arbitrary (Proxy @Scientific) -- Unfortunately subject to rounding errors.
+  -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
+  -- For example '1.0' is rendered '1.0' by Beam but as '1' by Postgres.
+  , genType (elements [-0.1, 3.5]) (Proxy @Double)
+  -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
+  , genType (pure (scientific (1 :: Integer) (1 :: Int))) (Proxy @Scientific)
   , genType arbitrary (Proxy @Day)
-  -- , genType (Proxy @TimeOfDay) -- Unfortunately subject to rounding errors.
+  -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
+  , genType (pure (read "01:00:07.979173" :: TimeOfDay)) (Proxy @TimeOfDay)
   , genType arbitrary (Proxy @Bool)
-  -- , genType (Proxy @LocalTime) -- Unfortunately subject to rounding errors.
+  -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
+  , genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime)
   ]
 
 genType :: forall a.
