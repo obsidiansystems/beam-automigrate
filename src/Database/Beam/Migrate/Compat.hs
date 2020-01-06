@@ -105,9 +105,11 @@ instance ( IsMaybe a ~ nullary
 
 instance HasColumnType ty => HasColumnType (Beam.TableField e ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
+  defaultTypeCast   _ = defaultTypeCast (Proxy @ty)
 
 instance HasColumnType ty => HasColumnType (Maybe ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
+  defaultTypeCast   _ = defaultTypeCast (Proxy @ty)
 
 instance HasColumnType Int where
   defaultColumnType _ = SqlStdType intType
@@ -163,6 +165,7 @@ instance HasColumnType Day where
 
 instance HasColumnType TimeOfDay where
   defaultColumnType _ = SqlStdType $ timeType Nothing False
+  defaultTypeCast   _ = Just "time without time zone"
 
 instance HasColumnType Bool where
   defaultColumnType _ = SqlStdType booleanType
@@ -170,6 +173,7 @@ instance HasColumnType Bool where
 
 instance HasColumnType LocalTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing False
+  defaultTypeCast   _ = Just "timestamp without time zone"
 
 --
 -- support for json types
