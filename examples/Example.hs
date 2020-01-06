@@ -188,15 +188,15 @@ annotatedDB :: AnnotatedDatabaseSettings Postgres FlowerDB
 annotatedDB = defaultAnnotatedDbSettings flowerDB `withDbModification` dbModification
   { dbFlowers   = annotateTableFields tableModification { flowerDiscounted = defaultsTo (val_ $ Just True) }
                <> annotateTableFields tableModification { flowerPrice = defaultsTo (val_ $ Just 10.0) }
-               <> uniqueFields [U (addressPostalCode . addressRegion . flowerAddress)]
+               <> uniqueConstraintOn [U (addressPostalCode . addressRegion . flowerAddress)]
   , dbLineItems = annotateTableFields tableModification { lineItemDiscount = defaultsTo (val_ $ Just False) }
-               <> uniqueFields [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
+               <> uniqueConstraintOn [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
   , dbOrders = annotateTableFields tableModification {
                  orderTime = defaultsTo currentTimestamp_
                , orderValidity = defaultsTo (range_ Inclusive Inclusive (val_ $ Just 10) (val_ $ Just 20))
                }
              <> foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
-             <> uniqueFields [U (addressPostalCode . addressRegion . orderAddress)]
+             <> uniqueConstraintOn [U (addressPostalCode . addressRegion . orderAddress)]
   --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
   --                          lineItemTwoFk `References` LineItemID
   --                        ] Cascade Restrict

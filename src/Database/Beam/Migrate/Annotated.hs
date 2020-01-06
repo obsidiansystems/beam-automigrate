@@ -38,7 +38,7 @@ module Database.Beam.Migrate.Annotated (
   -- $specifyingTableConstraints
   , UniqueConstraint(..)
   -- ** Unique constraint
-  , uniqueFields
+  , uniqueConstraintOn
   -- ** Foreign key constraint
   , ForeignKeyConstraint(..)
   , foreignKeyOnPk
@@ -416,11 +416,14 @@ data UniqueConstraint (tbl :: ((* -> *) -> *)) where
   U   :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
 
 -- | Given a list of 'TableField' selectors wrapped in a 'UniqueConstraint' type constructor, it adds
--- to the relevant 'AnnotatedDatabaseEntity' a new @UNIQUE@ 'TableConstraint'. If a 'PrimaryKey' is passed
--- as input, it will desugar under the hood into as many columns as the primary key refers to.
-uniqueFields :: [UniqueConstraint tbl]
-             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-uniqueFields us =
+-- to the relevant 'AnnotatedDatabaseEntity' a new @UNIQUE@ 'TableConstraint' composed by /all/ the
+-- fields specified. To put it differently, every call to 'uniqueConstraintOn' generates a /separate/
+-- @UNIQUE@ constraint composed by the listed fields.
+-- If a 'PrimaryKey' is passed as input, it will desugar under the hood into as many columns as
+-- the primary key refers to.
+uniqueConstraintOn :: [UniqueConstraint tbl]
+                   -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+uniqueConstraintOn us =
     EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e)
       -> AnnotatedDatabaseEntity (tbl {
        dbAnnotatedConstraints =
