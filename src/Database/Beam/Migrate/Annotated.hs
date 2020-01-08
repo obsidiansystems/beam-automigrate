@@ -390,6 +390,8 @@ pgDefaultConstraint tyVal =
       dVal = case defaultTypeCast (Proxy @ty) of
             Nothing -> syntaxFragment
             Just tc | T.head syntaxFragment == '\'' -> syntaxFragment <> "::" <> tc
+            -- NOTE(and) Special-case handling for CURRENT_TIMESTAMP. See issue #31.
+            Just tc | syntaxFragment == "CURRENT_TIMESTAMP" -> "(" <> syntaxFragment <> ")::" <> tc
             Just tc -> "'" <> syntaxFragment <> "'::" <> tc
   in Default dVal
   where

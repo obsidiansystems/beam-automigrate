@@ -38,7 +38,7 @@ import           Data.Time                                ( Day
 
 import           Database.Beam.Migrate.Types
 import qualified Database.Beam.Backend.SQL.AST           as AST
-import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax )
+import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax, timestampType )
 import           Database.Beam.Migrate                    ( sqlSingleQuoted
                                                           , defaultColumnType
                                                           , HasColumnType
@@ -46,7 +46,9 @@ import           Database.Beam.Migrate                    ( sqlSingleQuoted
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import qualified Database.Beam.Postgres                  as Pg
 import           Database.Beam.Migrate.Annotated          ( pgDefaultConstraint )
-import           Database.Beam.Query                      ( val_ )
+import           Database.Beam.Query                      ( val_
+                                                          , currentTimestamp_
+                                                          )
 
 import           Test.QuickCheck
 import           Test.QuickCheck.Instances.Time           ( )
@@ -157,6 +159,8 @@ genSqlStdType = oneof [
   , genType arbitrary (Proxy @Bool)
   -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
   , genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime)
+  -- Explicitly test for the 'CURRENT_TIMESTAMP' case.
+  , pure ( SqlStdType $ timestampType Nothing False, pgDefaultConstraint @LocalTime currentTimestamp_)
   ]
 
 genType :: forall a.
