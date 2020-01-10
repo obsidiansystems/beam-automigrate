@@ -64,7 +64,7 @@ instance NFData Column where
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
-data ColumnType = 
+data ColumnType =
     SqlStdType AST.DataType
   -- ^ Standard SQL types.
   | PgSpecificType PgDataType
@@ -88,11 +88,11 @@ deriving instance Show PgDataType
 deriving instance Eq PgDataType
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
-newtype PgEnum a = 
+newtype PgEnum a =
     PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
-newtype DbEnum a = 
+newtype DbEnum a =
     DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
 
 instance Semigroup Table where
@@ -152,8 +152,8 @@ data Edit =
   | EnumTypeValueAdded  EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
   deriving (Show, Eq)
 
-data InsertionOrder = 
-    Before 
+data InsertionOrder =
+    Before
   | After deriving (Show, Eq, Generic)
 
 instance NFData InsertionOrder
@@ -171,7 +171,7 @@ instance NFData Edit where
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
   rnf (EnumTypeAdded       eName enum) = eName `deepseq` enum `deepseq` ()
   rnf (EnumTypeRemoved     eName) = eName `deepseq` ()
-  rnf (EnumTypeValueAdded  eName inserted order insertionPoint) = 
+  rnf (EnumTypeValueAdded  eName inserted order insertionPoint) =
       eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.

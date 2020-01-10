@@ -221,8 +221,9 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
         vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
     in M.singleton ty vals
 
+-- For now a `DbEnum` is isomorphic to a `varCharType`, as we don't have enough information on the Postgres
+-- side to reconstruct the enumerated values.
 instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) where
-  defaultColumnType (Proxy :: (Proxy (DbEnum a))) =
-    let vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
-    in DbEnumeration (EnumerationName (T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)) vals
+  defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
+  defaultTypeCast   _ = Just "character varying"
 
