@@ -449,11 +449,23 @@ instance GTableLookupTable True sel tbl U1 where
 
 type LookupAmbiguous (sel :: Maybe Symbol) (tbl :: TableKind) =
   Text "Could not derive foreign key constraint for " :<>: ShowField sel :<>: Text "," :$$:
-  Text "because there are several tables of type `" :<>: ShowType tbl :<>: Text "' in the schema."
+  Text "because there are several tables of type `" :<>: ShowType tbl :<>: Text "' in the schema." :$$:
+  Text "In this scenario you have to manually disable the FK-discovery algorithm for all the tables " :$$:
+  Text "hit by such ambiguity, for example by creating your Schema via: " :$$:
+  Text "" :$$:
+  Text "fromAnnotatedDbSettings annotatedDB (Proxy @'[ 'UserDefinedFk TBL1, 'UserDefinedFk TBL2, .. ])" :$$:
+  Text "" :$$:
+  Text "Where `TBL1..n` are types referencing " :<>: ShowType tbl :<>: Text " in the schema." :$$:
+  Text "Once done that, you can explicitly provide manual FKs for the tables by using `foreignKeyOnPk` " :$$:
+  Text "when annotating your `DatabaseSettings`."
 
 type LookupFailed (sel :: Maybe Symbol) (tbl :: TableKind) =
   Text "Could not derive foreign key constraint for " :<>: ShowField sel :<>: Text "," :$$:
-  Text "because there are no tables of type `" :<>: ShowType tbl :<>: Text "' in the schema."
+  Text "because there are no tables of type `" :<>: ShowType tbl :<>: Text "' in the schema." :$$:
+  Text "This might be because this particular " :<>: ShowField sel :<>: Text " doesn't appear anywhere " :$$:
+  Text "in your database, so the FK-discovery mechanism doesn't know how to reach it. Please note that " :$$:
+  Text "in presence of nested databases there might be more than one field with the same name referencing " :$$:
+  Text "different things. You might want to check you are adding or targeting the correct one."
 
 type family ShowField (sel :: Maybe Symbol) :: ErrorMessage where
   ShowField Nothing    = Text "unnamed field"
