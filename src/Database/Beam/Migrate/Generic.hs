@@ -48,11 +48,11 @@ class GTables be db (anns :: [Annotation]) (x :: * -> *) where
   gTables :: AnnotatedDatabaseSettings be db -> Proxy anns -> x p -> Tables
 
 class GTableEntry (be :: *) (db :: DatabaseKind) (anns :: [Annotation]) (tableFound :: Bool) (x :: * -> *) where
-  gTableEntry :: AnnotatedDatabaseSettings be db
-              -> Proxy anns
-              -> Proxy tableFound
-              -> x p
-              -> (TableName, Table)
+  gTableEntries :: AnnotatedDatabaseSettings be db
+                -> Proxy anns
+                -> Proxy tableFound
+                -> x p
+                -> [(TableName, Table)]
 
 class GTable be db (x :: * -> *) where
   gTable :: AnnotatedDatabaseSettings be db -> x p -> Table
@@ -128,10 +128,10 @@ instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))
 --
 
 instance GTableEntry be db anns 'False (S1 f x) => GTables be db anns (S1 f x) where
-  gTables db p = uncurry M.singleton . gTableEntry db p (Proxy @'False)
+  gTables db p = M.fromList . gTableEntries db p (Proxy @'False)
 
 instance GTableEntry be db anns tableFound x => GTableEntry be db anns tableFound (S1 f x) where
-  gTableEntry db p1 p2 (M1 x) = gTableEntry db p1 p2 x
+  gTableEntries db p1 p2 (M1 x) = gTableEntries db p1 p2 x
 
 instance (GTables be db anns a, GTables be db anns b) => GTables be db anns (a :*: b) where
   gTables db p (a :*: b) = gTables db p a <> gTables db p b
@@ -174,14 +174,14 @@ instance ( GColumns (Rep (TableSchema tbl))
          , GTableEntry be db xs (TestTableEqual tbl tbl') (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
          )
   => GTableEntry be db (UserDefinedFk tbl' ': xs) 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+  gTableEntries _ _ _ (K1 annEntity) = [mkTableEntryNoFkDiscovery annEntity]
 
 instance ( GColumns (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
          , Beam.Table tbl
          )
   => GTableEntry be db (UserDefinedFk tbl' ': xs) 'True (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+  gTableEntries _ _ _ (K1 annEntity) = [mkTableEntryNoFkDiscovery annEntity]
 
 -- At this point we explored the full list and the previous equality check yielded 'True, which means a
 -- match was found. We disable the FK-discovery algorithm.
@@ -192,7 +192,7 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , Beam.Table tbl
          )
   => GTableEntry be db '[] 'True (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry _ _ _ (K1 annEntity) = mkTableEntryNoFkDiscovery annEntity
+  gTableEntries _ _ _ (K1 annEntity) = [mkTableEntryNoFkDiscovery annEntity]
 
 -- At this point we explored the full list and the previous equality check yielded 'False, so we kickoff the
 -- automatic FK-discovery algorithm.
@@ -204,7 +204,30 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
          , GTableConstraintColumns be db (Rep (TableSchema tbl))
          )
   => GTableEntry be db '[] 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
-  gTableEntry db Proxy Proxy (K1 annEntity) = mkTableEntryFkDiscovery db annEntity
+  gTableEntries db Proxy Proxy (K1 annEntity) = [mkTableEntryFkDiscovery db annEntity]
+
+-- sub-db support for GTableEntry
+
+instance ( Generic (innerDB (AnnotatedDatabaseEntity be outerDB))
+         , Beam.Database be innerDB
+         , GTableEntry be outerDB xs found (Rep (innerDB (AnnotatedDatabaseEntity be outerDB)))
+         )
+  => GTableEntry be outerDB xs found (K1 R (innerDB (AnnotatedDatabaseEntity be outerDB))) where
+  gTableEntries outerDB p1 p2 (K1 innerDB) =
+    gTableEntries outerDB p1 p2 (from innerDB)
+
+instance GTableEntry be outerDB xs found x => GTableEntry be outerDB xs found (D1 f x) where
+  gTableEntries outerDB p1 p2 (M1 x) = gTableEntries outerDB p1 p2 x
+
+instance GTableEntry be outerDB xs found x => GTableEntry be outerDB xs found (C1 f x) where
+  gTableEntries outerDB p1 p2 (M1 x) = gTableEntries outerDB p1 p2 x
+
+instance (GTableEntry be outerDB xs found a, GTableEntry be outerDB xs found b)
+  => GTableEntry be outerDB xs found (a :*: b) where
+  gTableEntries outerDB p1 p2 (a :*: b) =
+    gTableEntries outerDB p1 p2 a <> gTableEntries outerDB p1 p2 b
+
+-- end of sub-db support for GTableEntry
 
 instance GColumns x => GColumns (D1 f x) where
   gColumns (M1 x) = gColumns x
@@ -357,6 +380,25 @@ instance
       cnames = pkFieldNames entity
     in gTableLookupTable (Proxy @(TestTableEqual tbl tbl')) sel tbl (TableName tname, cnames) k
 
+-- sub-db support for GTableLookupTables
+
+instance
+  ( GTableLookupTables sel tbl (Rep (innerDB (AnnotatedDatabaseEntity be outerDB))) k
+  , Beam.Database be innerDB
+  , Generic (innerDB (AnnotatedDatabaseEntity be outerDB))
+  ) =>
+  GTableLookupTables sel tbl (K1 R (innerDB (AnnotatedDatabaseEntity be outerDB))) k where
+  gTableLookupTables sel tbl (K1 subDB) k =
+    gTableLookupTables sel tbl (from subDB) k
+
+instance GTableLookupTables sel tbl x k => GTableLookupTables sel tbl (D1 f x) k where
+    gTableLookupTables sel tbl (M1 x) k = gTableLookupTables sel tbl x k
+
+instance GTableLookupTables sel tbl x k => GTableLookupTables sel tbl (C1 f x) k where
+    gTableLookupTables sel tbl (M1 x) k = gTableLookupTables sel tbl x k
+
+-- end of sub-db support for GTableLookupTables
+
 instance
   ( GTableLookupTableExpectFail (TestTableEqual tbl tbl') sel tbl k
   , Beamable tbl'
@@ -364,6 +406,33 @@ instance
   GTableLookupTablesExpectFail sel tbl (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl'))) k where
   gTableLookupTablesExpectFail sel tbl r (K1 _entity) =
     gTableLookupTableExpectFail (Proxy @(TestTableEqual tbl tbl')) sel tbl r
+
+-- sub-db support for GTableLookupTablesExpectFail
+
+instance
+  ( GTableLookupTablesExpectFail sel tbl (Rep (innerDb (AnnotatedDatabaseEntity be outerDb))) k
+  , Generic (innerDb (AnnotatedDatabaseEntity be outerDb))
+  , Beam.Database be innerDb
+  ) =>
+  GTableLookupTablesExpectFail sel tbl (K1 R (innerDb (AnnotatedDatabaseEntity be outerDb))) k where
+  gTableLookupTablesExpectFail sel tbl r (K1 subDB) =
+    gTableLookupTablesExpectFail sel tbl r (from subDB)
+
+instance
+  ( GTableLookupTablesExpectFail sel tbl x k
+  ) =>
+  GTableLookupTablesExpectFail sel tbl (D1 f x) k where
+  gTableLookupTablesExpectFail sel tbl r (M1 x) =
+    gTableLookupTablesExpectFail sel tbl r x
+
+instance
+  ( GTableLookupTablesExpectFail sel tbl x k
+  ) =>
+  GTableLookupTablesExpectFail sel tbl (C1 f x) k where
+  gTableLookupTablesExpectFail sel tbl r (M1 x) =
+    gTableLookupTablesExpectFail sel tbl r x
+
+-- end of sub-db support for GTableLookupTablesExpectFail
 
 type family TestTableEqual (tbl1 :: TableKind) (tbl2 :: TableKind) :: Bool where
   TestTableEqual tbl tbl = True
