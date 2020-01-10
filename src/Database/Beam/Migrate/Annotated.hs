@@ -55,7 +55,6 @@ module Database.Beam.Migrate.Annotated (
 
 import           Data.Kind
 import           Data.Proxy
-import           Data.Functor.Identity                    ( runIdentity )
 import qualified Lens.Micro                              as Lens
 import           Lens.Micro                               ( SimpleGetter
                                                           , (^.)
@@ -68,7 +67,6 @@ import qualified Data.Set                                as S
 import           Data.Monoid                              ( Endo(..) )
 
 import qualified Database.Beam                           as Beam
-import qualified Database.Beam.Schema.Tables             as Beam
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
                                                           , displaySyntax
                                                           )
