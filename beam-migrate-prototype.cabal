@@ -111,6 +111,7 @@ executable beam-migrate-prototype-examples
   main-is:             Main.hs
   other-modules:       Example
                        ForeignKeys
+                       SubDatabases
   build-depends:       base
                      , aeson
                      , beam-core
@@ -121,6 +122,14 @@ executable beam-migrate-prototype-examples
                      , time
   default-language:    Haskell2010
   default-extensions:  OverloadedStrings
+                       MultiParamTypeClasses
+                       TypeApplications
+                       DataKinds
+                       FlexibleInstances
+                       StandaloneDeriving
+                       FlexibleContexts
+                       DeriveGeneric
+                       TypeFamilies
   ghc-options:       -Wall -O2 -rtsopts
   if flag(werror)
     ghc-options:       -Werror

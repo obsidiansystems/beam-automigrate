@@ -55,6 +55,7 @@ module Database.Beam.Migrate.Annotated (
 
 import           Data.Kind
 import           Data.Proxy
+import           Data.Functor.Identity                    ( runIdentity )
 import qualified Lens.Micro                              as Lens
 import           Lens.Micro                               ( SimpleGetter
                                                           , (^.)
@@ -67,6 +68,7 @@ import qualified Data.Set                                as S
 import           Data.Monoid                              ( Endo(..) )
 
 import qualified Database.Beam                           as Beam
+import qualified Database.Beam.Schema.Tables             as Beam
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
                                                           , displaySyntax
                                                           )
@@ -171,6 +173,14 @@ instance ( IsAnnotatedDatabaseEntity be tbl
          ) => GZipDatabase be f g h (K1 Generic.R (f tbl)) (K1 Generic.R (g tbl)) (K1 Generic.R (h tbl)) where
   gZipDatabase _ combine ~(K1 x) ~(K1 y) =
     K1 <$> combine x y
+
+instance ( Beam.Database be db
+         , Generic (db f)
+         , Generic (db g), Generic (db h)
+         , GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
+         ) => GZipDatabase be f g h (K1 Generic.R (db f)) (K1 Generic.R (db g)) (K1 Generic.R (db h)) where
+  gZipDatabase _ combine ~(K1 x) ~(K1 y) =
+    K1 <$> zipTables (Proxy :: Proxy be) combine x y
 
 --
 -- An annotated Database settings.
