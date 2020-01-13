@@ -110,7 +110,7 @@ userTablesQ = fromString $ unlines
 -- | Get information about default values for /all/ tables.
 defaultsQ :: Pg.Query
 defaultsQ = fromString $ unlines
-  [ "SELECT col.table_name, col.column_name, col.column_default, col.data_type "
+  [ "SELECT col.table_name::text, col.column_name::text, col.column_default::text, col.data_type::text "
   , "FROM information_schema.columns col "
   , "WHERE col.column_default IS NOT NULL "
   , "AND col.table_schema NOT IN('information_schema', 'pg_catalog') "
@@ -137,8 +137,8 @@ enumerationsQ = fromString $ unlines
 -- | Return all foreign key constraints for /all/ 'Table's.
 foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
-  [ "SELECT kcu.table_name as foreign_table,"
-  , "       rel_kcu.table_name as primary_table,"
+  [ "SELECT kcu.table_name::text as foreign_table,"
+  , "       rel_kcu.table_name::text as primary_table,"
   , "       array_agg(kcu.column_name)::text[] as fk_columns,"
   , "       array_agg(rel_kcu.column_name)::text[] as pk_columns,"
   , "       kcu.constraint_name as cname"
