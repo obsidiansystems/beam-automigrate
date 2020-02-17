@@ -258,7 +258,7 @@ diffSequences hsSeqs dbSeqs =
     -- Currently a 'Sequence' doesn't carry any extra information, so diffing two 'Sequence's is
     -- a no-op, basically.
     whenBoth :: WhenMatched (Either DiffError) SequenceName Sequence Sequence (DList (WithPriority Edit))
-    whenBoth          = zipWithAMatched (\_ Sequence Sequence -> Right mempty)
+    whenBoth          = zipWithAMatched (\_ (Sequence _ _) (Sequence _ _) -> Right mempty)
 
 --
 -- Diffing tables together

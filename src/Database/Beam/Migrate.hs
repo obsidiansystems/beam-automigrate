@@ -228,9 +228,9 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-  SequenceAdded   sName Sequence -> createSequenceSyntax sName
-  SequenceRemoved sName          -> dropSequenceSyntax sName
-  EnumTypeAdded   tyName vals    -> createTypeSyntax tyName vals
+  SequenceAdded   sName (Sequence _tName _cName) -> createSequenceSyntax sName
+  SequenceRemoved sName                          -> dropSequenceSyntax sName
+  EnumTypeAdded   tyName vals                    -> createTypeSyntax tyName vals
   EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
   EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
       ddlSyntax ("ALTER TYPE " <> tyName

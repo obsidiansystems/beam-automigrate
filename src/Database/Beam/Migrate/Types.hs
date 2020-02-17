@@ -51,7 +51,8 @@ newtype SequenceName = SequenceName { seqName :: Text } deriving (Show, Eq, Ord,
 
 -- For now this type is isomorphic to unit as we don't need to support anything other than plain
 -- sequences.
-data Sequence = Sequence deriving (Show, Eq, Ord, Generic)
+data Sequence = 
+  Sequence { seqTable :: TableName, seqColumn :: ColumnName } deriving (Show, Eq, Ord, Generic)
 
 instance NFData SequenceName
 instance NFData Sequence

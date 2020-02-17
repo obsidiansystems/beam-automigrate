@@ -130,10 +130,10 @@ instance HasCompanionSequence' 'False ty where
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname = 
     let s@(SequenceName sname) = mkSeqName
-    in Just ((s, Sequence), Default ("nextval('" <> sname <> "'::regclass)"))
+    in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
     where
       mkSeqName :: SequenceName
-      mkSeqName = SequenceName (tableName tName <> "_" <> columnName cname <> "_seq")
+      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
 
 --
 -- Sql datatype instances for the most common types.

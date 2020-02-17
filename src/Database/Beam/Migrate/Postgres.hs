@@ -213,7 +213,11 @@ getSchema conn = do
     getSequence :: Sequences
                 -> Pg.Only Text
                 -> IO Sequences
-    getSequence allSeqs (Pg.Only seqName) = pure $ M.insert (SequenceName seqName) Sequence allSeqs
+    getSequence allSeqs (Pg.Only seqName) = 
+      case T.splitOn "___" seqName of
+        [tName, cName, "seq"] -> 
+          pure $ M.insert (SequenceName seqName) (Sequence (TableName tName) (ColumnName cName)) allSeqs
+        _ -> pure allSeqs
 
     getTable :: AllDefaults
              -> Map Pg.Oid (EnumerationName, Enumeration)
