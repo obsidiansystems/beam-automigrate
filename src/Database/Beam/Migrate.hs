@@ -390,8 +390,8 @@ toSqlSyntax = \case
         DbEnumeration (EnumerationName _) _ ->
             renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
         -- Json types
-        PgSpecificType PgJson  -> "JSON"
-        PgSpecificType PgJsonB -> "JSONB"
+        PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
+        PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
         -- Range types
         PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
         PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
@@ -401,6 +401,8 @@ toSqlSyntax = \case
         PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
         -- enumerations
         PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
+        -- serial
+        PgSpecificType PgSerial -> toS $ displaySyntax Pg.pgSerialType
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.

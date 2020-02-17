@@ -82,6 +82,7 @@ data PgDataType =
   | PgRangeTs
   | PgRangeTsTz
   | PgRangeDate
+  | PgSerial
   | PgEnumeration EnumerationName
 
 deriving instance Show PgDataType

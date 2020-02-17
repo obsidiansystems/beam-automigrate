@@ -33,6 +33,7 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 import           Database.Beam.Query            (val_, currentTimestamp_)
+import           Database.Beam.Backend.SQL.Types          ( SqlSerial )
 
 import           Database.Beam.Migrate.Annotated
 
@@ -55,6 +56,7 @@ import           Database.Beam.Migrate.Postgres ( getSchema )
 import qualified Database.PostgreSQL.Simple    as Pg
 import qualified Database.Beam.Postgres as Pg
 
+import           Data.ByteString                          ( ByteString )
 import           Data.Int                       ( Int32
                                                 , Int64
                                                 )
@@ -104,6 +106,7 @@ data Address f
 data FlowerT f = Flower
   { flowerID         :: Columnar f Int32
   , flowerName       :: Columnar f Text
+  , flowerInternalID :: Columnar f (SqlSerial Int)
   , flowerPrice      :: Columnar (Beam.Nullable f) Double
   , flowerDiscounted :: Columnar f (Maybe Bool)
   , flowerSchemaOne  :: Columnar f (PgJSON MyJson)
@@ -129,6 +132,7 @@ data LineItemT f = LineItem
   , lineItemFlowerID    :: PrimaryKey FlowerT f
   , lineItemQuantity    :: Columnar f Int64
   , lineItemDiscount    :: Columnar f (Maybe Bool)
+  , lineItemBytearray   :: Columnar f ByteString
   , lineItemNullableRef :: PrimaryKey OrderT (Beam.Nullable f)
   }
   deriving (Generic, Beamable)

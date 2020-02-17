@@ -117,6 +117,7 @@ executable beam-migrate-prototype-examples
                      , beam-core
                      , beam-migrate-prototype -any
                      , beam-postgres
+                     , bytestring
                      , postgresql-simple
                      , text
                      , time

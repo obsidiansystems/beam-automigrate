@@ -16,15 +16,18 @@ import           Data.Time.Calendar                       ( Day )
 import           Data.Time                                ( TimeOfDay
                                                           , LocalTime
                                                           )
+import           Data.ByteString                          ( ByteString )
 import           Data.Int
-import           Data.Word
 import           Data.Set                                 ( Set )
+import           Data.Word
+import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
 import qualified Data.Text                               as T
-import qualified Data.Map.Strict                         as M
 
+import           Database.Beam.Backend.SQL.Types         as Beam
 import           Database.Beam.Backend.SQL
 import qualified Database.Beam                           as Beam
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Migrate.Types
 import qualified Database.Beam.Postgres                  as Pg
@@ -151,6 +154,9 @@ instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
   defaultTypeCast _   = Just "bit"
 
+instance HasColumnType ByteString where
+  defaultColumnType _ = SqlStdType AST.DataTypeBinaryLargeObject
+
 instance HasColumnType Double where
   defaultColumnType _ = SqlStdType doubleType
   defaultTypeCast   _ = Just "double precision"
@@ -206,6 +212,12 @@ instance HasColumnType (Pg.PgRange Pg.PgTsTzRange a) where
 
 instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
   defaultColumnType _ = PgSpecificType PgRangeDate
+
+--
+-- support for SqlSerial
+--
+instance HasColumnType (Beam.SqlSerial Int) where
+  defaultColumnType _ = PgSpecificType PgSerial
 
 --
 -- support for enum types
