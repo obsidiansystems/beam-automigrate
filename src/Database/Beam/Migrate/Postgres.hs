@@ -134,6 +134,10 @@ enumerationsQ = fromString $ unlines
   , "GROUP BY t.typname, t.oid"
   ]
 
+-- | Get the sequence data for all sequence types in the database.
+sequencesQ :: Pg.Query
+sequencesQ = fromString "SELECT c.relname FROM pg_class c WHERE c.relkind = 'S'"
+
 -- | Return all foreign key constraints for /all/ 'Table's.
 foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
@@ -194,9 +198,10 @@ getSchema conn = do
   allTableConstraints  <- getAllConstraints conn
   allDefaults          <- getAllDefaults conn
   enumerationData      <- Pg.fold_ conn enumerationsQ mempty getEnumeration
+  sequences            <- Pg.fold_ conn sequencesQ mempty getSequence
   tables               <-
       Pg.fold_ conn userTablesQ mempty (getTable allDefaults enumerationData allTableConstraints)
-  pure $ Schema tables (M.fromList $ M.elems enumerationData)
+  pure $ Schema tables (M.fromList $ M.elems enumerationData) sequences
 
   where
     getEnumeration :: Map Pg.Oid (EnumerationName, Enumeration)
@@ -204,6 +209,11 @@ getSchema conn = do
                    -> IO (Map Pg.Oid (EnumerationName, Enumeration))
     getEnumeration allEnums (enumName, oid, V.toList -> vals) =
       pure $ M.insert oid (EnumerationName enumName, Enumeration vals) allEnums
+
+    getSequence :: Sequences
+                -> Pg.Only Text
+                -> IO Sequences
+    getSequence allSeqs (Pg.Only seqName) = pure $ M.insert (SequenceName seqName) Sequence allSeqs
 
     getTable :: AllDefaults
              -> Map Pg.Oid (EnumerationName, Enumeration)

@@ -25,7 +25,7 @@ import qualified Data.Set                                as S
 import qualified Data.Text                               as T
 
 import           Database.Beam.Backend.SQL.Types         as Beam
-import           Database.Beam.Backend.SQL
+import           Database.Beam.Backend.SQL         hiding ( tableName )
 import qualified Database.Beam                           as Beam
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
@@ -40,7 +40,7 @@ import           Data.Aeson                              as JSON
 -- Specifying SQL data types and constraints
 --
 
-class HasColumnType ty where
+class HasCompanionSequence ty => HasColumnType ty where
 
   -- | Provide a 'ColumnType' for the given type
   defaultColumnType :: Proxy ty -> ColumnType
@@ -72,10 +72,6 @@ type family IsMaybe (k :: *) :: Bool where
   IsMaybe (Beam.TableField t _)         = 'False
   IsMaybe _                             = 'False
 
-type family IsPgEnum (k :: *) :: Bool where
-  IsPgEnum (PgEnum x)                    = 'True
-  IsPgEnum _                             = 'False
-
 -- Default /table-level/ constraints.
 instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
   schemaConstraints' Proxy Proxy = mempty
@@ -101,6 +97,43 @@ instance ( IsMaybe a ~ nullary
          , HasSchemaConstraints' nullary a
          ) => HasSchemaConstraints a where
   schemaConstraints = schemaConstraints' (Proxy :: Proxy nullary)
+
+--
+-- Generating \"companion\" sequences when particular types are used.
+--
+
+type family GeneratesSqlSequence ty where
+    GeneratesSqlSequence (SqlSerial a) = 'True
+    GeneratesSqlSequence _             = 'False
+
+class HasCompanionSequence' (generatesSeq :: Bool) ty where
+  hasCompanionSequence' :: Proxy generatesSeq
+                        -> Proxy ty
+                        -> TableName 
+                        -> ColumnName 
+                        -> Maybe ((SequenceName, Sequence), ColumnConstraint)
+
+class HasCompanionSequence ty where
+  hasCompanionSequence :: Proxy ty
+                       -> TableName 
+                       -> ColumnName 
+                       -> Maybe ((SequenceName, Sequence), ColumnConstraint)
+
+instance ( GeneratesSqlSequence ty ~ genSeq
+         , HasCompanionSequence' genSeq ty
+         ) => HasCompanionSequence ty where
+  hasCompanionSequence = hasCompanionSequence' (Proxy :: Proxy genSeq)
+
+instance HasCompanionSequence' 'False ty where
+  hasCompanionSequence' _ _ _ _ = Nothing
+
+instance HasCompanionSequence' 'True (SqlSerial a) where
+  hasCompanionSequence' Proxy Proxy tName cname = 
+    let s@(SequenceName sname) = mkSeqName
+    in Just ((s, Sequence), Default ("nextval('" <> sname <> "')"))
+    where
+      mkSeqName :: SequenceName
+      mkSeqName = SequenceName (tableName tName <> "_" <> columnName cname <> "_seq")
 
 --
 -- Sql datatype instances for the most common types.

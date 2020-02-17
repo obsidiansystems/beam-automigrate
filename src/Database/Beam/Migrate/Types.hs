@@ -24,9 +24,14 @@ import qualified Database.Beam.Backend.SQL.AST           as AST
 
 data Schema = Schema { schemaTables        :: Tables
                      , schemaEnumerations  :: Enumerations
+                     , schemaSequences     :: Sequences
                      } deriving (Show, Eq, Generic)
 
 instance NFData Schema
+
+--
+-- Enumerations
+--
 
 type Enumerations = Map EnumerationName Enumeration
 
@@ -35,6 +40,25 @@ newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, E
 
 instance NFData EnumerationName
 instance NFData Enumeration
+
+--
+-- Sequences
+--
+
+type Sequences = Map SequenceName Sequence
+
+newtype SequenceName = SequenceName { seqName :: Text } deriving (Show, Eq, Ord, Generic)
+
+-- For now this type is isomorphic to unit as we don't need to support anything other than plain
+-- sequences.
+data Sequence = Sequence deriving (Show, Eq, Ord, Generic)
+
+instance NFData SequenceName
+instance NFData Sequence
+
+--
+-- Tables
+--
 
 type Tables = Map TableName Table
 
@@ -151,6 +175,8 @@ data Edit =
   | EnumTypeAdded       EnumerationName Enumeration
   | EnumTypeRemoved     EnumerationName
   | EnumTypeValueAdded  EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
+  | SequenceAdded       SequenceName    Sequence
+  | SequenceRemoved     SequenceName
   deriving (Show, Eq)
 
 data InsertionOrder =
@@ -174,6 +200,8 @@ instance NFData Edit where
   rnf (EnumTypeRemoved     eName) = eName `deepseq` ()
   rnf (EnumTypeValueAdded  eName inserted order insertionPoint) =
       eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
+  rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
+  rnf (SequenceRemoved sName) = sName `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
 data DiffError =
@@ -193,7 +221,7 @@ instance NFData DiffError
 --
 
 noSchema :: Schema
-noSchema = Schema mempty mempty
+noSchema = Schema mempty mempty mempty
 
 noTableConstraints :: Set TableConstraint
 noTableConstraints = mempty

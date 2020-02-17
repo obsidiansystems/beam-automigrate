@@ -228,7 +228,9 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-  EnumTypeAdded   tyName vals -> createTypeSyntax tyName vals
+  SequenceAdded   sName Sequence -> createSequenceSyntax sName
+  SequenceRemoved sName          -> dropSequenceSyntax sName
+  EnumTypeAdded   tyName vals    -> createTypeSyntax tyName vals
   EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
   EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
       ddlSyntax ("ALTER TYPE " <> tyName
@@ -334,6 +336,12 @@ toSqlSyntax = \case
       createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
+      createSequenceSyntax :: SequenceName -> Pg.PgSyntax
+      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> s <> ";\n"
+
+      dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
+      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> s <> ";\n"
+
       renderStdType :: AST.DataType -> Text
       renderStdType = \case
         -- From the Postgres' documentation:
@@ -401,8 +409,10 @@ toSqlSyntax = \case
         PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
         -- enumerations
         PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
-        -- serial
-        PgSpecificType PgSerial -> toS $ displaySyntax Pg.pgSerialType
+        -- serial. For this type we desugar to the full DDL and therefore
+        -- we treat this type simply as an integer. The schema will track the
+        -- creation of the associated sequence and the default value.
+        PgSpecificType PgSerial -> "INTEGER"
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.

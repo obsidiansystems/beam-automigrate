@@ -55,25 +55,27 @@ newtype WithPriority a = WithPriority { unPriority :: (a, Priority) } deriving (
 
 editPriority :: Edit -> Priority
 editPriority = \case
-  -- Operations that create tables or enums have top priority
+  -- Operations that create tables, sequences or enums have top priority
   EnumTypeAdded{}                     -> Priority 0
-  TableAdded{}                        -> Priority 1
+  SequenceAdded{}                     -> Priority 1
+  TableAdded{}                        -> Priority 2
   -- We cannot create a column if the relevant table (or enum type) is not there.
-  ColumnAdded{}                       -> Priority 2
+  ColumnAdded{}                       -> Priority 3
   -- Operations that set constraints or change the shape of a type have lower priority
-  ColumnTypeChanged{}                 -> Priority 3
-  EnumTypeValueAdded{}                -> Priority 4
+  ColumnTypeChanged{}                 -> Priority 4
+  EnumTypeValueAdded{}                -> Priority 5
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
-  TableConstraintAdded _ Unique{}     -> Priority 5
-  TableConstraintAdded _ PrimaryKey{} -> Priority 6
-  TableConstraintAdded _ ForeignKey{} -> Priority 7
-  ColumnConstraintAdded{}             -> Priority 8
-  TableConstraintRemoved{}            -> Priority 9
-  ColumnConstraintRemoved{}           -> Priority 10
+  TableConstraintAdded _ Unique{}     -> Priority 6
+  TableConstraintAdded _ PrimaryKey{} -> Priority 7
+  TableConstraintAdded _ ForeignKey{} -> Priority 8
+  ColumnConstraintAdded{}             -> Priority 9
+  TableConstraintRemoved{}            -> Priority 10
+  ColumnConstraintRemoved{}           -> Priority 11
   -- Destructive operations go last
-  ColumnRemoved{}                     -> Priority 11
-  TableRemoved{}                      -> Priority 12
-  EnumTypeRemoved{}                   -> Priority 13
+  ColumnRemoved{}                     -> Priority 12
+  TableRemoved{}                      -> Priority 13
+  EnumTypeRemoved{}                   -> Priority 14
+  SequenceRemoved{}                   -> Priority 15
 
 mkEdit :: Edit -> WithPriority Edit
 mkEdit e = WithPriority (e, editPriority e)
@@ -95,15 +97,19 @@ class Diffable a where
 -- or returning the list of 'Edit's necessary to turn the first into the second.
 instance Diffable Schema where
   diff hsSchema dbSchema = do
-      tableDiffs <- diff (schemaTables hsSchema) (schemaTables dbSchema)
-      enumDiffs  <- diff (schemaEnumerations hsSchema) (schemaEnumerations dbSchema)
-      pure $ tableDiffs <> enumDiffs
+      tableDiffs    <- diff (schemaTables hsSchema) (schemaTables dbSchema)
+      enumDiffs     <- diff (schemaEnumerations hsSchema) (schemaEnumerations dbSchema)
+      sequenceDiffs <- diff (schemaSequences hsSchema) (schemaSequences dbSchema)
+      pure $ tableDiffs <> enumDiffs <> sequenceDiffs
 
 instance Diffable Tables where
   diff t1 = fmap D.toList . diffTables t1
 
 instance Diffable Enumerations where
-  diff t1 = fmap D.toList . diffEnums t1
+  diff e1 = fmap D.toList . diffEnums e1
+
+instance Diffable Sequences where
+  diff s1 = fmap D.toList . diffSequences s1
 
 --
 -- Reference implementation
@@ -234,6 +240,25 @@ appendAfter :: EnumerationName -> [Text] -> Text -> [WithPriority Edit]
 appendAfter _ []  _        = mempty
 appendAfter eName [l] z    = [mkEdit $ EnumTypeValueAdded eName l After z]
 appendAfter eName (l:ls) z = mkEdit (EnumTypeValueAdded eName l After z) : appendAfter eName ls l
+
+--
+-- Diffing sequences together
+--
+
+diffSequences :: Sequences -> Sequences -> DiffA DList
+diffSequences hsSeqs dbSeqs =
+  M.foldl' D.append mempty <$> mergeA whenSeqsAdded whenSeqsRemoved whenBoth hsSeqs dbSeqs
+  where
+    whenSeqsAdded :: WhenMissing (Either DiffError) SequenceName Sequence (DList (WithPriority Edit))
+    whenSeqsAdded = traverseMissing (\k v -> Right . D.singleton . mkEdit $ SequenceAdded k v)
+
+    whenSeqsRemoved :: WhenMissing (Either DiffError) SequenceName Sequence (DList (WithPriority Edit))
+    whenSeqsRemoved = traverseMissing (\k _ -> Right . D.singleton . mkEdit $ SequenceRemoved k)
+
+    -- Currently a 'Sequence' doesn't carry any extra information, so diffing two 'Sequence's is
+    -- a no-op, basically.
+    whenBoth :: WhenMatched (Either DiffError) SequenceName Sequence Sequence (DList (WithPriority Edit))
+    whenBoth          = zipWithAMatched (\_ Sequence Sequence -> Right mempty)
 
 --
 -- Diffing tables together

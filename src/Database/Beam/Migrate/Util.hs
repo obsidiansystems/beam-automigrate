@@ -20,9 +20,10 @@ import           Database.Beam.Schema.Tables    ( Columnar'(..)
                                                 , dbTableSettings
                                                 , fieldName
                                                 , primaryKey
+                                                , dbEntityName
                                                 )
 
-import           Database.Beam.Migrate.Types    ( ColumnName(..) )
+import           Database.Beam.Migrate.Types    ( ColumnName(..), TableName(..) )
 
 
 --
@@ -50,6 +51,9 @@ instance HasColumnNames (Beam.TableField tbl ty) tbl where
 -- | Extracts the 'TableSettings' out of the input 'DatabaseEntity'.
 tableSettings :: Beam.DatabaseEntity be db (TableEntity tbl) -> TableSettings tbl
 tableSettings entity = dbTableSettings $ entity ^. dbEntityDescriptor
+
+tableName :: Beam.Beamable tbl => Beam.DatabaseEntity be db (TableEntity tbl) -> TableName
+tableName entity = TableName $ (entity ^. dbEntityDescriptor . dbEntityName)
 
 -- | Extracts the primary key of a table as a list of 'ColumnName'.
 pkFieldNames :: (Beamable (PrimaryKey tbl), Beam.Table tbl)

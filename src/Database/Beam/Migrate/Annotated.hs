@@ -61,7 +61,6 @@ import           Lens.Micro                               ( SimpleGetter
                                                           )
 import           GHC.Generics                            as Generic
 import qualified Data.Text                               as T
-import           Data.Text                                ( Text )
 import           Data.Set                                 ( Set )
 import qualified Data.Set                                as S
 import           Data.Monoid                              ( Endo(..) )
@@ -248,7 +247,7 @@ type TableSchema tbl =
 data TableFieldSchema (tbl :: (* -> *) -> *) ty where
     TableFieldSchema
       ::
-      { tableFieldName :: Text
+      { tableFieldName :: ColumnName
       , tableFieldSchema :: FieldSchema ty }
       -> TableFieldSchema tbl ty
 
@@ -286,7 +285,7 @@ instance ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint
     => GDefaultTableSchema (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)
                            (S1 f (K1 Generic.R (Beam.TableField tbl ty)) p) where
     gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)) (M1 (K1 fName)) = M1 (K1 s)
-      where s = TableFieldSchema (fName ^. Beam.fieldName) defaultFieldSchema
+      where s = TableFieldSchema (ColumnName $ fName ^. Beam.fieldName) defaultFieldSchema
             defaultFieldSchema = FieldSchema (defaultColumnType (Proxy @ty))
                                              (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
 
