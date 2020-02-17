@@ -287,7 +287,7 @@ pgSerialTyColumnType :: Pg.Oid
                      -> Maybe ColumnType
 pgSerialTyColumnType oid (Just (Default d)) = do
     guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
-    pure $ PgSpecificType PgSerial
+    pure $ SqlStdType intType
 pgSerialTyColumnType _ _ = Nothing
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.

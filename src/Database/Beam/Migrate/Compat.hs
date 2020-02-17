@@ -40,7 +40,7 @@ import           Data.Aeson                              as JSON
 -- Specifying SQL data types and constraints
 --
 
-class HasCompanionSequence ty => HasColumnType ty where
+class HasColumnType ty where
 
   -- | Provide a 'ColumnType' for the given type
   defaultColumnType :: Proxy ty -> ColumnType
@@ -254,13 +254,16 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
 --     colname integer DEFAULT nextval('tablename_colname_seq') NOT NULL
 -- );
 --
--- While we could treat simply as an integer, is desireable to carry around a value-level evidence that this
--- is a \"special\" type which is different from a simple integer, because it carries around a \"companion\"
--- sequence (which is generated via the generic-deriving machinery). Discriminating this type from a normal
--- integer means we can drop the associated sequence if we want if the type is removed from the schema.
---
+-- Historically this was treated as a richer type (i.e. a 'PgSpecificType PgSerial') which had the advantage
+-- of being able, for example, to track down when a column type changed so that we were able to drop the
+-- relevant sequence if needed. However, this created problems when reconciling the 'Schema' type with the
+-- one from the DB in case this type appeared \"behind\" a 'PrimaryKey' constraint. In that case it appeared
+-- in the 'Schema' as a 'PgSerial' but in reality that should have been simply an integer. This led to the
+-- creation of an auxiliary \"companion type\" concept which was making the overall complication ever so
+-- slightly more complicated. Using just 'intType' here simplifies everything, at the cost of not-so-precise
+-- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
 instance HasColumnType (Beam.SqlSerial Int) where
-  defaultColumnType _ = PgSpecificType PgSerial 
+  defaultColumnType _ = SqlStdType intType
 
 --
 -- support for enum types

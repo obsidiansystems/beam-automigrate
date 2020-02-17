@@ -265,7 +265,7 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
-instance HasColumnType ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
+instance HasCompanionSequence ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
     case hasCompanionSequence (Proxy @ty) t name of
       Nothing                 -> 
@@ -273,7 +273,7 @@ instance HasColumnType ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchem
       Just (sq, extraDefault) -> 
         (M.singleton name (Column ty (S.insert extraDefault constr)), uncurry M.singleton sq)
 
-instance HasColumnType ty => GColumns 'NoGenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
+instance GColumns 'NoGenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns Proxy _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
     (M.singleton name (Column ty constr), mempty)
 

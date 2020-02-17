@@ -409,10 +409,6 @@ toSqlSyntax = \case
         PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
         -- enumerations
         PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
-        -- serial. For this type we desugar to the full DDL and therefore
-        -- we treat this type simply as an integer. The schema will track the
-        -- creation of the associated sequence and the default value.
-        PgSpecificType PgSerial -> "INTEGER"
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
