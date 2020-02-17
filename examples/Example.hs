@@ -33,7 +33,7 @@ import           Database.Beam.Schema           ( Beamable
 import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 import           Database.Beam.Query            (val_, currentTimestamp_)
-import           Database.Beam.Backend.SQL.Types          ( SqlSerial )
+import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
 
 import           Database.Beam.Migrate.Annotated
 
@@ -118,7 +118,7 @@ data FlowerT f = Flower
   deriving (Generic, Beamable)
 
 data OrderT f = Order
-  { orderID          :: Columnar f Int32
+  { orderID          :: Columnar f (SqlSerial Int)
   , orderTime        :: Columnar f LocalTime
   , orderFlowerIdRef :: PrimaryKey FlowerT f
   , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
@@ -158,7 +158,7 @@ instance Beam.Table FlowerT where
   primaryKey = FlowerID . flowerID
 
 instance Beam.Table OrderT where
-  data PrimaryKey OrderT f = OrderID (Columnar f Int32)
+  data PrimaryKey OrderT f = OrderID (Columnar f (SqlSerial Int))
     deriving (Generic, Beamable)
   primaryKey = OrderID . orderID
 

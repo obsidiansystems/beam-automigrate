@@ -130,7 +130,7 @@ instance HasCompanionSequence' 'False ty where
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname = 
     let s@(SequenceName sname) = mkSeqName
-    in Just ((s, Sequence), Default ("nextval('" <> sname <> "')"))
+    in Just ((s, Sequence), Default ("nextval('" <> sname <> "'::regclass)"))
     where
       mkSeqName :: SequenceName
       mkSeqName = SequenceName (tableName tName <> "_" <> columnName cname <> "_seq")
@@ -247,10 +247,20 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
   defaultColumnType _ = PgSpecificType PgRangeDate
 
 --
--- support for SqlSerial
+-- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:
+---
+-- CREATE SEQUENCE tablename_colname_seq;
+-- CREATE TABLE tablename (
+--     colname integer DEFAULT nextval('tablename_colname_seq') NOT NULL
+-- );
+--
+-- While we could treat simply as an integer, is desireable to carry around a value-level evidence that this
+-- is a \"special\" type which is different from a simple integer, because it carries around a \"companion\"
+-- sequence (which is generated via the generic-deriving machinery). Discriminating this type from a normal
+-- integer means we can drop the associated sequence if we want if the type is removed from the schema.
 --
 instance HasColumnType (Beam.SqlSerial Int) where
-  defaultColumnType _ = PgSpecificType PgSerial
+  defaultColumnType _ = PgSpecificType PgSerial 
 
 --
 -- support for enum types

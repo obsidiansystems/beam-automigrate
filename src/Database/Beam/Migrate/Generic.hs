@@ -65,8 +65,14 @@ class GEnums be db x where
 
 -- Column-specific classes
 
-class GColumns (x :: * -> *) where
-  gColumns :: TableName -> x p -> (Columns, Sequences)
+-- |Type-level witness of whether or not we have to generate an extra \"SEQUENCE\" in case the table
+-- field is a 'SqlSerial'.
+data GenSequencesForSerial =
+    GenSequences
+  | NoGenSequences
+
+class GColumns (genSeqs :: GenSequencesForSerial) (x :: * -> *) where
+  gColumns :: Proxy genSeqs -> TableName -> x p -> (Columns, Sequences)
 
 class GTableConstraintColumns be db x where
   gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
@@ -142,18 +148,20 @@ instance (GTables be db anns a, GTables be db anns b) => GTables be db anns (a :
   gTables db p (a :*: b) = gTables db p a <> gTables db p b
 
 
-mkTableEntryNoFkDiscovery :: (GColumns (Rep (TableSchema tbl)), Generic (TableSchema tbl), Beam.Table tbl)
+mkTableEntryNoFkDiscovery :: ( GColumns 'GenSequences (Rep (TableSchema tbl))
+                             , Generic (TableSchema tbl), Beam.Table tbl
+                             )
                           => AnnotatedDatabaseEntity be db (TableEntity tbl)
                           -> ((TableName, Table), Sequences)
 mkTableEntryNoFkDiscovery annEntity =
   let entity          = annEntity ^. deannotate
       tName           = entity ^. dbEntityDescriptor . dbEntityName
       pks             = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
-      (columns, seqs) = gColumns (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
+      (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons   = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
   in  ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
 
-mkTableEntryFkDiscovery :: ( GColumns (Rep (TableSchema tbl))
+mkTableEntryFkDiscovery :: ( GColumns 'GenSequences (Rep (TableSchema tbl))
                            , Generic (TableSchema tbl)
                            , Beam.Table tbl
                            , GTableConstraintColumns be db (Rep (TableSchema tbl))
@@ -173,7 +181,7 @@ mkTableEntryFkDiscovery db annEntity =
 -- The general idea is to carry around a (tableFound :: Bool) type-level witness to be used as we uncons
 -- the type-level list. If we find a match, we toggle-off the FK-discovery algorithm, otherwise we don't.
 
-instance ( GColumns (Rep (TableSchema tbl))
+instance ( GColumns 'GenSequences (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
          , Beam.Table tbl
          , GTableEntry be db xs (TestTableEqual tbl tbl') (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
@@ -181,7 +189,7 @@ instance ( GColumns (Rep (TableSchema tbl))
   => GTableEntry be db (UserDefinedFk tbl' ': xs) 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl))) where
   gTableEntries _ _ _ (K1 annEntity) = first (:[]) (mkTableEntryNoFkDiscovery annEntity)
 
-instance ( GColumns (Rep (TableSchema tbl))
+instance ( GColumns 'GenSequences (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
          , Beam.Table tbl
          )
@@ -192,7 +200,7 @@ instance ( GColumns (Rep (TableSchema tbl))
 -- match was found. We disable the FK-discovery algorithm.
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
-         , GColumns (Rep (TableSchema tbl))
+         , GColumns 'GenSequences (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
          , Beam.Table tbl
          )
@@ -203,7 +211,7 @@ instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
 -- automatic FK-discovery algorithm.
 
 instance ( IsAnnotatedDatabaseEntity be (TableEntity tbl)
-         , GColumns (Rep (TableSchema tbl))
+         , GColumns 'GenSequences (Rep (TableSchema tbl))
          , Generic (TableSchema tbl)
          , Beam.Table tbl
          , GTableConstraintColumns be db (Rep (TableSchema tbl))
@@ -234,20 +242,20 @@ instance (GTableEntry be outerDB xs found a, GTableEntry be outerDB xs found b)
 
 -- end of sub-db support for GTableEntry
 
-instance GColumns x => GColumns (D1 f x) where
-  gColumns t (M1 x) = gColumns t x
+instance GColumns gseq x => GColumns gseq (D1 f x) where
+  gColumns p t (M1 x) = gColumns p t x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (D1 f x) where
   gTableConstraintsColumns db tbl (M1 x) = gTableConstraintsColumns db tbl x
 
-instance GColumns x => GColumns (C1 f x) where
-  gColumns t (M1 x) = gColumns t x
+instance GColumns gseq x => GColumns gseq (C1 f x) where
+  gColumns p t (M1 x) = gColumns p t x
 
 instance GTableConstraintColumns be db x => GTableConstraintColumns be db (C1 f x) where
   gTableConstraintsColumns db tbl (M1 x) = gTableConstraintsColumns db tbl x
 
-instance (GColumns a, GColumns b) => GColumns (a :*: b) where
-  gColumns t (a :*: b) = gColumns t a <> gColumns t b
+instance (GColumns p a, GColumns p b) => GColumns p (a :*: b) where
+  gColumns p t (a :*: b) = gColumns p t a <> gColumns p t b
 
 instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => GTableConstraintColumns be db (a :*: b) where
   gTableConstraintsColumns db tbl (a :*: b) = S.union (gTableConstraintsColumns db tbl a) (gTableConstraintsColumns db tbl b)
@@ -257,33 +265,45 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
-instance HasColumnType ty => GColumns (S1 m (K1 R (TableFieldSchema tbl ty))) where
-  gColumns t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
+instance HasColumnType ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
+  gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
     case hasCompanionSequence (Proxy @ty) t name of
       Nothing                 -> 
         (M.singleton name (Column ty constr), mempty)
       Just (sq, extraDefault) -> 
         (M.singleton name (Column ty (S.insert extraDefault constr)), uncurry M.singleton sq)
 
-instance {-# OVERLAPS #-} ( GColumns (Rep (sub f))
+instance HasColumnType ty => GColumns 'NoGenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
+  gColumns Proxy _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
+    (M.singleton name (Column ty constr), mempty)
+
+gColumnsPK :: TableName 
+           -> S1 m (K1 R (TableFieldSchema tbl ty)) p
+           -> (Columns, Sequences)
+gColumnsPK _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
+  (M.singleton name (Column ty constr), mempty)
+
+instance {-# OVERLAPS #-} ( GColumns p (Rep (sub f))
          , Generic (sub f)
          )
-    => GColumns (S1 m (K1 R (sub f))) where
-  gColumns t (M1 (K1 e)) = gColumns t (from e)
+    => GColumns p (S1 m (K1 R (sub f))) where
+  gColumns p t (M1 (K1 e)) = gColumns p t (from e)
 
-instance ( GColumns (Rep (PrimaryKey tbl f))
+-- If a PrimaryKey is referenced in another table, we do not want to recreate the \"SEQUENCE\" and
+-- \"nextval\" default constraint associated with the original field.
+instance ( GColumns 'NoGenSequences (Rep (PrimaryKey tbl f))
          , Generic (PrimaryKey tbl f)
          , Beamable (PrimaryKey tbl)
          )
-    => GColumns (S1 m (K1 R (PrimaryKey tbl f))) where
-  gColumns t (M1 (K1 e)) = gColumns t (from e)
+    => GColumns x (S1 m (K1 R (PrimaryKey tbl f))) where
+  gColumns _ t (M1 (K1 e)) = gColumns (Proxy @NoGenSequences) t (from e)
 
 instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
 
 instance {-# OVERLAPS #-} ( Generic (AnnotatedDatabaseSettings be db)
          , Generic (sub f)
-         , GColumns (Rep (sub f))
+         , GColumns 'GenSequences (Rep (sub f))
          , GTableConstraintColumns be db (Rep (sub f))
          ) => GTableConstraintColumns be db (S1 m (K1 R (sub f))) where
   gTableConstraintsColumns db tname (M1 (K1 e)) =
@@ -291,7 +311,7 @@ instance {-# OVERLAPS #-} ( Generic (AnnotatedDatabaseSettings be db)
 
 instance ( Generic (AnnotatedDatabaseSettings be db)
          , Generic (PrimaryKey tbl f)
-         , GColumns (Rep (PrimaryKey tbl f))
+         , GColumns 'NoGenSequences (Rep (PrimaryKey tbl f))
          , GTableLookupSettings sel tbl (Rep (AnnotatedDatabaseSettings be db))
          , m ~ MetaSel sel su ss ds
          ) => GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f))) where
@@ -309,7 +329,7 @@ instance ( Generic (AnnotatedDatabaseSettings be db)
           )
     where
       cnames :: [ColumnName]
-      cnames = M.keys $ fst (gColumns (TableName tname) (from e))
+      cnames = M.keys $ fst (gColumns (Proxy @NoGenSequences) (TableName tname) (from e))
 
       reftname :: TableName
       refcnames :: [ColumnName]
