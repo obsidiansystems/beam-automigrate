@@ -58,6 +58,10 @@ data Reason =
   -- ^ The 'Enum' we were trying to add already existed.
   | EnumInsertionPointDoesntExist EnumerationName Enumeration Text
   -- ^ The value in this 'Enum' to be used to insert a new one before/after it didn't exist.
+  | SequenceAlreadyExist SequenceName Sequence
+  -- ^ The 'Sequence' we were trying to add already existed.
+  | SequenceDoesntExist    SequenceName
+  -- ^ The 'Sequence' we were trying to edit didn't exist.
   | TableReferencesDeletedColumnInConstraint TableName (Qualified ColumnName) TableConstraint
   -- ^ This 'Table' references a deleted 'Column' in one of its 'TableConstraint's.
   | ColumnReferencesNonExistingEnum (Qualified ColumnName) EnumerationName
@@ -67,6 +71,7 @@ data Reason =
   | ColumnsInFkAreNotUniqueOrPrimaryKeyFields TableName [Qualified ColumnName]
   -- ^ This 'Table' has a 'ForeignKey' constaint in it which references external columns which are either
   -- not unique or not fields of a PRIMARY KEY.
+  | ColumnStillReferencesSequence SequenceName (Qualified ColumnName)
   | NotAllColumnsExist TableName (S.Set ColumnName) (S.Set ColumnName)
   -- ^ This 'TableConstraint' references one or more 'Column's which don't exist.
   | DeletedConstraintAffectsExternalTables (TableName, TableConstraint) (Qualified ColumnName, TableConstraint)
@@ -84,6 +89,7 @@ data ValidationFailed =
   | InvalidRemoveTable     TableName                     Reason
   | InvalidRemoveColumn    (Qualified ColumnName)        Reason
   | InvalidRemoveEnum      EnumerationName               Reason
+  | InvalidRemoveSequence  SequenceName                  Reason
   | InvalidEnum            EnumerationName               Reason
   | InvalidColumn          (Qualified ColumnName)        Reason
   | InvalidRemoveColumnConstraint (Qualified ColumnName) Reason
@@ -248,6 +254,27 @@ validateRemoveEnum s eName =
           let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
           in Left $ InvalidRemoveEnum eName reason
 
+-- | Checking that the removal of a 'Sequence' is valid requires us to store the 'TableName'
+-- and the 'ColumnName' inside the 'Sequence' type, so that we can check in logarithmic time if this sequence
+-- is still referenced by the target column.
+validateRemoveSequence :: Schema -> SequenceName -> Sequence -> Either ValidationFailed ()
+validateRemoveSequence s sName (Sequence targetTable targetColumn) =
+  let mbCol = do
+        tbl <- M.lookup targetTable (schemaTables s)
+        col <- M.lookup targetColumn (tableColumns tbl)
+        pure $ any hasNextValConstraint (S.toList (columnConstraints col))
+  in case mbCol of
+    Just True  -> 
+      let reason = ColumnStillReferencesSequence sName (Qualified targetTable targetColumn)
+      in Left $ InvalidRemoveSequence sName reason
+    _ -> Right ()  
+  where
+    hasNextValConstraint :: ColumnConstraint -> Bool
+    hasNextValConstraint (Default defTxt) = case parseSequenceName (SequenceName defTxt) of
+      Just (tName, cName) | tName == targetTable && cName == targetColumn -> True
+      _ -> False
+    hasNextValConstraint _ = False
+
 -- | Validate that adding a new 'TableConstraint' doesn't violate referential integrity.
 validateAddTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
 validateAddTableConstraint = validateTableConstraint
@@ -315,6 +342,7 @@ toApplyFailed e (InvalidTableConstraint _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveTable     _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveColumn    _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveEnum      _ reason)        = InvalidEdit e reason
+toApplyFailed e (InvalidRemoveSequence  _ reason)        = InvalidEdit e reason
 toApplyFailed e (InvalidEnum _ reason)                   = InvalidEdit e reason
 toApplyFailed e (InvalidColumn _ reason)                 = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveColumnConstraint _ reason) = InvalidEdit e reason
@@ -372,6 +400,16 @@ applyEdit s e = runExcept $ case e of
 
   EnumTypeValueAdded  eName addedValue insOrder insPoint ->
     withExistingEnum eName e s (addValueToEnum e eName addedValue insOrder insPoint)
+
+  SequenceAdded sName seqq -> liftEither $ do
+    seqs' <- M.alterF (\case
+      Nothing       -> Right (Just seqq)
+      Just existing -> Left (InvalidEdit e (SequenceAlreadyExist sName existing))
+                        ) sName (schemaSequences s)
+    pure $ s { schemaSequences = seqs' }
+
+  SequenceRemoved sName ->
+    withExistingSequence sName e s (removeSequence e s sName)
 
 --
 -- Various combinators for specific parts of a Schema
@@ -485,6 +523,19 @@ withExistingEnum eName e s action = liftEither $ do
                       ) eName (schemaEnumerations s)
   pure $ s { schemaEnumerations = enums' }
 
+-- | Performs an action over an existing 'Sequence', failing if the 'Sequence' doesn't exist.
+withExistingSequence :: SequenceName
+                     -> Edit
+                     -> Schema
+                     -> (Sequence -> Either ApplyFailed (Maybe Sequence) )
+                     -> Except ApplyFailed Schema
+withExistingSequence sName e s action = liftEither $ do
+  seqs' <- M.alterF (\case
+    Nothing    -> Left (InvalidEdit e (SequenceDoesntExist sName))
+    Just enum -> action enum
+                      ) sName (schemaSequences s)
+  pure $ s { schemaSequences = seqs' }
+
 addTableConstraint :: Edit
                    -> Schema
                    -> TableConstraint
@@ -553,3 +604,12 @@ addValueToEnum e eName addedValue insOrder insPoint (Enumeration vals) =
       After  ->
         let (hd, tl) = L.break (insPoint ==) vals
         in pure . Just $ Enumeration (hd <> (addedValue : tl))
+
+removeSequence :: Edit
+               -> Schema
+               -> SequenceName
+               -> Sequence
+               -> Either ApplyFailed (Maybe Sequence)
+removeSequence e s sName sqss = runExcept . withExcept (toApplyFailed e) . liftEither $ do
+    validateRemoveSequence s sName sqss
+    pure Nothing

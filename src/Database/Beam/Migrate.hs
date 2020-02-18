@@ -228,7 +228,9 @@ toSqlSyntax = \case
       updateSyntax (alterTable tblName <> renderAddConstraint cstr)
   TableConstraintRemoved tblName cstr ->
       updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-  EnumTypeAdded   tyName vals -> createTypeSyntax tyName vals
+  SequenceAdded   sName (Sequence _tName _cName) -> createSequenceSyntax sName
+  SequenceRemoved sName                          -> dropSequenceSyntax sName
+  EnumTypeAdded   tyName vals                    -> createTypeSyntax tyName vals
   EnumTypeRemoved    (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
   EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
       ddlSyntax ("ALTER TYPE " <> tyName
@@ -334,6 +336,12 @@ toSqlSyntax = \case
       createTypeSyntax (EnumerationName ty) (Enumeration vals) = Pg.emit $ toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
+      createSequenceSyntax :: SequenceName -> Pg.PgSyntax
+      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> s <> ";\n"
+
+      dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
+      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> s <> ";\n"
+
       renderStdType :: AST.DataType -> Text
       renderStdType = \case
         -- From the Postgres' documentation:
@@ -390,8 +398,8 @@ toSqlSyntax = \case
         DbEnumeration (EnumerationName _) _ ->
             renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
         -- Json types
-        PgSpecificType PgJson  -> "JSON"
-        PgSpecificType PgJsonB -> "JSONB"
+        PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
+        PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
         -- Range types
         PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
         PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range

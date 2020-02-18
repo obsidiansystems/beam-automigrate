@@ -16,15 +16,18 @@ import           Data.Time.Calendar                       ( Day )
 import           Data.Time                                ( TimeOfDay
                                                           , LocalTime
                                                           )
+import           Data.ByteString                          ( ByteString )
 import           Data.Int
-import           Data.Word
 import           Data.Set                                 ( Set )
+import           Data.Word
+import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
 import qualified Data.Text                               as T
-import qualified Data.Map.Strict                         as M
 
-import           Database.Beam.Backend.SQL
+import           Database.Beam.Backend.SQL.Types         as Beam
+import           Database.Beam.Backend.SQL         hiding ( tableName )
 import qualified Database.Beam                           as Beam
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Migrate.Types
 import qualified Database.Beam.Postgres                  as Pg
@@ -69,10 +72,6 @@ type family IsMaybe (k :: *) :: Bool where
   IsMaybe (Beam.TableField t _)         = 'False
   IsMaybe _                             = 'False
 
-type family IsPgEnum (k :: *) :: Bool where
-  IsPgEnum (PgEnum x)                    = 'True
-  IsPgEnum _                             = 'False
-
 -- Default /table-level/ constraints.
 instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
   schemaConstraints' Proxy Proxy = mempty
@@ -98,6 +97,35 @@ instance ( IsMaybe a ~ nullary
          , HasSchemaConstraints' nullary a
          ) => HasSchemaConstraints a where
   schemaConstraints = schemaConstraints' (Proxy :: Proxy nullary)
+
+--
+-- Generating \"companion\" sequences when particular types are used.
+--
+
+type family GeneratesSqlSequence ty where
+    GeneratesSqlSequence (SqlSerial a) = 'True
+    GeneratesSqlSequence _             = 'False
+
+class HasCompanionSequence' (generatesSeq :: Bool) ty where
+  hasCompanionSequence' :: Proxy generatesSeq
+                        -> Proxy ty
+                        -> TableName 
+                        -> ColumnName 
+                        -> Maybe ((SequenceName, Sequence), ColumnConstraint)
+
+class HasCompanionSequence ty where
+  hasCompanionSequence :: Proxy ty
+                       -> TableName 
+                       -> ColumnName 
+                       -> Maybe ((SequenceName, Sequence), ColumnConstraint)
+
+instance ( GeneratesSqlSequence ty ~ genSeq
+         , HasCompanionSequence' genSeq ty
+         ) => HasCompanionSequence ty where
+  hasCompanionSequence = hasCompanionSequence' (Proxy :: Proxy genSeq)
+
+instance HasCompanionSequence' 'False ty where
+  hasCompanionSequence' _ _ _ _ = Nothing
 
 --
 -- Sql datatype instances for the most common types.
@@ -150,6 +178,9 @@ instance HasColumnType Text where
 instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
   defaultTypeCast _   = Just "bit"
+
+instance HasColumnType ByteString where
+  defaultColumnType _ = SqlStdType AST.DataTypeBinaryLargeObject
 
 instance HasColumnType Double where
   defaultColumnType _ = SqlStdType doubleType
@@ -206,6 +237,33 @@ instance HasColumnType (Pg.PgRange Pg.PgTsTzRange a) where
 
 instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
   defaultColumnType _ = PgSpecificType PgRangeDate
+
+--
+-- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:
+---
+-- CREATE SEQUENCE tablename_colname_seq;
+-- CREATE TABLE tablename (
+--     colname integer DEFAULT nextval('tablename_colname_seq') NOT NULL
+-- );
+--
+-- Historically this was treated as a richer type (i.e. a 'PgSpecificType PgSerial') which had the advantage
+-- of being able, for example, to track down when a column type changed so that we were able to drop the
+-- relevant sequence if needed. However, this created problems when reconciling the 'Schema' type with the
+-- one from the DB in case this type appeared \"behind\" a 'PrimaryKey' constraint. In that case it appeared
+-- in the 'Schema' as a 'PgSerial' but in reality that should have been simply an integer. This led to the
+-- creation of an auxiliary \"companion type\" concept which was making the overall complication ever so
+-- slightly more complicated. Using just 'intType' here simplifies everything, at the cost of not-so-precise
+-- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
+instance HasColumnType (Beam.SqlSerial Int) where
+  defaultColumnType _ = SqlStdType intType
+
+instance HasCompanionSequence' 'True (SqlSerial a) where
+  hasCompanionSequence' Proxy Proxy tName cname = 
+    let s@(SequenceName sname) = mkSeqName
+    in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
+    where
+      mkSeqName :: SequenceName
+      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
 
 --
 -- support for enum types

@@ -11,12 +11,11 @@ where
 
 import           Data.String
 import           Control.Monad.State
-import           Control.Applicative
 import           Data.Maybe                               ( fromMaybe )
 import           Data.Bits                                ( (.&.)
                                                           , shiftR
                                                           )
-import           Data.Foldable                            ( foldlM )
+import           Data.Foldable                            ( foldlM, asum )
 import qualified Data.Vector                             as V
 import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
@@ -38,6 +37,7 @@ import           Database.PostgreSQL.Simple.FromField     ( FromField(..)
 import qualified Database.PostgreSQL.Simple.Types        as Pg
 import qualified Database.PostgreSQL.Simple.TypeInfo.Static
                                                          as Pg
+import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Migrate.Types
 
@@ -134,6 +134,10 @@ enumerationsQ = fromString $ unlines
   , "GROUP BY t.typname, t.oid"
   ]
 
+-- | Get the sequence data for all sequence types in the database.
+sequencesQ :: Pg.Query
+sequencesQ = fromString "SELECT c.relname FROM pg_class c WHERE c.relkind = 'S'"
+
 -- | Return all foreign key constraints for /all/ 'Table's.
 foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
@@ -194,9 +198,10 @@ getSchema conn = do
   allTableConstraints  <- getAllConstraints conn
   allDefaults          <- getAllDefaults conn
   enumerationData      <- Pg.fold_ conn enumerationsQ mempty getEnumeration
+  sequences            <- Pg.fold_ conn sequencesQ mempty getSequence
   tables               <-
       Pg.fold_ conn userTablesQ mempty (getTable allDefaults enumerationData allTableConstraints)
-  pure $ Schema tables (M.fromList $ M.elems enumerationData)
+  pure $ Schema tables (M.fromList $ M.elems enumerationData) sequences
 
   where
     getEnumeration :: Map Pg.Oid (EnumerationName, Enumeration)
@@ -204,6 +209,15 @@ getSchema conn = do
                    -> IO (Map Pg.Oid (EnumerationName, Enumeration))
     getEnumeration allEnums (enumName, oid, V.toList -> vals) =
       pure $ M.insert oid (EnumerationName enumName, Enumeration vals) allEnums
+
+    getSequence :: Sequences
+                -> Pg.Only Text
+                -> IO Sequences
+    getSequence allSeqs (Pg.Only seqName) = 
+      case T.splitOn "___" seqName of
+        [tName, cName, "seq"] -> 
+          pure $ M.insert (SequenceName seqName) (Sequence (TableName tName) (ColumnName cName)) allSeqs
+        _ -> pure allSeqs
 
     getTable :: AllDefaults
              -> Map Pg.Oid (EnumerationName, Enumeration)
@@ -234,15 +248,20 @@ getSchema conn = do
                | Pg.typoid Pg.bit    == atttypid -> Just atttypmod
                | Pg.typoid Pg.varbit == atttypid -> Just atttypmod
                | otherwise -> Just (atttypmod - 4)
-      case pgTypeToColumnType atttypid mbPrecision <|> pgEnumTypeToColumnType enumData atttypid of
+
+      let columnName = ColumnName (TE.decodeUtf8 attname)
+
+      let mbDefault = do
+            x <- M.lookup tName defaultData
+            M.lookup columnName x
+
+      case asum [ pgSerialTyColumnType atttypid mbDefault
+                , pgTypeToColumnType atttypid mbPrecision 
+                , pgEnumTypeToColumnType enumData atttypid 
+                ] of
         Just cType -> do
           let nullConstraint  = if attnotnull then S.fromList [NotNull] else mempty
-          let columnName = ColumnName (TE.decodeUtf8 attname)
-          let defaultConstraintMb = do
-                x <- M.lookup tName defaultData
-                y <- M.lookup columnName x
-                pure $ S.singleton y
-          let inferredConstraints = nullConstraint <> fromMaybe mempty defaultConstraintMb
+          let inferredConstraints = nullConstraint <> fromMaybe mempty (S.singleton <$> mbDefault)
           let newColumn  = Column cType inferredConstraints
           pure $ M.insert columnName newColumn c
         Nothing ->
@@ -262,6 +281,14 @@ pgEnumTypeToColumnType :: Map Pg.Oid (EnumerationName, Enumeration)
                        -> Maybe ColumnType
 pgEnumTypeToColumnType enumData oid =
     (\(n, _) -> PgSpecificType (PgEnumeration n)) <$> M.lookup oid enumData
+
+pgSerialTyColumnType :: Pg.Oid
+                     -> Maybe ColumnConstraint
+                     -> Maybe ColumnType
+pgSerialTyColumnType oid (Just (Default d)) = do
+    guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
+    pure $ SqlStdType intType
+pgSerialTyColumnType _ _ = Nothing
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).
@@ -296,8 +323,11 @@ pgTypeToColumnType oid width
   = Just (SqlStdType dateType)
   | Pg.typoid Pg.text == oid
   = Just (SqlStdType characterLargeObjectType)
+  -- I am not sure if this is a bug in beam-core, but both 'characterLargeObjectType' and 'binaryLargeObjectType'
+  -- get mapped into 'AST.DataTypeCharacterLargeObject', which yields TEXT, whereas we want the latter to
+  -- yield bytea.
   | Pg.typoid Pg.bytea == oid
-  = Just (SqlStdType binaryLargeObjectType)
+  = Just (SqlStdType AST.DataTypeBinaryLargeObject)
   | Pg.typoid Pg.bool == oid
   = Just (SqlStdType booleanType)
   | Pg.typoid Pg.time == oid
