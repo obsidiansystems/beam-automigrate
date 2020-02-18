@@ -39,6 +39,7 @@ import           Data.Time                                ( Day
 import           Database.Beam.Migrate.Types
 import qualified Database.Beam.Backend.SQL.AST           as AST
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax, timestampType )
+import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
 import           Database.Beam.Migrate                    ( sqlSingleQuoted
                                                           , defaultColumnType
                                                           , HasColumnType
@@ -161,6 +162,7 @@ genSqlStdType = oneof [
   , genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime)
   -- Explicitly test for the 'CURRENT_TIMESTAMP' case.
   , pure ( SqlStdType $ timestampType Nothing False, pgDefaultConstraint @LocalTime currentTimestamp_)
+  , genType (fmap SqlSerial arbitrary) (Proxy @(SqlSerial Int))
   ]
 
 genType :: forall a.
