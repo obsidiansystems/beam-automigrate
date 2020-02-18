@@ -24,7 +24,6 @@ import           Data.Foldable
 import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
 import qualified Data.List                               as L
-import qualified Data.Text                               as T
 import           Data.Text                                ( Text )
 
 import           Database.Beam.Migrate.Diff
@@ -271,8 +270,8 @@ validateRemoveSequence s sName (Sequence targetTable targetColumn) =
     _ -> Right ()  
   where
     hasNextValConstraint :: ColumnConstraint -> Bool
-    hasNextValConstraint (Default defTxt) = case T.splitOn "___" defTxt of
-      [tName, cName, "seq"] | tName == tableName targetTable && cName == columnName targetColumn -> True
+    hasNextValConstraint (Default defTxt) = case parseSequenceName (SequenceName defTxt) of
+      Just (tName, cName) | tName == targetTable && cName == targetColumn -> True
       _ -> False
     hasNextValConstraint _ = False
 

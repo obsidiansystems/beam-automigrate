@@ -127,14 +127,6 @@ instance ( GeneratesSqlSequence ty ~ genSeq
 instance HasCompanionSequence' 'False ty where
   hasCompanionSequence' _ _ _ _ = Nothing
 
-instance HasCompanionSequence' 'True (SqlSerial a) where
-  hasCompanionSequence' Proxy Proxy tName cname = 
-    let s@(SequenceName sname) = mkSeqName
-    in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
-    where
-      mkSeqName :: SequenceName
-      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
-
 --
 -- Sql datatype instances for the most common types.
 --
@@ -264,6 +256,14 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
 -- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
 instance HasColumnType (Beam.SqlSerial Int) where
   defaultColumnType _ = SqlStdType intType
+
+instance HasCompanionSequence' 'True (SqlSerial a) where
+  hasCompanionSequence' Proxy Proxy tName cname = 
+    let s@(SequenceName sname) = mkSeqName
+    in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
+    where
+      mkSeqName :: SequenceName
+      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
 
 --
 -- support for enum types
