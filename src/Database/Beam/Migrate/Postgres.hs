@@ -143,8 +143,8 @@ foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
   [ "SELECT kcu.table_name::text as foreign_table,"
   , "       rel_kcu.table_name::text as primary_table,"
-  , "       array_agg(kcu.column_name)::text[] as fk_columns,"
-  , "       array_agg(rel_kcu.column_name)::text[] as pk_columns,"
+  , "       array_agg(kcu.column_name::text)::text[] as fk_columns,"
+  , "       array_agg(rel_kcu.column_name::text)::text[] as pk_columns,"
   , "       kcu.constraint_name as cname"
   , "FROM information_schema.table_constraints tco"
   , "JOIN information_schema.key_column_usage kcu"
