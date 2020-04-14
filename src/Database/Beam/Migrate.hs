@@ -26,6 +26,8 @@ module Database.Beam.Migrate
   , runMigration
   -- * Creating a migration from a Diff
   , createMigration
+  -- * Migration safety functions
+  , splitEditsOnSafety
   -- * Printing migrations for debugging purposes
   , printMigration
   , printMigrationIO
@@ -48,11 +50,13 @@ import           Control.Monad.Except
 import           Control.Monad.IO.Class                   ( liftIO
                                                           , MonadIO
                                                           )
-import           Lens.Micro                               ( (^.) )
+import           Data.Function                            ( (&) )
+import           Lens.Micro                               ( (^.), over, _1, _2 )
 import           Data.Proxy
 import           Data.Maybe                               ( fromMaybe )
 import           Data.String.Conv                         ( toS )
 import           Data.String                              ( fromString )
+import           Data.List                                ( foldl'  )
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
@@ -174,9 +178,15 @@ data MigrationError =
     DiffFailed DiffError
   | HaskellSchemaValidationFailed  [ValidationFailed]
   | DatabaseSchemaValidationFailed [ValidationFailed]
+  | UnsafeEditsDetected [EditAction]
   deriving Show
 
 instance Exception MigrationError
+
+-- | Split the given list of 'Edit's based on their 'EditSafety' setting.
+splitEditsOnSafety :: [WithPriority Edit] -> ([WithPriority Edit], [WithPriority Edit])
+splitEditsOnSafety = foldl' (\acc p -> if isUnsafe p then over _1 (p:) acc else over _2 (p:) acc) (mempty,mempty)
+  where isUnsafe = (Unsafe ==) . editSafety . fst . unPriority
 
 -- | Given a 'Connection' to a database and a 'Schema' (which can be generated using 'fromAnnotatedDbSettings')
 -- it returns a 'Migration', which can then be executed via 'runMigration'.
@@ -215,7 +225,7 @@ data AlterTableAction =
 
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
-toSqlSyntax = \case
+toSqlSyntax e = safetyPrefix $ editAction e & \case
   TableAdded tblName tbl ->
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
                                    <> " ("
@@ -268,6 +278,10 @@ toSqlSyntax = \case
                                        <> " DROP "
                                        <> renderColumnConstraint DropConstraint cstr)
   where
+      safetyPrefix query = if editSafety e == Safe
+        then Pg.emit "/* <SAFE> */" <> query
+        else Pg.emit "/* <UNSAFE> */" <> query
+
       ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 

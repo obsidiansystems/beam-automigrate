@@ -51,7 +51,7 @@ newtype SequenceName = SequenceName { seqName :: Text } deriving (Show, Eq, Ord,
 
 -- For now this type is isomorphic to unit as we don't need to support anything other than plain
 -- sequences.
-data Sequence = 
+data Sequence =
   Sequence { seqTable :: TableName, seqColumn :: ColumnName } deriving (Show, Eq, Ord, Generic)
 
 instance NFData SequenceName
@@ -170,22 +170,61 @@ instance NFData ReferenceAction
 --
 
 -- | A possible list of edits on a 'Schema'.
-data Edit =
+data EditAction =
     TableAdded TableName Table
   | TableRemoved TableName
-  | TableConstraintAdded   TableName TableConstraint
+  | TableConstraintAdded TableName TableConstraint
   | TableConstraintRemoved TableName TableConstraint
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
-  | ColumnConstraintAdded   TableName ColumnName ColumnConstraint
+  | ColumnConstraintAdded TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
-  | EnumTypeAdded       EnumerationName Enumeration
-  | EnumTypeRemoved     EnumerationName
-  | EnumTypeValueAdded  EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
-  | SequenceAdded       SequenceName    Sequence
-  | SequenceRemoved     SequenceName
+  | EnumTypeAdded EnumerationName Enumeration
+  | EnumTypeRemoved EnumerationName
+  | EnumTypeValueAdded EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
+  | SequenceAdded SequenceName Sequence
+  | SequenceRemoved SequenceName
   deriving (Show, Eq)
+
+-- | Safety rating for a given edit.
+--
+-- "Safety" is defined as some 'Edit' that might cause data loss.
+--
+data EditSafety
+  = Unsafe
+  | Safe
+  -- TODO: think about 'SafePending (Pg ())' or similar to allow for "this edit is safe IFF"
+  deriving (Show, Eq, Ord)
+
+defaultEditSafety :: EditAction -> EditSafety
+defaultEditSafety = \case
+  TableAdded{}              -> Safe
+  TableRemoved{}            -> Unsafe
+  TableConstraintAdded{}    -> Safe
+  TableConstraintRemoved{}  -> Safe
+  ColumnAdded{}             -> Safe
+  ColumnRemoved{}           -> Unsafe
+  ColumnTypeChanged{}       -> Unsafe
+  ColumnConstraintAdded{}   -> Safe
+  ColumnConstraintRemoved{} -> Safe
+  EnumTypeAdded{}           -> Safe
+  EnumTypeRemoved{}         -> Unsafe
+  EnumTypeValueAdded{}      -> Safe
+  SequenceAdded{}           -> Safe
+  SequenceRemoved{}         -> Unsafe
+
+data Edit = Edit
+  { editAction :: EditAction
+  , editSafety :: EditSafety
+  }
+  deriving (Show, Eq)
+
+mkEditWith :: (EditAction -> EditSafety) -> EditAction -> Edit
+mkEditWith isSafe e = Edit e (isSafe e)
+
+defMkEdit :: EditAction -> Edit
+defMkEdit = mkEditWith defaultEditSafety
 
 data InsertionOrder =
     Before
@@ -194,7 +233,7 @@ data InsertionOrder =
 instance NFData InsertionOrder
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
-instance NFData Edit where
+instance NFData EditAction where
   rnf (TableAdded tName tbl) = tName `deepseq` tbl `deepseq` ()
   rnf (TableRemoved tName) = rnf tName
   rnf (TableConstraintAdded   tName tCon) = tName `deepseq` tCon `deepseq` ()
