@@ -194,7 +194,6 @@ data EditAction =
 data EditSafety
   = Unsafe
   | Safe
-  -- TODO: think about 'SafePending (Pg ())' or similar to allow for "this edit is safe IFF"
   deriving (Show, Eq, Ord)
 
 defaultEditSafety :: EditAction -> EditSafety

@@ -24,6 +24,7 @@ module Database.Beam.Migrate
   , Migration
   , migrate
   , runMigration
+  , runMigrationWithUnsafeHandler
   -- * Creating a migration from a Diff
   , createMigration
   -- * Migration safety functions
@@ -40,6 +41,7 @@ module Database.Beam.Migrate
   , ToAnnotated
   , sqlSingleQuoted
   , sqlEscaped
+  , editToSqlCommand
   )
 where
 
@@ -214,6 +216,30 @@ unsafeRunMigration m = do
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
 runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
 runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
+
+-- | Run the steps of the migration in priority order, providing a hook to allow the user
+-- to take action for 'Unsafe' edits. The given function is only called for unsafe edits.
+--
+-- This allows you to perform some checks for when the edit safe in some circumstances.
+--
+-- * Deleting an empty table/column
+-- * Making an empty column non-nullable
+--
+runMigrationWithUnsafeHandler
+  :: MonadBeam Pg.Postgres Pg.Pg
+  => (EditAction -> Pg.Pg ())
+  -> Pg.Connection
+  -> Schema
+  -> IO ()
+runMigrationWithUnsafeHandler handleUnsafe conn hsSchema = do
+  -- Create the migration with all the safeety information
+  edits <- either throwIO (pure . sortEdits) =<< evalMigration (migrate conn hsSchema)
+  -- In a transaction, go through the edits one by one and execute them  in order.
+  Pg.withTransaction conn $ Pg.runBeamPostgres conn $ forM_ edits $ \(WithPriority (edit, _)) ->
+    case editSafety edit of
+      Safe -> runNoReturn $ editToSqlCommand edit
+      -- When it's an unsafe edit, call the user function to allow them to decide what to do.
+      Unsafe -> handleUnsafe $ editAction edit
 
 -- Unfortunately Postgres' syntax is different when setting or dropping constaints. For example when we
 -- drop the default value we /don't/ repeat which was the original default value (which makes sense), but
@@ -470,3 +496,6 @@ printMigration m = do
 
 printMigrationIO :: Migration Pg.Pg -> IO ()
 printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMigration mig
+
+editToSqlCommand :: Edit -> Pg.PgCommandSyntax
+editToSqlCommand = Pg.PgCommandSyntax Pg.PgCommandTypeDdl . toSqlSyntax
