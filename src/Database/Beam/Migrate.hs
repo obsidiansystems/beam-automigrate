@@ -23,12 +23,13 @@ module Database.Beam.Migrate
   -- * Generating and running migrations
   , Migration
   , migrate
-  , runMigration
-  , runMigrationWithUnsafeHandler
+  , runMigrationUnsafe
+  , runMigrationWithEditUpdate
   -- * Creating a migration from a Diff
   , createMigration
-  -- * Migration safety functions
+  -- * Migration utility functions
   , splitEditsOnSafety
+  , fastApproximateRowCountFor
   -- * Printing migrations for debugging purposes
   , printMigration
   , printMigrationIO
@@ -187,8 +188,11 @@ instance Exception MigrationError
 
 -- | Split the given list of 'Edit's based on their 'EditSafety' setting.
 splitEditsOnSafety :: [WithPriority Edit] -> ([WithPriority Edit], [WithPriority Edit])
-splitEditsOnSafety = foldl' (\acc p -> if isUnsafe p then over _1 (p:) acc else over _2 (p:) acc) (mempty,mempty)
-  where isUnsafe = (Unsafe ==) . editSafety . fst . unPriority
+splitEditsOnSafety = foldl'
+  (\acc p -> if editSafetyIs Unsafe (fst $ unPriority p)
+             then over _1 (p:) acc
+             else over _2 (p:) acc
+  ) (mempty,mempty)
 
 -- | Given a 'Connection' to a database and a 'Schema' (which can be generated using 'fromAnnotatedDbSettings')
 -- it returns a 'Migration', which can then be executed via 'runMigration'.
@@ -214,8 +218,8 @@ unsafeRunMigration m = do
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
-runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
-runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
+runMigrationUnsafe :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
+runMigrationUnsafe conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
 
 -- | Run the steps of the migration in priority order, providing a hook to allow the user
 -- to take action for 'Unsafe' edits. The given function is only called for unsafe edits.
@@ -225,21 +229,70 @@ runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsaf
 -- * Deleting an empty table/column
 -- * Making an empty column non-nullable
 --
-runMigrationWithUnsafeHandler
+runMigrationWithEditUpdate
   :: MonadBeam Pg.Postgres Pg.Pg
-  => (EditAction -> Pg.Pg ())
+  => ([WithPriority Edit] -> [WithPriority Edit])
   -> Pg.Connection
   -> Schema
   -> IO ()
-runMigrationWithUnsafeHandler handleUnsafe conn hsSchema = do
+runMigrationWithEditUpdate editUpdate conn hsSchema = do
   -- Create the migration with all the safeety information
-  edits <- either throwIO (pure . sortEdits) =<< evalMigration (migrate conn hsSchema)
-  -- In a transaction, go through the edits one by one and execute them  in order.
-  Pg.withTransaction conn $ Pg.runBeamPostgres conn $ forM_ edits $ \(WithPriority (edit, _)) ->
-    case editSafety edit of
-      Safe -> runNoReturn $ editToSqlCommand edit
-      -- When it's an unsafe edit, call the user function to allow them to decide what to do.
-      Unsafe -> handleUnsafe $ editAction edit
+  edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
+  -- Apply the user function to possibly update the list of edits to allow the user to
+  -- intervene in the event of unsafe edits.
+  let newEdits = sortEdits $ editUpdate $ sortEdits edits
+  -- If the new list of edits still contains any unsafe edits then fail out.
+  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
+    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+  -- Execute all the edits within a single transaction so we rollback if any of them fail.
+  Pg.withTransaction conn $ Pg.runBeamPostgres conn $ forM_ newEdits $ \(WithPriority (edit, _)) -> do
+    case _editCondition edit of
+      Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+      -- Safe or slow, run that edit.
+      Right safeMaybeSlow -> safeOrSlow safeMaybeSlow edit
+      Left ec -> do
+        -- Edit is conditional, run the condition to see how safe it is to run this edit.
+        printmsg $ "edit has condition: " <> toS (prettyEditConditionQuery ec)
+        checkedSafety <- _editCondition_check ec
+        case checkedSafety of
+          Unsafe -> do
+            -- Edit determined to be unsafe, don't run it.
+            printmsg "edit unsafe by condition"
+            liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+          safeMaybeSlow -> do
+            -- Safe or slow, run that edit.
+            printmsg "edit condition satisfied"
+            safeOrSlow safeMaybeSlow edit
+  where
+    safeOrSlow safety edit = do
+      when (safety == PotentiallySlow) $ do
+        printmsg "Running potentially slow edit"
+        printmsg $ show edit
+
+      runNoReturn $ editToSqlCommand edit
+
+    printmsg :: MonadIO m => String -> m ()
+    printmsg = liftIO . putStrLn . mappend "[beam-migrate] "
+
+-- | Helper query to retrieve the approximate row count from the @pg_class@ table.
+--
+-- Number of live rows in the table. This is only an estimate used by the planner. It is
+-- updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
+--
+-- This can be used as a check to see if an otherwise 'Unsafe' 'EditAction' is safe to execute.
+--
+-- See:
+-- * <https://wiki.postgresql.org/wiki/Count_estimate PostgreSQL Wiki Count Estimate> and
+-- * <https://www.postgresql.org/docs/current/catalog-pg-class.html PostgreSQL Manual for @pg_class@>
+-- for more information.
+--
+fastApproximateRowCountFor :: TableName -> Pg.Pg (Maybe Int)
+fastApproximateRowCountFor tblName = runReturningOne $ selectCmd $ Pg.PgSelectSyntax $ qry
+  where
+    qry = Pg.emit $ toS
+      $ "SELECT reltuples AS approximate_row_count FROM pg_class WHERE relname = "
+      <> sqlEscaped (tableName tblName)
+      <> ";"
 
 -- Unfortunately Postgres' syntax is different when setting or dropping constaints. For example when we
 -- drop the default value we /don't/ repeat which was the original default value (which makes sense), but
@@ -251,7 +304,7 @@ data AlterTableAction =
 
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
-toSqlSyntax e = safetyPrefix $ editAction e & \case
+toSqlSyntax e = safetyPrefix $ _editAction e & \case
   TableAdded tblName tbl ->
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
                                    <> " ("
@@ -304,9 +357,9 @@ toSqlSyntax e = safetyPrefix $ editAction e & \case
                                        <> " DROP "
                                        <> renderColumnConstraint DropConstraint cstr)
   where
-      safetyPrefix query = if editSafety e == Safe
-        then Pg.emit "/* <SAFE> */" <> query
-        else Pg.emit "/* <UNSAFE> */" <> query
+      safetyPrefix query = if editSafetyIs Safe e
+        then Pg.emit "        " <> query
+        else Pg.emit "<UNSAFE>" <> query
 
       ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"

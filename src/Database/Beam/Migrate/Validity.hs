@@ -82,7 +82,7 @@ data Reason =
 
 data ApplyFailed =
   InvalidEdit Edit Reason
-  deriving (Show, Eq)
+  deriving Show
 
 data ValidationFailed =
     InvalidTableConstraint TableConstraint               Reason

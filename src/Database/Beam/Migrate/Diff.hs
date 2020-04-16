@@ -77,14 +77,14 @@ editPriority = \case
   EnumTypeRemoved{}                   -> Priority 14
   SequenceRemoved{}                   -> Priority 15
 
+-- TODO: This needs to support adding conditional queries.
 mkEdit :: EditAction -> WithPriority Edit
 mkEdit e = WithPriority (defMkEdit e, editPriority e)
 
--- | Sort edits according to their execution order, to make sure they don't reference something which
--- hasn't been created yet.
+-- | Sort edits according to their execution order, to make sure they don't reference
+-- something which hasn't been created yet.
 sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
 sortEdits = L.sortOn (snd . unPriority)
-
 
 type DiffA t = Either DiffError (t (WithPriority Edit))
 type Diff = DiffA []

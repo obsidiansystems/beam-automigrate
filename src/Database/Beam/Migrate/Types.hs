@@ -6,16 +6,25 @@
 {-# LANGUAGE GADTs #-}
 module Database.Beam.Migrate.Types where
 
+
 import           Control.Exception
 import           Control.DeepSeq
-import           GHC.Generics
+import           GHC.Generics                             hiding (to)
+import           Data.ByteString.Lazy                     ( ByteString )
 import           Data.String
+import           Data.String.Conv                         ( toS )
 import           Data.Typeable
+import           Lens.Micro                               ( Lens', lens, _Right, to)
+import           Lens.Micro.Extras                        ( preview )
 import           Data.Map                                 ( Map )
+import           Data.Maybe                               ( fromMaybe )
 import           Data.Set                                 ( Set )
 import           Data.Text                                ( Text )
 import qualified Data.Text                               as T
 
+import           Database.Beam.Backend.SQL               ( BeamSqlBackendSyntax, FromBackendRow )
+import           Database.Beam.Postgres                  ( Postgres, Pg )
+import qualified Database.Beam.Postgres.Syntax           as Syntax
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 --
@@ -189,11 +198,12 @@ data EditAction =
 
 -- | Safety rating for a given edit.
 --
--- "Safety" is defined as some 'Edit' that might cause data loss.
+-- "Safety" is defined as some 'EditAction' that might cause data loss.
 --
 data EditSafety
-  = Unsafe
-  | Safe
+  = Safe
+  | PotentiallySlow
+  | Unsafe
   deriving (Show, Eq, Ord)
 
 defaultEditSafety :: EditAction -> EditSafety
@@ -213,21 +223,50 @@ defaultEditSafety = \case
   SequenceAdded{}           -> Safe
   SequenceRemoved{}         -> Unsafe
 
-data Edit = Edit
-  { editAction :: EditAction
-  , editSafety :: EditSafety
+data EditCondition = EditCondition
+  { _editCondition_query :: BeamSqlBackendSyntax Postgres
+  , _editCondition_check :: Pg EditSafety
   }
-  deriving (Show, Eq)
+
+prettyEditConditionQuery :: EditCondition -> ByteString
+prettyEditConditionQuery = Syntax.pgRenderSyntaxScript . Syntax.fromPgCommand . _editCondition_query
+
+instance Show EditCondition where
+  show ec = unwords
+    [ "EditConditon {"
+    , "_editCondition_query = PgCommand {"
+    , "pgCommandType = ", show $ Syntax.pgCommandType $ _editCondition_query ec
+    , "fromPgCommand = ", toS $ prettyEditConditionQuery ec
+    , "},"
+    , "_editCondition_check = <check function>"
+    , "}"
+    ]
+
+data Edit = Edit
+  { _editAction :: EditAction
+  , _editCondition :: Either EditCondition EditSafety
+  }
+  deriving Show
+
+editAction :: Lens' Edit EditAction
+editAction = lens _editAction (\(Edit _ ec) ea -> Edit ea ec)
+
+editCondition :: Lens' Edit (Either EditCondition EditSafety)
+editCondition = lens _editCondition (\(Edit ea _) ec -> Edit ea ec)
+
+editSafetyIs :: EditSafety -> Edit -> Bool
+editSafetyIs s = fromMaybe False . preview (editCondition . _Right . to (== s))
 
 mkEditWith :: (EditAction -> EditSafety) -> EditAction -> Edit
-mkEditWith isSafe e = Edit e (isSafe e)
+mkEditWith isSafe e = Edit e (Right $ isSafe e)
 
 defMkEdit :: EditAction -> Edit
 defMkEdit = mkEditWith defaultEditSafety
 
 data InsertionOrder =
     Before
-  | After deriving (Show, Eq, Generic)
+  | After
+  deriving (Show, Eq, Generic)
 
 instance NFData InsertionOrder
 
