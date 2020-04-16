@@ -42,7 +42,7 @@ setupDatabase :: Schema -> IO Pg.Connection
 setupDatabase dbSchema = do
   conn <- Pg.connectPostgreSQL connInfo
   let mig = createMigration (diff dbSchema noSchema)
-  runMigration conn mig -- At this point the DB contains the full schema.
+  runMigrationUnsafe conn mig -- At this point the DB contains the full schema.
   pure conn
 
 cleanDatabase :: Pg.Connection -> IO ()

@@ -35,14 +35,14 @@ properties = testGroup "Integration tests"
     dbResource $ \getResource -> QC.testProperty "Migration roundtrip (empty DB)" $
       \hsSchema -> hsSchema /= noSchema ==> dbProperty getResource $ \dbConn -> liftIO $ do
         let mig = migrate dbConn hsSchema
-        runMigration dbConn mig
+        runMigrationUnsafe dbConn mig
         dbSchema <- getSchema dbConn
         pure $ hsSchema Pretty.=== dbSchema
   , -- We test that after a successful migration, calling 'diff' should yield no edits.
     dbResource $ \getResource -> QC.testProperty "Diffing after a migration yields no edits" $
       \hsSchema -> hsSchema /= noSchema ==> dbProperty getResource $ \dbConn -> liftIO $ do
         let mig = migrate dbConn hsSchema
-        runMigration dbConn mig
+        runMigrationUnsafe dbConn mig
         dbSchema <- getSchema dbConn
         pure $ diff hsSchema dbSchema === Right []
   ]

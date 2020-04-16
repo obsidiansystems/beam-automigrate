@@ -231,6 +231,9 @@ data EditCondition = EditCondition
 prettyEditConditionQuery :: EditCondition -> ByteString
 prettyEditConditionQuery = Syntax.pgRenderSyntaxScript . Syntax.fromPgCommand . _editCondition_query
 
+instance Eq EditCondition where
+  ec1 == ec1 = prettyEditConditionQuery ec1 == prettyEditConditionQuery ec2
+
 instance Show EditCondition where
   show ec = unwords
     [ "EditConditon {"
@@ -246,7 +249,7 @@ data Edit = Edit
   { _editAction :: EditAction
   , _editCondition :: Either EditCondition EditSafety
   }
-  deriving Show
+  deriving (Show, Eq)
 
 editAction :: Lens' Edit EditAction
 editAction = lens _editAction (\(Edit _ ec) ea -> Edit ea ec)
