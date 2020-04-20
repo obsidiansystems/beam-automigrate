@@ -208,8 +208,8 @@ instance HasColumnType LocalTime where
   defaultTypeCast   _ = Just "timestamp without time zone"
 
 instance HasColumnType UTCTime where
-  defaultColumnType _ = SqlStdType $ timestampType Nothing False
-  defaultTypeCast _ = Just "timestamp without time zone"
+  defaultColumnType _ = SqlStdType $ timestampType Nothing True
+  defaultTypeCast   _ = Just "timestamp with time zone"
 
 --
 -- support for json types

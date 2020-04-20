@@ -466,12 +466,8 @@ renderStdType = \case
   AST.DataTypeReal -> "REAL"
   AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
   AST.DataTypeDate -> "DATE"
-  (AST.DataTypeTime prec withTz) ->
-    let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-    in ty <> sqlOptPrec prec
-  (AST.DataTypeTimeStamp prec withTz) ->
-    let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-    in ty <> sqlOptPrec prec
+  (AST.DataTypeTime prec withTz) -> wTz withTz "TIME" prec <> sqlOptPrec prec
+  (AST.DataTypeTimeStamp prec withTz) -> wTz withTz "TIMESTAMP" prec <> sqlOptPrec prec
   (AST.DataTypeInterval _i) ->
     error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
          <> " how to render it."
@@ -486,6 +482,9 @@ renderStdType = \case
   (AST.DataTypeRow _rows) ->
       error "DataTypeRow not supported both for beam-postgres and this library."
   (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+  where
+    wTz withTz tt prec =
+      tt <> sqlOptPrec prec <> (if withTz then " WITH" else " WITHOUT") <> " TIME ZONE"
 
       -- This function also overlaps with beam-migrate functionalities.
 renderDataType :: ColumnType -> Text
