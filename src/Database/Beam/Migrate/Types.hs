@@ -22,7 +22,7 @@ import           Data.Set                                 ( Set )
 import           Data.Text                                ( Text )
 import qualified Data.Text                               as T
 
-import           Database.Beam.Backend.SQL               ( BeamSqlBackendSyntax, FromBackendRow )
+import           Database.Beam.Backend.SQL               ( BeamSqlBackendSyntax )
 import           Database.Beam.Postgres                  ( Postgres, Pg )
 import qualified Database.Beam.Postgres.Syntax           as Syntax
 import qualified Database.Beam.Backend.SQL.AST           as AST
@@ -44,8 +44,15 @@ instance NFData Schema
 
 type Enumerations = Map EnumerationName Enumeration
 
-newtype EnumerationName = EnumerationName { enumName :: Text } deriving (Show, Eq, Ord, Generic)
-newtype Enumeration     = Enumeration { enumValues :: [Text] } deriving (Show, Eq, Ord, Generic)
+newtype EnumerationName = EnumerationName
+  { enumName :: Text
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+newtype Enumeration = Enumeration
+  { enumValues :: [Text]
+  }
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData EnumerationName
 instance NFData Enumeration
@@ -56,12 +63,18 @@ instance NFData Enumeration
 
 type Sequences = Map SequenceName Sequence
 
-newtype SequenceName = SequenceName { seqName :: Text } deriving (Show, Eq, Ord, Generic)
+newtype SequenceName = SequenceName
+  { seqName :: Text
+  }
+  deriving (Show, Eq, Ord, Generic)
 
 -- For now this type is isomorphic to unit as we don't need to support anything other than plain
 -- sequences.
-data Sequence =
-  Sequence { seqTable :: TableName, seqColumn :: ColumnName } deriving (Show, Eq, Ord, Generic)
+data Sequence = Sequence
+  { seqTable :: TableName
+  , seqColumn :: ColumnName
+  }
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData SequenceName
 instance NFData Sequence
@@ -80,7 +93,11 @@ parseSequenceName (SequenceName sName) = case T.splitOn "___" sName of
 
 type Tables = Map TableName Table
 
-newtype TableName = TableName { tableName :: Text } deriving (Show, Eq, Ord, NFData)
+newtype TableName = TableName
+  { tableName :: Text
+  }
+  deriving (Show, Eq, Ord, NFData, Generic)
+
 
 data Table = Table { tableConstraints :: Set TableConstraint
                    , tableColumns :: Columns
@@ -90,7 +107,10 @@ instance NFData Table
 
 type Columns = Map ColumnName Column
 
-newtype ColumnName = ColumnName { columnName :: Text } deriving (Show, Eq, Ord, NFData)
+newtype ColumnName = ColumnName
+  { columnName :: Text
+  }
+  deriving (Show, Eq, Ord, NFData, Generic)
 
 instance IsString ColumnName where
     fromString = ColumnName . T.pack
@@ -98,7 +118,7 @@ instance IsString ColumnName where
 data Column = Column {
     columnType        :: ColumnType
   , columnConstraints :: Set ColumnConstraint
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Generic)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Column where
@@ -113,7 +133,8 @@ data ColumnType =
   -- ^ Postgres specific types.
   | DbEnumeration EnumerationName Enumeration
   -- ^ An enumeration implemented with text-based encoding.
-  deriving (Show, Eq)
+  deriving (Show, Eq, Generic)
+
 
 data PgDataType =
     PgJson
@@ -128,14 +149,15 @@ data PgDataType =
 
 deriving instance Show PgDataType
 deriving instance Eq PgDataType
+deriving instance Generic PgDataType
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
 newtype PgEnum a =
-    PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
+    PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
 newtype DbEnum a =
-    DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded)
+    DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
@@ -232,7 +254,7 @@ prettyEditConditionQuery :: EditCondition -> ByteString
 prettyEditConditionQuery = Syntax.pgRenderSyntaxScript . Syntax.fromPgCommand . _editCondition_query
 
 instance Eq EditCondition where
-  ec1 == ec1 = prettyEditConditionQuery ec1 == prettyEditConditionQuery ec2
+  ec1 == ec2 = prettyEditConditionQuery ec1 == prettyEditConditionQuery ec2
 
 instance Show EditCondition where
   show ec = unwords

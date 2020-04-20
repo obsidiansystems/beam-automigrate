@@ -31,6 +31,8 @@ module Database.Beam.Migrate
   , splitEditsOnSafety
   , fastApproximateRowCountFor
   -- * Printing migrations for debugging purposes
+  , prettyEditActionDescription
+  , prettyEditSQL
   , printMigration
   , printMigrationIO
   -- * Unsafe functions
@@ -66,6 +68,8 @@ import           Data.Text                                ( Text )
 import           Data.Bifunctor                           ( first )
 import qualified Data.Text                               as T
 import qualified Data.Text.Encoding                      as TE
+import qualified Data.Text.Lazy                          as LT
+import qualified Text.Pretty.Simple                      as PS
 
 import           GHC.Generics                      hiding ( prec )
 
@@ -267,7 +271,7 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
     safeOrSlow safety edit = do
       when (safety == PotentiallySlow) $ do
         printmsg "Running potentially slow edit"
-        printmsg $ show edit
+        printmsg $ T.unpack $ prettyEditActionDescription $ _editAction edit
 
       runNoReturn $ editToSqlCommand edit
 
@@ -435,73 +439,73 @@ toSqlSyntax e = safetyPrefix $ _editAction e & \case
       dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
       dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> s <> ";\n"
 
-      renderStdType :: AST.DataType -> Text
-      renderStdType = \case
-        -- From the Postgres' documentation:
-        -- \"character without length specifier is equivalent to character(1).\"
-        (AST.DataTypeChar False prec charSet) ->
-          "CHAR" <> sqlOptPrec (Just $ fromMaybe 1 prec) <> sqlOptCharSet charSet
-        (AST.DataTypeChar True prec charSet) ->
-          "VARCHAR" <> sqlOptPrec prec <> sqlOptCharSet charSet
-        (AST.DataTypeNationalChar varying prec) ->
-            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
-            in ty <> sqlOptPrec prec
-        (AST.DataTypeBit varying prec) ->
-            let ty = if varying then "BIT VARYING" else "BIT"
-            in ty <> sqlOptPrec prec
-        (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        -- Even though beam emits 'DOUBLE here'
-        -- (see: https://github.com/tathougies/beam/blob/b245bf2c0b4c810dbac334d08ca572cec49e4d83/beam-postgres/Database/Beam/Postgres/Syntax.hs#L544)
-        -- the \"double\" type doesn't exist in Postgres.
-        -- Rather, the "NUMERIC" and "DECIMAL" types are equivalent in Postgres, and that's what we use here.
-        (AST.DataTypeDecimal prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        AST.DataTypeInteger -> "INT"
-        AST.DataTypeSmallInt -> "SMALLINT"
-        AST.DataTypeBigInt -> "BIGINT"
-        (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
-        AST.DataTypeReal -> "REAL"
-        AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
-        AST.DataTypeDate -> "DATE"
-        (AST.DataTypeTime prec withTz) ->
-          let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        (AST.DataTypeTimeStamp prec withTz) ->
-          let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        (AST.DataTypeInterval _i) ->
-          error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
-               <> " how to render it."
-        (AST.DataTypeIntervalFromTo _from _to) ->
-          error $ "Impossible: DataTypeIntervalFromTo doesn't map to any SQLXX beam typeclass, so we don't know"
-               <> " how to render it."
-        AST.DataTypeBoolean -> "BOOL"
-        AST.DataTypeBinaryLargeObject -> "BYTEA"
-        AST.DataTypeCharacterLargeObject -> "TEXT"
-        (AST.DataTypeArray dt sz) ->
-           renderStdType dt <> "[" <> T.pack (show sz) <> "]"
-        (AST.DataTypeRow _rows) ->
-            error "DataTypeRow not supported both for beam-postgres and this library."
-        (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+renderStdType :: AST.DataType -> Text
+renderStdType = \case
+  -- From the Postgres' documentation:
+  -- \"character without length specifier is equivalent to character(1).\"
+  (AST.DataTypeChar False prec charSet) ->
+    "CHAR" <> sqlOptPrec (Just $ fromMaybe 1 prec) <> sqlOptCharSet charSet
+  (AST.DataTypeChar True prec charSet) ->
+    "VARCHAR" <> sqlOptPrec prec <> sqlOptCharSet charSet
+  (AST.DataTypeNationalChar varying prec) ->
+      let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
+      in ty <> sqlOptPrec prec
+  (AST.DataTypeBit varying prec) ->
+      let ty = if varying then "BIT VARYING" else "BIT"
+      in ty <> sqlOptPrec prec
+  (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+  -- Even though beam emits 'DOUBLE here'
+  -- (see: https://github.com/tathougies/beam/blob/b245bf2c0b4c810dbac334d08ca572cec49e4d83/beam-postgres/Database/Beam/Postgres/Syntax.hs#L544)
+  -- the \"double\" type doesn't exist in Postgres.
+  -- Rather, the "NUMERIC" and "DECIMAL" types are equivalent in Postgres, and that's what we use here.
+  (AST.DataTypeDecimal prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+  AST.DataTypeInteger -> "INT"
+  AST.DataTypeSmallInt -> "SMALLINT"
+  AST.DataTypeBigInt -> "BIGINT"
+  (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
+  AST.DataTypeReal -> "REAL"
+  AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
+  AST.DataTypeDate -> "DATE"
+  (AST.DataTypeTime prec withTz) ->
+    let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+    in ty <> sqlOptPrec prec
+  (AST.DataTypeTimeStamp prec withTz) ->
+    let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
+    in ty <> sqlOptPrec prec
+  (AST.DataTypeInterval _i) ->
+    error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
+         <> " how to render it."
+  (AST.DataTypeIntervalFromTo _from _to) ->
+    error $ "Impossible: DataTypeIntervalFromTo doesn't map to any SQLXX beam typeclass, so we don't know"
+         <> " how to render it."
+  AST.DataTypeBoolean -> "BOOL"
+  AST.DataTypeBinaryLargeObject -> "BYTEA"
+  AST.DataTypeCharacterLargeObject -> "TEXT"
+  (AST.DataTypeArray dt sz) ->
+     renderStdType dt <> "[" <> T.pack (show sz) <> "]"
+  (AST.DataTypeRow _rows) ->
+      error "DataTypeRow not supported both for beam-postgres and this library."
+  (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
 
       -- This function also overlaps with beam-migrate functionalities.
-      renderDataType :: ColumnType -> Text
-      renderDataType = \case
-        SqlStdType stdType -> renderStdType stdType
-        -- text-based enum types
-        DbEnumeration (EnumerationName _) _ ->
-            renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
-        -- Json types
-        PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
-        PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
-        -- Range types
-        PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
-        PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
-        PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
-        PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
-        PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
-        PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
-        -- enumerations
-        PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
+renderDataType :: ColumnType -> Text
+renderDataType = \case
+  SqlStdType stdType -> renderStdType stdType
+  -- text-based enum types
+  DbEnumeration (EnumerationName _) _ ->
+      renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
+  -- Json types
+  PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
+  PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
+  -- Range types
+  PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
+  PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
+  PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
+  PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
+  PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
+  PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
+  -- enumerations
+  PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 
 
 -- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
@@ -552,3 +556,60 @@ printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMi
 
 editToSqlCommand :: Edit -> Pg.PgCommandSyntax
 editToSqlCommand = Pg.PgCommandSyntax Pg.PgCommandTypeDdl . toSqlSyntax
+
+prettyEditSQL :: Edit -> Text
+prettyEditSQL = T.pack . displaySyntax . editToSqlCommand
+
+prettyEditActionDescription :: EditAction -> Text
+prettyEditActionDescription = T.unwords . \case
+  TableAdded tblName table ->
+    ["create table:", qt tblName, "\n", pshow' table]
+  TableRemoved tblName ->
+    ["remove table:", qt tblName]
+  TableConstraintAdded tblName tableConstraint ->
+    ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint]
+  TableConstraintRemoved tblName tableConstraint ->
+    ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
+  ColumnAdded tblName colName column ->
+    ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]
+  ColumnRemoved tblName colName ->
+    ["remove column:", qc colName, ", from:", qt tblName]
+  ColumnTypeChanged tblName colName oldColumnType newColumnType ->
+    [ "change type of column:" , qc colName , "in table:" , qt tblName
+    , "\nfrom:" , renderDataType oldColumnType
+    , "\nto:" , renderDataType newColumnType
+    ]
+  ColumnConstraintAdded tblName colName columnConstraint ->
+    [ "add column constraint to:" , qc colName , "in table:" , qt tblName
+    , "\n", pshow' columnConstraint
+    ]
+  ColumnConstraintRemoved tblName colName columnConstraint ->
+    [ "remove column constraint from:" , qc colName , "in table:" , qt tblName
+    , "\n", pshow' columnConstraint
+    ]
+  EnumTypeAdded eName enumeration ->
+    ["add enum type:", enumName eName, pshow' enumeration]
+  EnumTypeRemoved eName ->
+    ["remove enum type:", enumName eName]
+  EnumTypeValueAdded eName newValue insertionOrder insertedAt ->
+    [ "add enum value to enum:"
+    , enumName eName
+    , ", value:"
+    , newValue
+    , ", with order:"
+    , pshow' insertionOrder
+    , ", at pos"
+    , insertedAt
+    ]
+  SequenceAdded sequenceName sequence0 ->
+    ["add sequence:", qs sequenceName, pshow' sequence0]
+  SequenceRemoved sequenceName ->
+    ["remove sequence:", qs sequenceName]
+  where
+    q t = "'" <> t <> "'"
+    qt = q . tableName
+    qc = q . columnName
+    qs = q . seqName
+
+    pshow' :: Show a => a -> Text
+    pshow' = LT.toStrict . PS.pShow

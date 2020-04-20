@@ -15,6 +15,7 @@ import           Data.Scientific                          ( Scientific )
 import           Data.Time.Calendar                       ( Day )
 import           Data.Time                                ( TimeOfDay
                                                           , LocalTime
+                                                          , UTCTime
                                                           )
 import           Data.ByteString                          ( ByteString )
 import           Data.Int
@@ -109,14 +110,14 @@ type family GeneratesSqlSequence ty where
 class HasCompanionSequence' (generatesSeq :: Bool) ty where
   hasCompanionSequence' :: Proxy generatesSeq
                         -> Proxy ty
-                        -> TableName 
-                        -> ColumnName 
+                        -> TableName
+                        -> ColumnName
                         -> Maybe ((SequenceName, Sequence), ColumnConstraint)
 
 class HasCompanionSequence ty where
   hasCompanionSequence :: Proxy ty
-                       -> TableName 
-                       -> ColumnName 
+                       -> TableName
+                       -> ColumnName
                        -> Maybe ((SequenceName, Sequence), ColumnConstraint)
 
 instance ( GeneratesSqlSequence ty ~ genSeq
@@ -206,6 +207,10 @@ instance HasColumnType LocalTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing False
   defaultTypeCast   _ = Just "timestamp without time zone"
 
+instance HasColumnType UTCTime where
+  defaultColumnType _ = SqlStdType $ timestampType Nothing False
+  defaultTypeCast _ = Just "timestamp without time zone"
+
 --
 -- support for json types
 --
@@ -254,11 +259,11 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
 -- creation of an auxiliary \"companion type\" concept which was making the overall complication ever so
 -- slightly more complicated. Using just 'intType' here simplifies everything, at the cost of not-so-precise
 -- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
-instance HasColumnType (Beam.SqlSerial Int) where
-  defaultColumnType _ = SqlStdType intType
+instance HasColumnType ty => HasColumnType (SqlSerial ty) where
+  defaultColumnType _ = defaultColumnType (Proxy @ty)
 
 instance HasCompanionSequence' 'True (SqlSerial a) where
-  hasCompanionSequence' Proxy Proxy tName cname = 
+  hasCompanionSequence' Proxy Proxy tName cname =
     let s@(SequenceName sname) = mkSeqName
     in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
     where
@@ -284,4 +289,3 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
 instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
   defaultTypeCast   _ = Just "character varying"
-
