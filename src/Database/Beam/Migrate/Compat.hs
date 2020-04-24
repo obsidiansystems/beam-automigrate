@@ -259,7 +259,7 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
 -- creation of an auxiliary \"companion type\" concept which was making the overall complication ever so
 -- slightly more complicated. Using just 'intType' here simplifies everything, at the cost of not-so-precise
 -- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
-instance HasColumnType ty => HasColumnType (SqlSerial ty) where
+instance (Integral ty, HasColumnType ty) => HasColumnType (SqlSerial ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
 
 instance HasCompanionSequence' 'True (SqlSerial a) where
