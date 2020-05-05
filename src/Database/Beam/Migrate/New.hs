@@ -503,6 +503,8 @@ renderDataType = \case
   PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
   PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
   PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
+  -- UUID
+  PgSpecificType PgUuid      -> toS $ displaySyntax Pg.pgUuidType
   -- enumerations
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 

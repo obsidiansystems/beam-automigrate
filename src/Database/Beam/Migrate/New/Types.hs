@@ -145,6 +145,7 @@ data PgDataType =
   | PgRangeTs
   | PgRangeTsTz
   | PgRangeDate
+  | PgUuid
   | PgEnumeration EnumerationName
 
 deriving instance Show PgDataType

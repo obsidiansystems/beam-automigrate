@@ -36,6 +36,7 @@ import           Data.Aeson                              as JSON
                                                           ( FromJSON
                                                           , ToJSON
                                                           )
+import           Data.UUID
 
 --
 -- Specifying SQL data types and constraints
@@ -210,6 +211,10 @@ instance HasColumnType LocalTime where
 instance HasColumnType UTCTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing True
   defaultTypeCast   _ = Just "timestamp with time zone"
+
+instance HasColumnType UUID where
+  defaultColumnType _ = PgSpecificType PgUuid
+  defaultTypeCast   _ = Just "uuid"
 
 --
 -- support for json types
