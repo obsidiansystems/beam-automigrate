@@ -4,7 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
-module Database.Beam.Migrate.Types where
+module Database.Beam.Migrate.New.Types where
 
 
 import           Control.Exception

@@ -11,7 +11,7 @@ standard 'DatabaseSettings'. Is it possible to \"downcast\" an 'AnnotatedDatabas
 'DatabaseSettings' simply by calling 'deAnnotateDatabase'.
 -}
 
-module Database.Beam.Migrate.Annotated (
+module Database.Beam.Migrate.New.Annotated (
   -- * User annotations
     Annotation(..)
   -- * Annotating a 'DatabaseSettings'
@@ -72,9 +72,9 @@ import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import           Database.Beam.Postgres                   ( Postgres )
 import           Database.Beam.Query                      ( QExpr )
-import           Database.Beam.Migrate.Types
-import           Database.Beam.Migrate.Compat
-import           Database.Beam.Migrate.Util
+import           Database.Beam.Migrate.New.Types
+import           Database.Beam.Migrate.New.Compat
+import           Database.Beam.Migrate.New.Util
 import           Database.Beam.Schema.Tables              ( PrimaryKey
                                                           , IsDatabaseEntity
                                                           , DatabaseEntityDescriptor
@@ -405,7 +405,7 @@ pgDefaultConstraint tyVal =
     -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
     -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,
     -- which only purpose is to define an instance for 'FieldReturnType' (cfr.
-    -- /Database.Beam.Migrate.SQL.Tables/) and the underlying 'BeamSqlBackendExpressionSyntax' is used to
+    -- /Database.Beam.Migrate.New.SQL.Tables/) and the underlying 'BeamSqlBackendExpressionSyntax' is used to
     -- call 'columnSchemaSyntax', which is then used in /their own/ definition of `FieldSchema`, which we
     -- don't follow.
     -- NOTE(adn) It's unclear what \"t\" stands for here, probably \"TablePrefix\". Not documented in

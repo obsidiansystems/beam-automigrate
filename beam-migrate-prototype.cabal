@@ -18,8 +18,8 @@ extra-source-files:    README.md
 -- This private library includes common helpers which are used not only in tests
 -- but also in some integration testing executables as well as the benchmarks.
 library beam-migrate-prototype-testing-internal
-  exposed-modules:     Database.Beam.Migrate.Schema.Gen
-                       Database.Beam.Migrate.BenchUtil
+  exposed-modules:     Database.Beam.Migrate.New.Schema.Gen
+                       Database.Beam.Migrate.New.BenchUtil
   hs-source-dirs:      test-internal
   build-depends:       base
                      , QuickCheck           >= 2.13     && < 2.15
@@ -42,15 +42,15 @@ library beam-migrate-prototype-testing-internal
                        OverloadedStrings
 
 library
-  exposed-modules:     Database.Beam.Migrate
-                       Database.Beam.Migrate.Annotated
-                       Database.Beam.Migrate.Compat
-                       Database.Beam.Migrate.Diff
-                       Database.Beam.Migrate.Generic
-                       Database.Beam.Migrate.Postgres
-                       Database.Beam.Migrate.Types
-                       Database.Beam.Migrate.Util
-                       Database.Beam.Migrate.Validity
+  exposed-modules:     Database.Beam.Migrate.New
+                       Database.Beam.Migrate.New.Annotated
+                       Database.Beam.Migrate.New.Compat
+                       Database.Beam.Migrate.New.Diff
+                       Database.Beam.Migrate.New.Generic
+                       Database.Beam.Migrate.New.Postgres
+                       Database.Beam.Migrate.New.Types
+                       Database.Beam.Migrate.New.Util
+                       Database.Beam.Migrate.New.Validity
 
   hs-source-dirs:      src
 
@@ -95,7 +95,7 @@ test-suite beam-migrate-prototype-tests
   type:                exitcode-stdio-1.0
   hs-source-dirs:      tests
   main-is:             Main.hs
-  other-modules:       Test.Database.Beam.Migrate.Arbitrary
+  other-modules:       Test.Database.Beam.Migrate.New.Arbitrary
   build-depends:       base
                      , QuickCheck
                      , beam-migrate-prototype -any
@@ -112,7 +112,7 @@ test-suite beam-migrate-prototype-integration-tests
   type:                exitcode-stdio-1.0
   hs-source-dirs:      integration-tests tests
   main-is:             Main.hs
-  other-modules:       Test.Database.Beam.Migrate.Arbitrary
+  other-modules:       Test.Database.Beam.Migrate.New.Arbitrary
   build-depends:       base
                      , QuickCheck
                      , beam-migrate-prototype -any

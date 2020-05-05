@@ -11,7 +11,7 @@
 
 {- | This module provides the high-level API to migrate a database. -}
 
-module Database.Beam.Migrate
+module Database.Beam.Migrate.New
   ( -- * Annotating a database
     -- $annotatingDbSettings
     defaultAnnotatedDbSettings
@@ -81,13 +81,13 @@ import           Database.Beam.Schema                     ( Database
 import           Database.Beam.Schema.Tables              ( DatabaseEntity(..)
                                                           )
 
-import           Database.Beam.Migrate.Annotated         as Exports
-import           Database.Beam.Migrate.Generic           as Exports
-import           Database.Beam.Migrate.Types             as Exports
-import           Database.Beam.Migrate.Diff              as Exports
-import           Database.Beam.Migrate.Compat            as Exports
-import           Database.Beam.Migrate.Validity          as Exports
-import           Database.Beam.Migrate.Postgres           ( getSchema )
+import           Database.Beam.Migrate.New.Annotated         as Exports
+import           Database.Beam.Migrate.New.Generic           as Exports
+import           Database.Beam.Migrate.New.Types             as Exports
+import           Database.Beam.Migrate.New.Diff              as Exports
+import           Database.Beam.Migrate.New.Compat            as Exports
+import           Database.Beam.Migrate.New.Validity          as Exports
+import           Database.Beam.Migrate.New.Postgres           ( getSchema )
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Backend.SQL         hiding ( tableName )
@@ -153,7 +153,7 @@ deAnnotateDatabase db =
 -- Once you have an 'AnnotatedDatabaseSettings', you can produce a 'Schema' simply by calling
 -- 'fromAnnotatedDbSettings'. The second parameter can be used to selectively turn off automatic FK-discovery
 -- for one or more tables. For more information about specifying your own table constraints, refer to the
--- 'Database.Beam.Migrate.Annotated' module.
+-- 'Database.Beam.Migrate.New.Annotated' module.
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'. Under the hood, this function will do the
 -- following:

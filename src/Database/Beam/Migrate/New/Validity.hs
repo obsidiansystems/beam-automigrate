@@ -1,6 +1,6 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE ViewPatterns #-}
-module Database.Beam.Migrate.Validity
+module Database.Beam.Migrate.New.Validity
   ( -- * Types
     Reason(..)
   , ApplyFailed
@@ -26,8 +26,8 @@ import qualified Data.Set                                as S
 import qualified Data.List                               as L
 import           Data.Text                                ( Text )
 
-import           Database.Beam.Migrate.Diff
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Diff
+import           Database.Beam.Migrate.New.Types
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).

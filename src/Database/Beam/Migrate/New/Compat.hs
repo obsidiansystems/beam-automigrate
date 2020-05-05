@@ -7,7 +7,7 @@
      without the extra complication of importing and using the library itself.
 -}
 
-module Database.Beam.Migrate.Compat where
+module Database.Beam.Migrate.New.Compat where
 
 import           Data.Typeable
 import           Data.Text                                ( Text )
@@ -30,7 +30,7 @@ import           Database.Beam.Backend.SQL         hiding ( tableName )
 import qualified Database.Beam                           as Beam
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Types
 import qualified Database.Beam.Postgres                  as Pg
 import           Data.Aeson                              as JSON
                                                           ( FromJSON

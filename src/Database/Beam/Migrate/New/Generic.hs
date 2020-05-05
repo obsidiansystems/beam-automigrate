@@ -9,10 +9,10 @@
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
-module Database.Beam.Migrate.Generic where
+module Database.Beam.Migrate.New.Generic where
 
-import           Database.Beam.Migrate.Util               ( pkFieldNames )
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Util               ( pkFieldNames )
+import           Database.Beam.Migrate.New.Types
 import           Data.Bifunctor
 import           Data.Kind
 import           Data.Proxy
@@ -33,8 +33,8 @@ import           Database.Beam.Schema.Tables              ( dbEntityDescriptor
                                                           , Beamable(..)
                                                           )
 
-import           Database.Beam.Migrate.Annotated
-import           Database.Beam.Migrate.Compat
+import           Database.Beam.Migrate.New.Annotated
+import           Database.Beam.Migrate.New.Compat
 
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
