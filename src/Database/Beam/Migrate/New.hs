@@ -60,7 +60,6 @@ import           Lens.Micro                               ( (^.), over, _1, _2 )
 import           Data.Proxy
 import           Data.Maybe                               ( fromMaybe )
 import           Data.String.Conv                         ( toS )
-import           Data.String                              ( fromString )
 import           Data.List                                ( foldl'  )
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
@@ -88,6 +87,7 @@ import           Database.Beam.Migrate.New.Diff              as Exports
 import           Database.Beam.Migrate.New.Compat            as Exports
 import           Database.Beam.Migrate.New.Validity          as Exports
 import           Database.Beam.Migrate.New.Postgres           ( getSchema )
+import Database.Beam.Migrate.New.Util hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Backend.SQL         hiding ( tableName )
@@ -434,10 +434,10 @@ toSqlSyntax e = safetyPrefix $ _editAction e & \case
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
       createSequenceSyntax :: SequenceName -> Pg.PgSyntax
-      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> s <> ";\n"
+      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> sqlEscaped s <> ";\n"
 
       dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
-      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> s <> ";\n"
+      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> sqlEscaped s <> ";\n"
 
 renderStdType :: AST.DataType -> Text
 renderStdType = \case
@@ -509,27 +509,6 @@ renderDataType = \case
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 
 
--- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
-
-sqlOptPrec :: Maybe Word -> Text
-sqlOptPrec Nothing = mempty
-sqlOptPrec (Just x) = "(" <> fromString (show x) <> ")"
-
-sqlOptCharSet :: Maybe Text -> Text
-sqlOptCharSet Nothing = mempty
-sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
-
-sqlEscaped :: Text -> Text
-sqlEscaped t = "\"" <> t <> "\""
-
-sqlSingleQuoted :: Text -> Text
-sqlSingleQuoted t = "'" <> t <> "'"
-
-sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
-sqlOptNumericPrec Nothing = mempty
-sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
-sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
-
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do
   (a, s) <- runStateT (runExceptT m) mempty
@@ -559,7 +538,7 @@ editToSqlCommand :: Edit -> Pg.PgCommandSyntax
 editToSqlCommand = Pg.PgCommandSyntax Pg.PgCommandTypeDdl . toSqlSyntax
 
 prettyEditSQL :: Edit -> Text
-prettyEditSQL = T.pack . displaySyntax . editToSqlCommand
+prettyEditSQL = T.pack . displaySyntax . Pg.fromPgCommand . editToSqlCommand
 
 prettyEditActionDescription :: EditAction -> Text
 prettyEditActionDescription = T.unwords . \case

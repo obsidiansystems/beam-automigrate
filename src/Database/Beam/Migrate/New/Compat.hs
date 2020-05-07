@@ -31,6 +31,7 @@ import qualified Database.Beam                           as Beam
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Migrate.New.Types
+import qualified Database.Beam.Migrate.New.Util as Util
 import qualified Database.Beam.Postgres                  as Pg
 import           Data.Aeson                              as JSON
                                                           ( FromJSON
@@ -270,7 +271,7 @@ instance (Integral ty, HasColumnType ty) => HasColumnType (SqlSerial ty) where
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname =
     let s@(SequenceName sname) = mkSeqName
-    in Just ((s, Sequence tName cname), Default ("nextval('" <> sname <> "'::regclass)"))
+    in Just ((s, Sequence tName cname), Default ("nextval('" <> Util.sqlEscaped sname <> "'::regclass)"))
     where
       mkSeqName :: SequenceName
       mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")

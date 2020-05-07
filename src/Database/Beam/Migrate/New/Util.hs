@@ -25,6 +25,9 @@ import           Database.Beam.Schema.Tables    ( Columnar'(..)
 
 import           Database.Beam.Migrate.New.Types    ( ColumnName(..), TableName(..) )
 
+import Data.String (fromString)
+import Data.Text (Text)
+
 
 --
 -- Retrieving all the column names for a beam entity.
@@ -101,3 +104,24 @@ sequenceExceptT ::
 sequenceExceptT es = do
   es' <- lift (traverse runExceptT es)
   ExceptT (return (sequenceEither es'))
+
+-- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
+
+sqlOptPrec :: Maybe Word -> Text
+sqlOptPrec Nothing = mempty
+sqlOptPrec (Just x) = "(" <> fromString (show x) <> ")"
+
+sqlOptCharSet :: Maybe Text -> Text
+sqlOptCharSet Nothing = mempty
+sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
+
+sqlEscaped :: Text -> Text
+sqlEscaped t = "\"" <> t <> "\""
+
+sqlSingleQuoted :: Text -> Text
+sqlSingleQuoted t = "'" <> t <> "'"
+
+sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
+sqlOptNumericPrec Nothing = mempty
+sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
+sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"

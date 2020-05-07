@@ -455,11 +455,11 @@ deleteConstraintReferencing cName conss = S.filter (not . doesReference) conss
 
 similarColumn :: Column -> Gen Column
 similarColumn col = do
-    editAction <- frequency [ (15, pure ChangeType)
+    editAction' <- frequency [ (15, pure ChangeType)
                             , (10, pure ChangeConstraints)
                             , (30, pure NoChange)
                             ]
-    case editAction of
+    case editAction' of
       ChangeType -> do
         (newType, newDef) <- genColumnType
         let oldConstraints = S.filter (\c -> case c of Default _ -> False; _ -> True) (columnConstraints col)
