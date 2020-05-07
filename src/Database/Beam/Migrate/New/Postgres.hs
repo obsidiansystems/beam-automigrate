@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-module Database.Beam.Migrate.Postgres
+module Database.Beam.Migrate.New.Postgres
   ( getSchema
   )
 where
@@ -39,7 +39,7 @@ import qualified Database.PostgreSQL.Simple.TypeInfo.Static
                                                          as Pg
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Types
 
 --
 -- Necessary types to make working with the underlying raw SQL a bit more pleasant
@@ -143,8 +143,8 @@ foreignKeysQ :: Pg.Query
 foreignKeysQ = fromString $ unlines
   [ "SELECT kcu.table_name::text as foreign_table,"
   , "       rel_kcu.table_name::text as primary_table,"
-  , "       array_agg(kcu.column_name)::text[] as fk_columns,"
-  , "       array_agg(rel_kcu.column_name)::text[] as pk_columns,"
+  , "       array_agg(kcu.column_name::text)::text[] as fk_columns,"
+  , "       array_agg(rel_kcu.column_name::text)::text[] as pk_columns,"
   , "       kcu.constraint_name as cname"
   , "FROM information_schema.table_constraints tco"
   , "JOIN information_schema.key_column_usage kcu"
@@ -380,7 +380,7 @@ type Defaults       = Map ColumnName ColumnConstraint
 --
 -- * For example \"beam-migrate"\ seems to resort to be using explicit serialisation for the types, although
 --   I couldn't find explicit trace if that applies for defaults explicitly.
---   (cfr. the \"Database.Beam.Migrate.Serialization\" module in \"beam-migrate\").
+--   (cfr. the \"Database.Beam.Migrate.New.Serialization\" module in \"beam-migrate\").
 --
 -- * Another big problem is __rounding__: For example if we insert as \"double precision\" the following:
 --   Default "'-0.22030397057804563'" , Postgres will round the value and return Default "'-0.220303970578046'".

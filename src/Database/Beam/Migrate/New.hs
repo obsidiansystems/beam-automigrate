@@ -11,7 +11,7 @@
 
 {- | This module provides the high-level API to migrate a database. -}
 
-module Database.Beam.Migrate
+module Database.Beam.Migrate.New
   ( -- * Annotating a database
     -- $annotatingDbSettings
     defaultAnnotatedDbSettings
@@ -23,10 +23,16 @@ module Database.Beam.Migrate
   -- * Generating and running migrations
   , Migration
   , migrate
-  , runMigration
+  , runMigrationUnsafe
+  , runMigrationWithEditUpdate
   -- * Creating a migration from a Diff
   , createMigration
+  -- * Migration utility functions
+  , splitEditsOnSafety
+  , fastApproximateRowCountFor
   -- * Printing migrations for debugging purposes
+  , prettyEditActionDescription
+  , prettyEditSQL
   , printMigration
   , printMigrationIO
   -- * Unsafe functions
@@ -38,6 +44,7 @@ module Database.Beam.Migrate
   , ToAnnotated
   , sqlSingleQuoted
   , sqlEscaped
+  , editToSqlCommand
   )
 where
 
@@ -48,17 +55,20 @@ import           Control.Monad.Except
 import           Control.Monad.IO.Class                   ( liftIO
                                                           , MonadIO
                                                           )
-import           Lens.Micro                               ( (^.) )
+import           Data.Function                            ( (&) )
+import           Lens.Micro                               ( (^.), over, _1, _2 )
 import           Data.Proxy
 import           Data.Maybe                               ( fromMaybe )
 import           Data.String.Conv                         ( toS )
-import           Data.String                              ( fromString )
+import           Data.List                                ( foldl'  )
 import qualified Data.Set                                as S
 import qualified Data.Map.Strict                         as M
 import           Data.Text                                ( Text )
 import           Data.Bifunctor                           ( first )
 import qualified Data.Text                               as T
 import qualified Data.Text.Encoding                      as TE
+import qualified Data.Text.Lazy                          as LT
+import qualified Text.Pretty.Simple                      as PS
 
 import           GHC.Generics                      hiding ( prec )
 
@@ -70,13 +80,14 @@ import           Database.Beam.Schema                     ( Database
 import           Database.Beam.Schema.Tables              ( DatabaseEntity(..)
                                                           )
 
-import           Database.Beam.Migrate.Annotated         as Exports
-import           Database.Beam.Migrate.Generic           as Exports
-import           Database.Beam.Migrate.Types             as Exports
-import           Database.Beam.Migrate.Diff              as Exports
-import           Database.Beam.Migrate.Compat            as Exports
-import           Database.Beam.Migrate.Validity          as Exports
-import           Database.Beam.Migrate.Postgres           ( getSchema )
+import           Database.Beam.Migrate.New.Annotated         as Exports
+import           Database.Beam.Migrate.New.Generic           as Exports
+import           Database.Beam.Migrate.New.Types             as Exports
+import           Database.Beam.Migrate.New.Diff              as Exports
+import           Database.Beam.Migrate.New.Compat            as Exports
+import           Database.Beam.Migrate.New.Validity          as Exports
+import           Database.Beam.Migrate.New.Postgres           ( getSchema )
+import Database.Beam.Migrate.New.Util hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Backend.SQL         hiding ( tableName )
@@ -142,7 +153,7 @@ deAnnotateDatabase db =
 -- Once you have an 'AnnotatedDatabaseSettings', you can produce a 'Schema' simply by calling
 -- 'fromAnnotatedDbSettings'. The second parameter can be used to selectively turn off automatic FK-discovery
 -- for one or more tables. For more information about specifying your own table constraints, refer to the
--- 'Database.Beam.Migrate.Annotated' module.
+-- 'Database.Beam.Migrate.New.Annotated' module.
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'. Under the hood, this function will do the
 -- following:
@@ -174,9 +185,18 @@ data MigrationError =
     DiffFailed DiffError
   | HaskellSchemaValidationFailed  [ValidationFailed]
   | DatabaseSchemaValidationFailed [ValidationFailed]
+  | UnsafeEditsDetected [EditAction]
   deriving Show
 
 instance Exception MigrationError
+
+-- | Split the given list of 'Edit's based on their 'EditSafety' setting.
+splitEditsOnSafety :: [WithPriority Edit] -> ([WithPriority Edit], [WithPriority Edit])
+splitEditsOnSafety = foldl'
+  (\acc p -> if editSafetyIs Unsafe (fst $ unPriority p)
+             then over _1 (p:) acc
+             else over _2 (p:) acc
+  ) (mempty,mempty)
 
 -- | Given a 'Connection' to a database and a 'Schema' (which can be generated using 'fromAnnotatedDbSettings')
 -- it returns a 'Migration', which can then be executed via 'runMigration'.
@@ -202,8 +222,81 @@ unsafeRunMigration m = do
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
-runMigration :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
-runMigration conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
+runMigrationUnsafe :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
+runMigrationUnsafe conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
+
+-- | Run the steps of the migration in priority order, providing a hook to allow the user
+-- to take action for 'Unsafe' edits. The given function is only called for unsafe edits.
+--
+-- This allows you to perform some checks for when the edit safe in some circumstances.
+--
+-- * Deleting an empty table/column
+-- * Making an empty column non-nullable
+--
+runMigrationWithEditUpdate
+  :: MonadBeam Pg.Postgres Pg.Pg
+  => ([WithPriority Edit] -> [WithPriority Edit])
+  -> Pg.Connection
+  -> Schema
+  -> IO ()
+runMigrationWithEditUpdate editUpdate conn hsSchema = do
+  -- Create the migration with all the safeety information
+  edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
+  -- Apply the user function to possibly update the list of edits to allow the user to
+  -- intervene in the event of unsafe edits.
+  let newEdits = sortEdits $ editUpdate $ sortEdits edits
+  -- If the new list of edits still contains any unsafe edits then fail out.
+  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
+    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+  -- Execute all the edits within a single transaction so we rollback if any of them fail.
+  Pg.withTransaction conn $ Pg.runBeamPostgres conn $ forM_ newEdits $ \(WithPriority (edit, _)) -> do
+    case _editCondition edit of
+      Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+      -- Safe or slow, run that edit.
+      Right safeMaybeSlow -> safeOrSlow safeMaybeSlow edit
+      Left ec -> do
+        -- Edit is conditional, run the condition to see how safe it is to run this edit.
+        printmsg $ "edit has condition: " <> toS (prettyEditConditionQuery ec)
+        checkedSafety <- _editCondition_check ec
+        case checkedSafety of
+          Unsafe -> do
+            -- Edit determined to be unsafe, don't run it.
+            printmsg "edit unsafe by condition"
+            liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+          safeMaybeSlow -> do
+            -- Safe or slow, run that edit.
+            printmsg "edit condition satisfied"
+            safeOrSlow safeMaybeSlow edit
+  where
+    safeOrSlow safety edit = do
+      when (safety == PotentiallySlow) $ do
+        printmsg "Running potentially slow edit"
+        printmsg $ T.unpack $ prettyEditActionDescription $ _editAction edit
+
+      runNoReturn $ editToSqlCommand edit
+
+    printmsg :: MonadIO m => String -> m ()
+    printmsg = liftIO . putStrLn . mappend "[beam-migrate] "
+
+-- | Helper query to retrieve the approximate row count from the @pg_class@ table.
+--
+-- Number of live rows in the table. This is only an estimate used by the planner. It is
+-- updated by VACUUM, ANALYZE, and a few DDL commands such as CREATE INDEX.
+--
+-- This can be used as a check to see if an otherwise 'Unsafe' 'EditAction' is safe to execute.
+--
+-- See:
+-- * <https://wiki.postgresql.org/wiki/Count_estimate PostgreSQL Wiki Count Estimate> and
+-- * <https://www.postgresql.org/docs/current/catalog-pg-class.html PostgreSQL Manual for @pg_class@>
+-- for more information.
+--
+fastApproximateRowCountFor :: TableName -> Pg.Pg (Maybe Int)
+fastApproximateRowCountFor tblName = runReturningOne $ selectCmd $ Pg.PgSelectSyntax $ qry
+  where
+    qry = Pg.emit $ toS
+      $ "SELECT reltuples AS approximate_row_count FROM pg_class WHERE relname = "
+      <> sqlEscaped (tableName tblName)
+      <> ";"
 
 -- Unfortunately Postgres' syntax is different when setting or dropping constaints. For example when we
 -- drop the default value we /don't/ repeat which was the original default value (which makes sense), but
@@ -215,7 +308,7 @@ data AlterTableAction =
 
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
-toSqlSyntax = \case
+toSqlSyntax e = safetyPrefix $ _editAction e & \case
   TableAdded tblName tbl ->
       ddlSyntax ("CREATE TABLE " <> sqlEscaped (tableName tblName )
                                    <> " ("
@@ -268,6 +361,10 @@ toSqlSyntax = \case
                                        <> " DROP "
                                        <> renderColumnConstraint DropConstraint cstr)
   where
+      safetyPrefix query = if editSafetyIs Safe e
+        then Pg.emit "        " <> query
+        else Pg.emit "<UNSAFE>" <> query
+
       ddlSyntax query    = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
       updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
 
@@ -337,100 +434,80 @@ toSqlSyntax = \case
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
       createSequenceSyntax :: SequenceName -> Pg.PgSyntax
-      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> s <> ";\n"
+      createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> sqlEscaped s <> ";\n"
 
       dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
-      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> s <> ";\n"
+      dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> sqlEscaped s <> ";\n"
 
-      renderStdType :: AST.DataType -> Text
-      renderStdType = \case
-        -- From the Postgres' documentation:
-        -- \"character without length specifier is equivalent to character(1).\"
-        (AST.DataTypeChar False prec charSet) ->
-          "CHAR" <> sqlOptPrec (Just $ fromMaybe 1 prec) <> sqlOptCharSet charSet
-        (AST.DataTypeChar True prec charSet) ->
-          "VARCHAR" <> sqlOptPrec prec <> sqlOptCharSet charSet
-        (AST.DataTypeNationalChar varying prec) ->
-            let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
-            in ty <> sqlOptPrec prec
-        (AST.DataTypeBit varying prec) ->
-            let ty = if varying then "BIT VARYING" else "BIT"
-            in ty <> sqlOptPrec prec
-        (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        -- Even though beam emits 'DOUBLE here'
-        -- (see: https://github.com/tathougies/beam/blob/b245bf2c0b4c810dbac334d08ca572cec49e4d83/beam-postgres/Database/Beam/Postgres/Syntax.hs#L544)
-        -- the \"double\" type doesn't exist in Postgres.
-        -- Rather, the "NUMERIC" and "DECIMAL" types are equivalent in Postgres, and that's what we use here.
-        (AST.DataTypeDecimal prec) -> "NUMERIC" <> sqlOptNumericPrec prec
-        AST.DataTypeInteger -> "INT"
-        AST.DataTypeSmallInt -> "SMALLINT"
-        AST.DataTypeBigInt -> "BIGINT"
-        (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
-        AST.DataTypeReal -> "REAL"
-        AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
-        AST.DataTypeDate -> "DATE"
-        (AST.DataTypeTime prec withTz) ->
-          let ty = "TIME" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        (AST.DataTypeTimeStamp prec withTz) ->
-          let ty = "TIMESTAMP" <> sqlOptPrec prec <> if withTz then " WITH TIME ZONE" else mempty
-          in ty <> sqlOptPrec prec
-        (AST.DataTypeInterval _i) ->
-          error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
-               <> " how to render it."
-        (AST.DataTypeIntervalFromTo _from _to) ->
-          error $ "Impossible: DataTypeIntervalFromTo doesn't map to any SQLXX beam typeclass, so we don't know"
-               <> " how to render it."
-        AST.DataTypeBoolean -> "BOOL"
-        AST.DataTypeBinaryLargeObject -> "BYTEA"
-        AST.DataTypeCharacterLargeObject -> "TEXT"
-        (AST.DataTypeArray dt sz) ->
-           renderStdType dt <> "[" <> T.pack (show sz) <> "]"
-        (AST.DataTypeRow _rows) ->
-            error "DataTypeRow not supported both for beam-postgres and this library."
-        (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+renderStdType :: AST.DataType -> Text
+renderStdType = \case
+  -- From the Postgres' documentation:
+  -- \"character without length specifier is equivalent to character(1).\"
+  (AST.DataTypeChar False prec charSet) ->
+    "CHAR" <> sqlOptPrec (Just $ fromMaybe 1 prec) <> sqlOptCharSet charSet
+  (AST.DataTypeChar True prec charSet) ->
+    "VARCHAR" <> sqlOptPrec prec <> sqlOptCharSet charSet
+  (AST.DataTypeNationalChar varying prec) ->
+      let ty = if varying then "NATIONAL CHARACTER VARYING" else "NATIONAL CHAR"
+      in ty <> sqlOptPrec prec
+  (AST.DataTypeBit varying prec) ->
+      let ty = if varying then "BIT VARYING" else "BIT"
+      in ty <> sqlOptPrec prec
+  (AST.DataTypeNumeric prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+  -- Even though beam emits 'DOUBLE here'
+  -- (see: https://github.com/tathougies/beam/blob/b245bf2c0b4c810dbac334d08ca572cec49e4d83/beam-postgres/Database/Beam/Postgres/Syntax.hs#L544)
+  -- the \"double\" type doesn't exist in Postgres.
+  -- Rather, the "NUMERIC" and "DECIMAL" types are equivalent in Postgres, and that's what we use here.
+  (AST.DataTypeDecimal prec) -> "NUMERIC" <> sqlOptNumericPrec prec
+  AST.DataTypeInteger -> "INT"
+  AST.DataTypeSmallInt -> "SMALLINT"
+  AST.DataTypeBigInt -> "BIGINT"
+  (AST.DataTypeFloat prec) -> "FLOAT" <> sqlOptPrec prec
+  AST.DataTypeReal -> "REAL"
+  AST.DataTypeDoublePrecision -> "DOUBLE PRECISION"
+  AST.DataTypeDate -> "DATE"
+  (AST.DataTypeTime prec withTz) -> wTz withTz "TIME" prec <> sqlOptPrec prec
+  (AST.DataTypeTimeStamp prec withTz) -> wTz withTz "TIMESTAMP" prec <> sqlOptPrec prec
+  (AST.DataTypeInterval _i) ->
+    error $ "Impossible: DataTypeInterval doesn't map to any SQLXX beam typeclass, so we don't know"
+         <> " how to render it."
+  (AST.DataTypeIntervalFromTo _from _to) ->
+    error $ "Impossible: DataTypeIntervalFromTo doesn't map to any SQLXX beam typeclass, so we don't know"
+         <> " how to render it."
+  AST.DataTypeBoolean -> "BOOL"
+  AST.DataTypeBinaryLargeObject -> "BYTEA"
+  AST.DataTypeCharacterLargeObject -> "TEXT"
+  (AST.DataTypeArray dt sz) ->
+     renderStdType dt <> "[" <> T.pack (show sz) <> "]"
+  (AST.DataTypeRow _rows) ->
+      error "DataTypeRow not supported both for beam-postgres and this library."
+  (AST.DataTypeDomain nm) -> "\"" <> nm <> "\""
+  where
+    wTz withTz tt prec =
+      tt <> sqlOptPrec prec <> (if withTz then " WITH" else " WITHOUT") <> " TIME ZONE"
 
       -- This function also overlaps with beam-migrate functionalities.
-      renderDataType :: ColumnType -> Text
-      renderDataType = \case
-        SqlStdType stdType -> renderStdType stdType
-        -- text-based enum types
-        DbEnumeration (EnumerationName _) _ ->
-            renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
-        -- Json types
-        PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
-        PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
-        -- Range types
-        PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
-        PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
-        PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
-        PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
-        PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
-        PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
-        -- enumerations
-        PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
+renderDataType :: ColumnType -> Text
+renderDataType = \case
+  SqlStdType stdType -> renderStdType stdType
+  -- text-based enum types
+  DbEnumeration (EnumerationName _) _ ->
+      renderDataType (SqlStdType (AST.DataTypeChar True Nothing Nothing))
+  -- Json types
+  PgSpecificType PgJson  -> toS $ displaySyntax Pg.pgJsonType
+  PgSpecificType PgJsonB -> toS $ displaySyntax Pg.pgJsonbType
+  -- Range types
+  PgSpecificType PgRangeInt4 -> toS $ Pg.rangeName @Pg.PgInt4Range
+  PgSpecificType PgRangeInt8 -> toS $ Pg.rangeName @Pg.PgInt8Range
+  PgSpecificType PgRangeNum  -> toS $ Pg.rangeName @Pg.PgNumRange
+  PgSpecificType PgRangeTs   -> toS $ Pg.rangeName @Pg.PgTsRange
+  PgSpecificType PgRangeTsTz -> toS $ Pg.rangeName @Pg.PgTsTzRange
+  PgSpecificType PgRangeDate -> toS $ Pg.rangeName @Pg.PgDateRange
+  -- UUID
+  PgSpecificType PgUuid      -> toS $ displaySyntax Pg.pgUuidType
+  -- enumerations
+  PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
 
-
--- NOTE(adn) Unfortunately these combinators are not re-exported by beam.
-
-sqlOptPrec :: Maybe Word -> Text
-sqlOptPrec Nothing = mempty
-sqlOptPrec (Just x) = "(" <> fromString (show x) <> ")"
-
-sqlOptCharSet :: Maybe Text -> Text
-sqlOptCharSet Nothing = mempty
-sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
-
-sqlEscaped :: Text -> Text
-sqlEscaped t = "\"" <> t <> "\""
-
-sqlSingleQuoted :: Text -> Text
-sqlSingleQuoted t = "'" <> t <> "'"
-
-sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
-sqlOptNumericPrec Nothing = mempty
-sqlOptNumericPrec (Just (prec, Nothing)) = sqlOptPrec (Just prec)
-sqlOptNumericPrec (Just (prec, Just dec)) = "(" <> fromString (show prec) <> ", " <> fromString (show dec) <> ")"
 
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do
@@ -456,3 +533,63 @@ printMigration m = do
 
 printMigrationIO :: Migration Pg.Pg -> IO ()
 printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMigration mig
+
+editToSqlCommand :: Edit -> Pg.PgCommandSyntax
+editToSqlCommand = Pg.PgCommandSyntax Pg.PgCommandTypeDdl . toSqlSyntax
+
+prettyEditSQL :: Edit -> Text
+prettyEditSQL = T.pack . displaySyntax . Pg.fromPgCommand . editToSqlCommand
+
+prettyEditActionDescription :: EditAction -> Text
+prettyEditActionDescription = T.unwords . \case
+  TableAdded tblName table ->
+    ["create table:", qt tblName, "\n", pshow' table]
+  TableRemoved tblName ->
+    ["remove table:", qt tblName]
+  TableConstraintAdded tblName tableConstraint ->
+    ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint]
+  TableConstraintRemoved tblName tableConstraint ->
+    ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
+  ColumnAdded tblName colName column ->
+    ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]
+  ColumnRemoved tblName colName ->
+    ["remove column:", qc colName, ", from:", qt tblName]
+  ColumnTypeChanged tblName colName oldColumnType newColumnType ->
+    [ "change type of column:" , qc colName , "in table:" , qt tblName
+    , "\nfrom:" , renderDataType oldColumnType
+    , "\nto:" , renderDataType newColumnType
+    ]
+  ColumnConstraintAdded tblName colName columnConstraint ->
+    [ "add column constraint to:" , qc colName , "in table:" , qt tblName
+    , "\n", pshow' columnConstraint
+    ]
+  ColumnConstraintRemoved tblName colName columnConstraint ->
+    [ "remove column constraint from:" , qc colName , "in table:" , qt tblName
+    , "\n", pshow' columnConstraint
+    ]
+  EnumTypeAdded eName enumeration ->
+    ["add enum type:", enumName eName, pshow' enumeration]
+  EnumTypeRemoved eName ->
+    ["remove enum type:", enumName eName]
+  EnumTypeValueAdded eName newValue insertionOrder insertedAt ->
+    [ "add enum value to enum:"
+    , enumName eName
+    , ", value:"
+    , newValue
+    , ", with order:"
+    , pshow' insertionOrder
+    , ", at pos"
+    , insertedAt
+    ]
+  SequenceAdded sequenceName sequence0 ->
+    ["add sequence:", qs sequenceName, pshow' sequence0]
+  SequenceRemoved sequenceName ->
+    ["remove sequence:", qs sequenceName]
+  where
+    q t = "'" <> t <> "'"
+    qt = q . tableName
+    qc = q . columnName
+    qs = q . seqName
+
+    pshow' :: Show a => a -> Text
+    pshow' = LT.toStrict . PS.pShow

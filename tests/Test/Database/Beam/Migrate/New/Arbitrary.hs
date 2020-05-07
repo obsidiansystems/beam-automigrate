@@ -1,10 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Test.Database.Beam.Migrate.Arbitrary where
+module Test.Database.Beam.Migrate.New.Arbitrary where
 
 import GHC.Generics
 
-import Database.Beam.Migrate.Types
-import Database.Beam.Migrate.Schema.Gen
+import Database.Beam.Migrate.New.Types
+import Database.Beam.Migrate.New.Schema.Gen
 
 import Text.Pretty.Simple (pShowNoColor)
 import qualified Data.Text.Lazy as TL

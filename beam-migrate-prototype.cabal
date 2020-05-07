@@ -1,5 +1,5 @@
 name:                  beam-migrate-prototype
-version:               0.1.0.0
+version:               0.2.0.0
 license-file:          LICENSE
 build-type:            Simple
 cabal-version:         >=1.10
@@ -15,61 +15,42 @@ description:
 extra-source-files:    README.md
                        CHANGELOG.md
 
--- This private library includes common helpers which are used not only in tests
--- but also in some integration testing executables as well as the benchmarks.
-library beam-migrate-prototype-testing-internal
-  exposed-modules:     Database.Beam.Migrate.Schema.Gen
-                       Database.Beam.Migrate.BenchUtil
-  hs-source-dirs:      test-internal
-  build-depends:       base
-                     , QuickCheck           >= 2.13     && < 2.15
-                     , beam-core
-                     , beam-migrate-prototype -any
-                     , beam-postgres
-                     , bytestring
-                     , containers
-                     , deepseq
-                     , mtl
-                     , postgresql-simple
-                     , quickcheck-instances >= 0.3      && < 0.4
-                     , scientific
-                     , splitmix             >= 0.0.3    && < 0.1
-                     , text
-                     , time
-  default-language:    Haskell2010
-  default-extensions:  TypeApplications
-                       LambdaCase
-                       OverloadedStrings
-
 library
-  exposed-modules:     Database.Beam.Migrate
-                       Database.Beam.Migrate.Annotated
-                       Database.Beam.Migrate.Compat
-                       Database.Beam.Migrate.Diff
-                       Database.Beam.Migrate.Generic
-                       Database.Beam.Migrate.Postgres
-                       Database.Beam.Migrate.Types
-                       Database.Beam.Migrate.Util
-                       Database.Beam.Migrate.Validity
+  exposed-modules:     Database.Beam.Migrate.New
+                       Database.Beam.Migrate.New.Annotated
+                       Database.Beam.Migrate.New.Compat
+                       Database.Beam.Migrate.New.Diff
+                       Database.Beam.Migrate.New.Generic
+                       Database.Beam.Migrate.New.Postgres
+                       Database.Beam.Migrate.New.Types
+                       Database.Beam.Migrate.New.Util
+                       Database.Beam.Migrate.New.Validity
+                       Database.Beam.Migrate.New.Schema.Gen
+                       Database.Beam.Migrate.New.BenchUtil
 
   hs-source-dirs:      src
 
   build-depends:       base                 >= 4.9      && < 5
-                     , aeson                >= 1.4.6    && < 1.5
+                     , QuickCheck           >= 2.13     && < 2.15
+                     , aeson                >= 1.4.4    && < 1.5
                      , beam-core            >= 0.8      && < 0.10
                      , beam-postgres        >= 0.3      && < 0.6
                      , bytestring           >= 0.10.8.2 && < 0.12.0.0
                      , containers           >= 0.5.9.2  && < 0.8.0.0
                      , deepseq              >= 1.4.4    && < 1.6
                      , dlist                >= 0.8.0    && < 0.10
-                     , microlens            >= 0.4.11   && < 0.6
+                     , microlens            >= 0.4.10   && < 0.6
                      , mtl                  >= 2.2.2    && < 2.4
-                     , postgresql-simple    >= 0.6.2    && < 0.7.0.0
+                     , postgresql-simple    >= 0.5.4    && < 0.7.0.0
+                     , pretty-simple        >= 2.2.0    && < 2.3
+                     , quickcheck-instances >= 0.3      && < 0.4
                      , scientific           >= 0.3.6    && < 0.5
+                     , splitmix             >= 0.0.3    && < 0.1
                      , string-conv          >= 0.1.2    && < 0.3
                      , text                 >= 1.2.0.0  && < 1.3.0.0
                      , time                 >= 1.8.0    && < 1.9
                      , transformers         >= 0.5.6    && < 0.7
+                     , uuid                 >= 1.3      && < 1.4
                      , vector               >= 0.12.0.3 && < 0.13.0.0
 
   default-language:    Haskell2010
@@ -94,11 +75,10 @@ test-suite beam-migrate-prototype-tests
   type:                exitcode-stdio-1.0
   hs-source-dirs:      tests
   main-is:             Main.hs
-  other-modules:       Test.Database.Beam.Migrate.Arbitrary
+  other-modules:       Test.Database.Beam.Migrate.New.Arbitrary
   build-depends:       base
                      , QuickCheck
                      , beam-migrate-prototype -any
-                     , beam-migrate-prototype-testing-internal
                      , containers
                      , pretty-simple
                      , tasty
@@ -111,11 +91,10 @@ test-suite beam-migrate-prototype-integration-tests
   type:                exitcode-stdio-1.0
   hs-source-dirs:      integration-tests tests
   main-is:             Main.hs
-  other-modules:       Test.Database.Beam.Migrate.Arbitrary
+  other-modules:       Test.Database.Beam.Migrate.New.Arbitrary
   build-depends:       base
                      , QuickCheck
                      , beam-migrate-prototype -any
-                     , beam-migrate-prototype-testing-internal
                      , containers
                      , postgresql-simple
                      , pretty-simple
@@ -165,7 +144,6 @@ executable beam-migrate-prototype-large-migration-test
   main-is:             Main.hs
   build-depends:       base
                      , beam-migrate-prototype -any
-                     , beam-migrate-prototype-testing-internal
                      , beam-postgres
                      , containers
                      , postgresql-simple
@@ -181,7 +159,6 @@ benchmark beam-migrate-prototype-bench
   build-depends:       base
                      , QuickCheck
                      , beam-migrate-prototype -any
-                     , beam-migrate-prototype-testing-internal
                      , beam-postgres
                      , bytestring
                      , containers

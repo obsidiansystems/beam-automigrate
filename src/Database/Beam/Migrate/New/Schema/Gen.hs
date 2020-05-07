@@ -5,7 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Database.Beam.Migrate.Schema.Gen
+module Database.Beam.Migrate.New.Schema.Gen
     ( genSchema
     , genSimilarSchemas
     , SimilarSchemas(..)
@@ -36,17 +36,17 @@ import           Data.Time                                ( Day
                                                           , LocalTime
                                                           )
 
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Types
 import qualified Database.Beam.Backend.SQL.AST           as AST
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax, timestampType )
 import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
-import           Database.Beam.Migrate                    ( sqlSingleQuoted
+import           Database.Beam.Migrate.New                    ( sqlSingleQuoted
                                                           , defaultColumnType
                                                           , HasColumnType
                                                           )
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import qualified Database.Beam.Postgres                  as Pg
-import           Database.Beam.Migrate.Annotated          ( pgDefaultConstraint )
+import           Database.Beam.Migrate.New.Annotated          ( pgDefaultConstraint )
 import           Database.Beam.Query                      ( val_
                                                           , currentTimestamp_
                                                           )
@@ -135,7 +135,7 @@ genColumnType = oneof [ genSqlStdType
                       ]
 
 -- | Rather than trying to generate __all__ the possible values, we restrict ourselves to only the types
--- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.Migrate.Compat', and we piggyback
+-- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.Migrate.New.Compat', and we piggyback
 -- on 'beam-core' machinery in order to generate the default values.
 genSqlStdType :: Gen (ColumnType, ColumnConstraint)
 genSqlStdType = oneof [
@@ -455,11 +455,11 @@ deleteConstraintReferencing cName conss = S.filter (not . doesReference) conss
 
 similarColumn :: Column -> Gen Column
 similarColumn col = do
-    editAction <- frequency [ (15, pure ChangeType)
+    editAction' <- frequency [ (15, pure ChangeType)
                             , (10, pure ChangeConstraints)
                             , (30, pure NoChange)
                             ]
-    case editAction of
+    case editAction' of
       ChangeType -> do
         (newType, newDef) <- genColumnType
         let oldConstraints = S.filter (\c -> case c of Default _ -> False; _ -> True) (columnConstraints col)

@@ -1,8 +1,8 @@
 module Main where
 
-import Database.Beam.Migrate
-import Database.Beam.Migrate.Schema.Gen
-import Database.Beam.Migrate.Validity
+import Database.Beam.Migrate.New
+import Database.Beam.Migrate.New.Schema.Gen
+import Database.Beam.Migrate.New.Validity
 
 import qualified Data.List as L
 import qualified Data.Text.Lazy as TL
@@ -12,7 +12,7 @@ import           Test.QuickCheck
 
 import Text.Pretty.Simple (pShowNoColor)
 
-import Test.Database.Beam.Migrate.Arbitrary hiding ((===))
+import Test.Database.Beam.Migrate.New.Arbitrary hiding ((===))
 
 
 main :: IO ()

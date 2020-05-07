@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleInstances #-}
-module Database.Beam.Migrate.Diff
+module Database.Beam.Migrate.New.Diff
   ( Diffable(..)
   , Diff
   , Priority(..)
@@ -41,8 +41,7 @@ import           Data.Map.Merge.Strict                    ( mergeA
 import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
 import           Data.Foldable                            ( foldlM )
-
-import           Database.Beam.Migrate.Types
+import           Database.Beam.Migrate.New.Types
 
 --
 -- Simple typeclass to diff things
@@ -53,7 +52,7 @@ newtype Priority = Priority Word8 deriving (Show, Eq, Ord)
 
 newtype WithPriority a = WithPriority { unPriority :: (a, Priority) } deriving (Show, Eq, Ord)
 
-editPriority :: Edit -> Priority
+editPriority :: EditAction -> Priority
 editPriority = \case
   -- Operations that create tables, sequences or enums have top priority
   EnumTypeAdded{}                     -> Priority 0
@@ -77,14 +76,14 @@ editPriority = \case
   EnumTypeRemoved{}                   -> Priority 14
   SequenceRemoved{}                   -> Priority 15
 
-mkEdit :: Edit -> WithPriority Edit
-mkEdit e = WithPriority (e, editPriority e)
+-- TODO: This needs to support adding conditional queries.
+mkEdit :: EditAction -> WithPriority Edit
+mkEdit e = WithPriority (defMkEdit e, editPriority e)
 
--- | Sort edits according to their execution order, to make sure they don't reference something which
--- hasn't been created yet.
+-- | Sort edits according to their execution order, to make sure they don't reference
+-- something which hasn't been created yet.
 sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
 sortEdits = L.sortOn (snd . unPriority)
-
 
 type DiffA t = Either DiffError (t (WithPriority Edit))
 type Diff = DiffA []
@@ -141,8 +140,8 @@ diffTablesReferenceImplementation hsTables dbTables = do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
 
-addEdit :: (k -> v -> Edit)
-        -> (k -> c -> Edit)
+addEdit :: (k -> v -> EditAction)
+        -> (k -> c -> EditAction)
         -> (v -> S.Set c)
         -> (k, v)
         -> [WithPriority Edit]

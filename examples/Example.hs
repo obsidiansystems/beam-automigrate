@@ -35,9 +35,9 @@ import           Database.Beam.Schema.Tables    ( primaryKey )
 import           Database.Beam.Query            (val_, currentTimestamp_)
 import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
 
-import           Database.Beam.Migrate.Annotated
+import           Database.Beam.Migrate.New.Annotated
 
-import           Database.Beam.Migrate          ( Schema
+import           Database.Beam.Migrate.New          ( Schema
                                                 , Diff
                                                 , Migration
                                                 , fromAnnotatedDbSettings
@@ -51,7 +51,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , ReferenceAction(..)
                                                 , HasColumnType
                                                 )
-import           Database.Beam.Migrate.Postgres ( getSchema )
+import           Database.Beam.Migrate.New.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
 import qualified Database.Beam.Postgres as Pg

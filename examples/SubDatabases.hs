@@ -28,9 +28,9 @@ import qualified Database.Beam.Schema          as Beam
 import           Database.Beam.Schema.Tables    ( primaryKey )
 import           Database.Beam.Query            (currentTimestamp_)
 
-import           Database.Beam.Migrate.Annotated
+import           Database.Beam.Migrate.New.Annotated
 
-import           Database.Beam.Migrate          ( Schema
+import           Database.Beam.Migrate.New          ( Schema
                                                 , Diff
                                                 , Migration
                                                 , fromAnnotatedDbSettings
@@ -40,7 +40,7 @@ import           Database.Beam.Migrate          ( Schema
                                                 , printMigration
                                                 , migrate
                                                 )
-import           Database.Beam.Migrate.Postgres ( getSchema )
+import           Database.Beam.Migrate.New.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
 

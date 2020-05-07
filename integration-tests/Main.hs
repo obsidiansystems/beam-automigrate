@@ -1,10 +1,10 @@
 module Main where
 
-import           Database.Beam.Migrate
-import           Database.Beam.Migrate.Schema.Gen
-import           Database.Beam.Migrate.Validity
-import           Database.Beam.Migrate.Postgres           ( getSchema )
-import           Database.Beam.Migrate.BenchUtil          ( tearDownDatabase
+import           Database.Beam.Migrate.New
+import           Database.Beam.Migrate.New.Schema.Gen
+import           Database.Beam.Migrate.New.Validity
+import           Database.Beam.Migrate.New.Postgres           ( getSchema )
+import           Database.Beam.Migrate.New.BenchUtil          ( tearDownDatabase
                                                           , cleanDatabase
                                                           )
 
@@ -19,7 +19,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Monadic
 
 import qualified Database.Postgres.Temp                  as Tmp
-import qualified Test.Database.Beam.Migrate.Arbitrary as Pretty
+import qualified Test.Database.Beam.Migrate.New.Arbitrary as Pretty
 
 
 main :: IO ()
@@ -35,14 +35,14 @@ properties = testGroup "Integration tests"
     dbResource $ \getResource -> QC.testProperty "Migration roundtrip (empty DB)" $
       \hsSchema -> hsSchema /= noSchema ==> dbProperty getResource $ \dbConn -> liftIO $ do
         let mig = migrate dbConn hsSchema
-        runMigration dbConn mig
+        runMigrationUnsafe dbConn mig
         dbSchema <- getSchema dbConn
         pure $ hsSchema Pretty.=== dbSchema
   , -- We test that after a successful migration, calling 'diff' should yield no edits.
     dbResource $ \getResource -> QC.testProperty "Diffing after a migration yields no edits" $
       \hsSchema -> hsSchema /= noSchema ==> dbProperty getResource $ \dbConn -> liftIO $ do
         let mig = migrate dbConn hsSchema
-        runMigration dbConn mig
+        runMigrationUnsafe dbConn mig
         dbSchema <- getSchema dbConn
         pure $ diff hsSchema dbSchema === Right []
   ]

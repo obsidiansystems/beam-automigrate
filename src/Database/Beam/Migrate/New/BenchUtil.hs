@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Database.Beam.Migrate.BenchUtil
+module Database.Beam.Migrate.New.BenchUtil
     ( SpineStrict(..)
     , predictableSchemas
     , connInfo
@@ -16,8 +16,8 @@ import           Control.Exception                        ( finally )
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Random
 
-import           Database.Beam.Migrate
-import           Database.Beam.Migrate.Schema.Gen         ( genSimilarSchemas )
+import           Database.Beam.Migrate.New
+import           Database.Beam.Migrate.New.Schema.Gen         ( genSimilarSchemas )
 
 import qualified Database.PostgreSQL.Simple              as Pg
 
@@ -42,7 +42,7 @@ setupDatabase :: Schema -> IO Pg.Connection
 setupDatabase dbSchema = do
   conn <- Pg.connectPostgreSQL connInfo
   let mig = createMigration (diff dbSchema noSchema)
-  runMigration conn mig -- At this point the DB contains the full schema.
+  runMigrationUnsafe conn mig -- At this point the DB contains the full schema.
   pure conn
 
 cleanDatabase :: Pg.Connection -> IO ()
