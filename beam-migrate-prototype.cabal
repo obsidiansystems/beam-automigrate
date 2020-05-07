@@ -39,7 +39,7 @@ library
                      , containers           >= 0.5.9.2  && < 0.8.0.0
                      , deepseq              >= 1.4.4    && < 1.6
                      , dlist                >= 0.8.0    && < 0.10
-                     , microlens            >= 0.4.11   && < 0.6
+                     , microlens            >= 0.4.10   && < 0.6
                      , mtl                  >= 2.2.2    && < 2.4
                      , postgresql-simple    >= 0.6.2    && < 0.7.0.0
                      , pretty-simple        >= 2.2.0    && < 2.3
