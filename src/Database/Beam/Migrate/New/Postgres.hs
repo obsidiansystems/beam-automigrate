@@ -354,6 +354,8 @@ pgTypeToColumnType oid width
   = Just (PgSpecificType PgRangeTsTz)
   | Pg.typoid Pg.daterange == oid
   = Just (PgSpecificType PgRangeDate)
+  | Pg.typoid Pg.uuid == oid
+  = Just (PgSpecificType PgUuid)
   | otherwise
   = Nothing
 
