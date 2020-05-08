@@ -414,7 +414,7 @@ toSqlSyntax e = safetyPrefix $ _editAction e & \case
         Unique     cName _       -> dropC cName
         PrimaryKey cName _       -> dropC cName
         ForeignKey cName _ _ _ _ -> dropC cName
-        where dropC = mappend "DROP CONSTRAINT "
+        where dropC = mappend "DROP CONSTRAINT " . sqlEscaped
 
       renderAction actionPrefix = \case
         NoAction   -> mempty
