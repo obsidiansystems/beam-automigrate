@@ -2,4 +2,4 @@
 
 ## 0.1.0.0
 
-* First version.
+* Initial release. Generate schemas and migrations for beam databases. See limitations in [README.md](README.md)
