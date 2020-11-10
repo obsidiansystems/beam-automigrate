@@ -48,54 +48,49 @@ module Database.Beam.AutoMigrate
   )
 where
 
-import           Control.Exception                        ( throwIO, Exception )
-import           Control.Monad.Identity                   (runIdentity)
-import           Control.Monad.State.Strict
-import           Control.Monad.Except
-import           Control.Monad.IO.Class                   ( liftIO
-                                                          , MonadIO
-                                                          )
-import           Data.Function                            ( (&) )
-import           Lens.Micro                               ( (^.), over, _1, _2 )
-import           Data.Int                                 ( Int64 )
-import           Data.Proxy
-import           Data.Maybe                               ( fromMaybe )
-import           Data.String.Conv                         ( toS )
-import           Data.List                                ( foldl'  )
-import qualified Data.Set                                as S
-import qualified Data.Map.Strict                         as M
-import           Data.Text                                ( Text )
-import           Data.Bifunctor                           ( first )
-import qualified Data.Text                               as T
-import qualified Data.Text.Encoding                      as TE
-import qualified Data.Text.Lazy                          as LT
-import qualified Text.Pretty.Simple                      as PS
+import Control.Exception (throwIO, Exception)
+import Control.Monad.Identity (runIdentity)
+import Control.Monad.State.Strict
+import Control.Monad.Except
+import Control.Monad.IO.Class (liftIO, MonadIO)
+import Data.Function ((&))
+import Lens.Micro ((^.), over, _1, _2)
+import Data.Int (Int64)
+import Data.Proxy
+import Data.Maybe (fromMaybe)
+import Data.String.Conv (toS)
+import Data.List (foldl' )
+import qualified Data.Set as S
+import qualified Data.Map.Strict as M
+import Data.Text (Text)
+import Data.Bifunctor (first)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Lazy as LT
+import qualified Text.Pretty.Simple as PS
 
-import           GHC.Generics                      hiding ( prec )
+import GHC.Generics hiding (prec)
 
 
-import           Database.Beam                            ( MonadBeam )
-import           Database.Beam.Schema                     ( Database
-                                                          , DatabaseSettings
-                                                          )
-import           Database.Beam.Schema.Tables              ( DatabaseEntity(..)
-                                                          )
+import Database.Beam (MonadBeam)
+import Database.Beam.Schema (Database, DatabaseSettings)
+import Database.Beam.Schema.Tables (DatabaseEntity(..))
 
-import           Database.Beam.AutoMigrate.Annotated         as Exports
-import           Database.Beam.AutoMigrate.Generic           as Exports
-import           Database.Beam.AutoMigrate.Types             as Exports
-import           Database.Beam.AutoMigrate.Diff              as Exports
-import           Database.Beam.AutoMigrate.Compat            as Exports
-import           Database.Beam.AutoMigrate.Validity          as Exports
-import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
+import Database.Beam.AutoMigrate.Annotated as Exports
+import Database.Beam.AutoMigrate.Generic as Exports
+import Database.Beam.AutoMigrate.Types as Exports
+import Database.Beam.AutoMigrate.Diff as Exports
+import Database.Beam.AutoMigrate.Compat as Exports
+import Database.Beam.AutoMigrate.Validity as Exports
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 import Database.Beam.AutoMigrate.Util hiding (tableName)
-import qualified Database.Beam.Backend.SQL.AST           as AST
+import qualified Database.Beam.Backend.SQL.AST as AST
 
-import           Database.Beam.Backend.SQL         hiding ( tableName )
+import Database.Beam.Backend.SQL hiding (tableName)
 
-import qualified Database.PostgreSQL.Simple              as Pg
-import qualified Database.Beam.Postgres                  as Pg
-import qualified Database.Beam.Postgres.Syntax           as Pg
+import qualified Database.PostgreSQL.Simple as Pg
+import qualified Database.Beam.Postgres as Pg
+import qualified Database.Beam.Postgres.Syntax as Pg
 
 -- $annotatingDbSettings
 -- The first thing to do in order to be able to use this library is to convert a Beam's 'DatabaseSettings'

@@ -9,35 +9,29 @@
 
 module Database.Beam.AutoMigrate.Compat where
 
-import           Data.Typeable
-import           Data.Text                                ( Text )
-import           Data.Scientific                          ( Scientific )
-import           Data.Time.Calendar                       ( Day )
-import           Data.Time                                ( TimeOfDay
-                                                          , LocalTime
-                                                          , UTCTime
-                                                          )
-import           Data.ByteString                          ( ByteString )
-import           Data.Int
-import           Data.Set                                 ( Set )
-import           Data.Word
-import qualified Data.Map.Strict                         as M
-import qualified Data.Set                                as S
-import qualified Data.Text                               as T
+import Data.Typeable
+import Data.Text (Text)
+import Data.Scientific (Scientific)
+import Data.Time.Calendar (Day)
+import Data.Time (TimeOfDay, LocalTime, UTCTime)
+import Data.ByteString (ByteString)
+import Data.Int
+import Data.Set (Set)
+import Data.Word
+import qualified Data.Map.Strict as M
+import qualified Data.Set as S
+import qualified Data.Text as T
 
-import           Database.Beam.Backend.SQL.Types         as Beam
-import           Database.Beam.Backend.SQL         hiding ( tableName )
-import qualified Database.Beam                           as Beam
-import qualified Database.Beam.Backend.SQL.AST           as AST
+import Database.Beam.Backend.SQL.Types as Beam
+import Database.Beam.Backend.SQL hiding (tableName)
+import qualified Database.Beam as Beam
+import qualified Database.Beam.Backend.SQL.AST as AST
 
-import           Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Types
 import qualified Database.Beam.AutoMigrate.Util as Util
-import qualified Database.Beam.Postgres                  as Pg
-import           Data.Aeson                              as JSON
-                                                          ( FromJSON
-                                                          , ToJSON
-                                                          )
-import           Data.UUID
+import qualified Database.Beam.Postgres as Pg
+import Data.Aeson (FromJSON, ToJSON)
+import Data.UUID
 
 --
 -- Specifying SQL data types and constraints

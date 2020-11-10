@@ -2,19 +2,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import           Data.Time
-import           Control.Monad.IO.Class                   ( liftIO )
-import           Control.Exception                        ( bracket )
-import qualified Data.Map.Strict                         as M
+import Data.Time
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception (bracket)
+import qualified Data.Map.Strict as M
 
 
-import           Database.Beam.AutoMigrate
-import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
+import Database.Beam.AutoMigrate
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 
-import qualified Database.PostgreSQL.Simple              as Pg
-import           Database.Beam.Postgres                   ( runBeamPostgres )
+import qualified Database.PostgreSQL.Simple as Pg
+import Database.Beam.Postgres (runBeamPostgres)
 
-import           Database.Beam.AutoMigrate.BenchUtil
+import Database.Beam.AutoMigrate.BenchUtil
 
 pgMigrate :: Pg.Connection -> Schema -> IO ()
 pgMigrate conn hsSchema =

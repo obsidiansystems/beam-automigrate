@@ -8,18 +8,18 @@ module Database.Beam.AutoMigrate.BenchUtil
     , tearDownDatabase
     ) where
 
-import           System.Random.SplitMix                   ( mkSMGen )
-import           Data.ByteString                          ( ByteString )
-import           Control.DeepSeq
-import           Control.Exception                        ( finally )
+import System.Random.SplitMix (mkSMGen)
+import Data.ByteString (ByteString)
+import Control.DeepSeq
+import Control.Exception (finally)
 
-import           Test.QuickCheck.Gen
-import           Test.QuickCheck.Random
+import Test.QuickCheck.Gen
+import Test.QuickCheck.Random
 
-import           Database.Beam.AutoMigrate
-import           Database.Beam.AutoMigrate.Schema.Gen         ( genSimilarSchemas )
+import Database.Beam.AutoMigrate
+import Database.Beam.AutoMigrate.Schema.Gen (genSimilarSchemas)
 
-import qualified Database.PostgreSQL.Simple              as Pg
+import qualified Database.PostgreSQL.Simple as Pg
 
 
 newtype SpineStrict = SS { unSS :: Diff }

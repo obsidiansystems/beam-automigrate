@@ -7,25 +7,25 @@
 module Database.Beam.AutoMigrate.Types where
 
 
-import           Control.Exception
-import           Control.DeepSeq
-import           GHC.Generics                             hiding (to)
-import           Data.ByteString.Lazy                     ( ByteString )
-import           Data.String
-import           Data.String.Conv                         ( toS )
-import           Data.Typeable
-import           Lens.Micro                               ( Lens', lens, _Right, to)
-import           Lens.Micro.Extras                        ( preview )
-import           Data.Map                                 ( Map )
-import           Data.Maybe                               ( fromMaybe )
-import           Data.Set                                 ( Set )
-import           Data.Text                                ( Text )
-import qualified Data.Text                               as T
+import Control.Exception
+import Control.DeepSeq
+import GHC.Generics hiding (to)
+import Data.ByteString.Lazy (ByteString)
+import Data.String
+import Data.String.Conv (toS)
+import Data.Typeable
+import Lens.Micro (Lens', lens, _Right, to)
+import Lens.Micro.Extras (preview)
+import Data.Map (Map)
+import Data.Maybe (fromMaybe)
+import Data.Set (Set)
+import Data.Text (Text)
+import qualified Data.Text as T
 
-import           Database.Beam.Backend.SQL               ( BeamSqlBackendSyntax )
-import           Database.Beam.Postgres                  ( Postgres, Pg )
-import qualified Database.Beam.Postgres.Syntax           as Syntax
-import qualified Database.Beam.Backend.SQL.AST           as AST
+import Database.Beam.Backend.SQL (BeamSqlBackendSyntax)
+import Database.Beam.Postgres (Postgres, Pg)
+import qualified Database.Beam.Postgres.Syntax as Syntax
+import qualified Database.Beam.Backend.SQL.AST as AST
 
 --
 -- Types (sketched)

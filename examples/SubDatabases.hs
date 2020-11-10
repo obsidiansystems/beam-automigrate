@@ -2,52 +2,50 @@
 {-# LANGUAGE DeriveAnyClass #-}
 module SubDatabases where
 
-import           Data.Text                      ( Text )
-import           Data.Proxy
-import           Data.Typeable
+import Data.Text (Text)
+import Data.Proxy
+import Data.Typeable
 
-import           GHC.Generics
-import           Control.Exception
+import GHC.Generics
+import Control.Exception
 
-import           Database.Beam.Postgres
-import           Database.Beam.Schema           ( Beamable
-                                                , Columnar
-                                                , Database
-                                                , DatabaseSettings
-                                                , PrimaryKey
-                                                , TableEntity
-                                                , dbModification
-                                                , defaultDbSettings
-                                                , fieldNamed
-                                                , setEntityName
-                                                , modifyTableFields
-                                                , tableModification
-                                                , withDbModification
-                                                )
-import qualified Database.Beam.Schema          as Beam
-import           Database.Beam.Schema.Tables    ( primaryKey )
-import           Database.Beam.Query            (currentTimestamp_)
+import Database.Beam.Postgres
+import Database.Beam.Schema ( Beamable
+                            , Columnar
+                            , Database
+                            , DatabaseSettings
+                            , PrimaryKey
+                            , TableEntity
+                            , dbModification
+                            , defaultDbSettings
+                            , fieldNamed
+                            , setEntityName
+                            , modifyTableFields
+                            , tableModification
+                            , withDbModification
+                            )
+import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema.Tables (primaryKey)
+import Database.Beam.Query (currentTimestamp_)
 
-import           Database.Beam.AutoMigrate.Annotated
+import Database.Beam.AutoMigrate.Annotated
 
-import           Database.Beam.AutoMigrate          ( Schema
-                                                , Diff
-                                                , Migration
-                                                , fromAnnotatedDbSettings
-                                                , defaultAnnotatedDbSettings
-                                                , diff
-                                                , unsafeRunMigration
-                                                , printMigration
-                                                , migrate
-                                                )
-import           Database.Beam.AutoMigrate.Postgres ( getSchema )
+import Database.Beam.AutoMigrate ( Schema
+                                 , Diff
+                                 , Migration
+                                 , fromAnnotatedDbSettings
+                                 , defaultAnnotatedDbSettings
+                                 , diff
+                                 , unsafeRunMigration
+                                 , printMigration
+                                 , migrate
+                                 )
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 
-import qualified Database.PostgreSQL.Simple    as Pg
+import qualified Database.PostgreSQL.Simple as Pg
 
-import           Data.Int                       ( Int32
-                                                , Int64
-                                                )
-import           Data.Time                      ( LocalTime )
+import Data.Int (Int32 , Int64)
+import Data.Time (LocalTime)
 
 --
 -- Example showcasing sub-databases and foreign key discovery.

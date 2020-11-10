@@ -5,35 +5,21 @@
 {-# LANGUAGE TypeFamilies         #-}
 module ForeignKeys where
 
-import           Data.Text                                ( Text )
-import           Data.Proxy
+import Data.Text (Text)
+import Data.Proxy
 
-import           GHC.Generics
+import GHC.Generics
 
-import           Control.Exception                        ( bracket )
+import Control.Exception (bracket)
 
-import           Database.Beam.Postgres
-import           Database.Beam.Schema                     ( Beamable
-                                                          , Columnar
-                                                          , Database
-                                                          , PrimaryKey
-                                                          , TableEntity
-                                                          , defaultDbSettings
-                                                          )
-import qualified Database.Beam.Schema                    as Beam
-import           Database.Beam.Schema.Tables              ( primaryKey )
+import Database.Beam.Postgres
+import Database.Beam.Schema (Beamable, Columnar, Database, PrimaryKey, TableEntity, defaultDbSettings)
+import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema.Tables (primaryKey)
 
-import           Database.Beam.AutoMigrate                    ( Schema
-                                                          , fromAnnotatedDbSettings
-                                                          , defaultAnnotatedDbSettings
-                                                          , AnnotatedDatabaseSettings
-                                                          , Migration
-                                                          , printMigration
-                                                          , migrate
-                                                          , unsafeRunMigration
-                                                          )
+import Database.Beam.AutoMigrate (Schema, fromAnnotatedDbSettings, defaultAnnotatedDbSettings, AnnotatedDatabaseSettings, Migration, printMigration, migrate, unsafeRunMigration)
 
-import qualified Database.PostgreSQL.Simple              as Pg
+import qualified Database.PostgreSQL.Simple as Pg
 
 --
 -- Example

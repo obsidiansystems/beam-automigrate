@@ -20,28 +20,20 @@ module Database.Beam.AutoMigrate.Diff
   )
 where
 
-import           Data.Word                                ( Word8 )
-import           Data.DList                               ( DList )
-import qualified Data.DList                              as D
-import           Data.Maybe
-import           Data.Text                                ( Text )
-import           Data.List                                ( foldl'
-                                                          , (\\)
-                                                          )
-import qualified Data.List                               as L
-import           Control.Monad
-import           Control.Exception                        ( assert )
-import           Data.Map.Merge.Strict                    ( mergeA
-                                                          , traverseMissing
-                                                          , zipWithAMatched
-                                                          , zipWithAMatched
-                                                          , WhenMissing
-                                                          , WhenMatched
-                                                          )
-import qualified Data.Map.Strict                         as M
-import qualified Data.Set                                as S
-import           Data.Foldable                            ( foldlM )
-import           Database.Beam.AutoMigrate.Types
+import Data.Word (Word8)
+import Data.DList (DList)
+import qualified Data.DList as D
+import Data.Maybe
+import Data.Text (Text)
+import Data.List (foldl', (\\))
+import qualified Data.List as L
+import Control.Monad
+import Control.Exception (assert)
+import Data.Map.Merge.Strict
+import qualified Data.Map.Strict as M
+import qualified Data.Set as S
+import Data.Foldable (foldlM)
+import Database.Beam.AutoMigrate.Types
 
 --
 -- Simple typeclass to diff things

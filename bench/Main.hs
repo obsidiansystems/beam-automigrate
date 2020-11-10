@@ -1,18 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import           Control.Monad.IO.Class         ( liftIO )
-import           Control.Exception              ( bracket )
-import qualified Data.Map.Strict               as M
+import Control.Monad.IO.Class (liftIO)
+import Control.Exception (bracket)
+import qualified Data.Map.Strict as M
 
-import           Database.Beam.Migrate.New
-import           Database.Beam.Migrate.New.Postgres ( getSchema )
+import Database.Beam.Migrate.New
+import Database.Beam.Migrate.New.Postgres (getSchema)
 
-import qualified Database.PostgreSQL.Simple    as Pg
-import           Database.Beam.Postgres         ( runBeamPostgres )
+import qualified Database.PostgreSQL.Simple as Pg
+import Database.Beam.Postgres (runBeamPostgres)
 
-import           Criterion.Main
-import           Database.Beam.Migrate.New.BenchUtil
+import Criterion.Main
+import Database.Beam.Migrate.New.BenchUtil
 
 pgMigrate :: Pg.Connection -> (Schema -> Schema -> Diff) -> Schema -> IO SpineStrict
 pgMigrate conn diffFun hsSchema =

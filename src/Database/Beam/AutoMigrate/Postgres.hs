@@ -9,37 +9,30 @@ module Database.Beam.AutoMigrate.Postgres
   )
 where
 
-import           Data.String
-import           Control.Monad.State
-import           Data.Maybe                               ( fromMaybe )
-import           Data.Bits                                ( (.&.)
-                                                          , shiftR
-                                                          )
-import           Data.Foldable                            ( foldlM, asum )
-import qualified Data.Vector                             as V
-import qualified Data.Map.Strict                         as M
-import qualified Data.Set                                as S
-import           Data.Map                                 ( Map )
-import           Data.Set                                 ( Set )
-import           Data.Text                                ( Text )
-import qualified Data.Text.Encoding                      as TE
-import qualified Data.Text                               as T
-import           Data.ByteString                          ( ByteString )
+import Data.String
+import Control.Monad.State
+import Data.Maybe (fromMaybe)
+import Data.Bits ((.&.), shiftR)
+import Data.Foldable (foldlM, asum)
+import qualified Data.Vector as V
+import qualified Data.Map.Strict as M
+import qualified Data.Set as S
+import Data.Map (Map)
+import Data.Set (Set)
+import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text as T
+import Data.ByteString (ByteString)
 
-import           Database.Beam.Backend.SQL         hiding ( tableName )
-import qualified Database.PostgreSQL.Simple              as Pg
-import           Database.PostgreSQL.Simple.FromRow       ( FromRow(..)
-                                                          , field
-                                                          )
-import           Database.PostgreSQL.Simple.FromField     ( FromField(..)
-                                                          , fromField
-                                                          )
-import qualified Database.PostgreSQL.Simple.Types        as Pg
-import qualified Database.PostgreSQL.Simple.TypeInfo.Static
-                                                         as Pg
-import qualified Database.Beam.Backend.SQL.AST           as AST
+import Database.Beam.Backend.SQL hiding (tableName)
+import qualified Database.PostgreSQL.Simple as Pg
+import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
+import Database.PostgreSQL.Simple.FromField (FromField(..), fromField)
+import qualified Database.PostgreSQL.Simple.Types as Pg
+import qualified Database.PostgreSQL.Simple.TypeInfo.Static as Pg
+import qualified Database.Beam.Backend.SQL.AST as AST
 
-import           Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Types
 
 --
 -- Necessary types to make working with the underlying raw SQL a bit more pleasant

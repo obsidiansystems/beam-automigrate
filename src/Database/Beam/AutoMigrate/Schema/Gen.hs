@@ -12,47 +12,36 @@ module Database.Beam.AutoMigrate.Schema.Gen
     , shrinkSchema
     ) where
 
-import           GHC.Generics
-import           Data.Proxy
-import           Control.Monad
-import           Control.Monad.State.Strict
-import           Data.Word
-import           Data.Functor                             ( (<&>) )
-import           Data.Foldable                            ( foldlM )
-import           Data.Set                                 ( Set )
-import           Data.Functor.Identity
-import           Data.Text                                ( Text )
-import           Data.Int                                 ( Int16
-                                                          , Int32
-                                                          , Int64
-                                                          )
-import qualified Data.Set                                as S
-import qualified Data.Map.Strict                         as M
-import qualified Data.Text                               as T
-import           Data.Scientific                          ( Scientific, scientific )
-import           Text.Printf                              ( printf )
-import           Data.Time                                ( Day
-                                                          , TimeOfDay
-                                                          , LocalTime
-                                                          )
+import GHC.Generics
+import Data.Proxy
+import Control.Monad
+import Control.Monad.State.Strict
+import Data.Word
+import Data.Functor ((<&>))
+import Data.Foldable (foldlM)
+import Data.Set (Set)
+import Data.Functor.Identity
+import Data.Text (Text)
+import Data.Int (Int16, Int32, Int64)
+import qualified Data.Set as S
+import qualified Data.Map.Strict as M
+import qualified Data.Text as T
+import Data.Scientific (Scientific, scientific)
+import Text.Printf (printf)
+import Data.Time (Day, TimeOfDay, LocalTime)
 
-import           Database.Beam.AutoMigrate.Types
-import qualified Database.Beam.Backend.SQL.AST           as AST
-import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax, timestampType )
-import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
-import           Database.Beam.AutoMigrate                    ( sqlSingleQuoted
-                                                          , defaultColumnType
-                                                          , HasColumnType
-                                                          )
-import qualified Database.Beam.Postgres.Syntax           as Pg
-import qualified Database.Beam.Postgres                  as Pg
-import           Database.Beam.AutoMigrate.Annotated          ( pgDefaultConstraint )
-import           Database.Beam.Query                      ( val_
-                                                          , currentTimestamp_
-                                                          )
+import Database.Beam.AutoMigrate.Types
+import qualified Database.Beam.Backend.SQL.AST as AST
+import Database.Beam.Backend.SQL (HasSqlValueSyntax, timestampType)
+import Database.Beam.Backend.SQL.Types (SqlSerial(..))
+import Database.Beam.AutoMigrate (sqlSingleQuoted, defaultColumnType, HasColumnType)
+import qualified Database.Beam.Postgres.Syntax as Pg
+import qualified Database.Beam.Postgres as Pg
+import Database.Beam.AutoMigrate.Annotated (pgDefaultConstraint)
+import Database.Beam.Query (val_, currentTimestamp_)
 
-import           Test.QuickCheck
-import           Test.QuickCheck.Instances.Time           ( )
+import Test.QuickCheck
+import Test.QuickCheck.Instances.Time ()
 
 --
 -- Arbitrary instances

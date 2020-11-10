@@ -1,24 +1,22 @@
 module Main where
 
-import           Database.Beam.AutoMigrate
-import           Database.Beam.AutoMigrate.Schema.Gen
-import           Database.Beam.AutoMigrate.Validity
-import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
-import           Database.Beam.AutoMigrate.BenchUtil          ( tearDownDatabase
-                                                          , cleanDatabase
-                                                          )
+import Database.Beam.AutoMigrate
+import Database.Beam.AutoMigrate.Schema.Gen
+import Database.Beam.AutoMigrate.Validity
+import Database.Beam.AutoMigrate.Postgres (getSchema)
+import Database.Beam.AutoMigrate.BenchUtil (tearDownDatabase, cleanDatabase)
 
-import qualified Database.PostgreSQL.Simple              as Pg
-import qualified Data.List                               as L
-import qualified Data.Text.Lazy                          as TL
-import           Control.Exception                        ( bracket )
-import           Control.Monad.IO.Class                   ( liftIO )
-import           Test.Tasty
-import           Test.Tasty.QuickCheck                   as QC
-import           Test.QuickCheck
-import           Test.QuickCheck.Monadic
+import qualified Database.PostgreSQL.Simple as Pg
+import qualified Data.List as L
+import qualified Data.Text.Lazy as TL
+import Control.Exception (bracket)
+import Control.Monad.IO.Class (liftIO)
+import Test.Tasty
+import Test.Tasty.QuickCheck as QC
+import Test.QuickCheck
+import Test.QuickCheck.Monadic
 
-import qualified Database.Postgres.Temp                  as Tmp
+import qualified Database.Postgres.Temp as Tmp
 import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
 
 

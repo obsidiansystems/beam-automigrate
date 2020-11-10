@@ -15,19 +15,19 @@ module Database.Beam.AutoMigrate.Validity
   , validateColumn
   ) where
 
-import           Control.Monad
-import           Control.Monad.Except
+import Control.Monad
+import Control.Monad.Except
 
-import           Data.Bifunctor
-import           Data.Monoid
-import           Data.Foldable
-import qualified Data.Map.Strict                         as M
-import qualified Data.Set                                as S
-import qualified Data.List                               as L
-import           Data.Text                                ( Text )
+import Data.Bifunctor
+import Data.Monoid
+import Data.Foldable
+import qualified Data.Map.Strict as M
+import qualified Data.Set as S
+import qualified Data.List as L
+import Data.Text (Text)
 
-import           Database.Beam.AutoMigrate.Diff
-import           Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Diff
+import Database.Beam.AutoMigrate.Types
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).
@@ -216,7 +216,7 @@ lookupColumnRef :: TableName
                 -> Qualified ColumnName
                 -> Alt Maybe (Qualified ColumnName, TableConstraint)
 lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName) =
-  asum (map lookupReference (S.toList constr))
+ asum (map lookupReference (S.toList constr))
   where
     lookupReference :: TableConstraint -> Alt Maybe (Qualified ColumnName, TableConstraint)
     lookupReference con = Alt $ case con of

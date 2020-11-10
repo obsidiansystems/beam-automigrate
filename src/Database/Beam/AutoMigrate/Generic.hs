@@ -11,30 +11,25 @@
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 module Database.Beam.AutoMigrate.Generic where
 
-import           Database.Beam.AutoMigrate.Util               ( pkFieldNames )
-import           Database.Beam.AutoMigrate.Types
-import           Data.Bifunctor
-import           Data.Kind
-import           Data.Proxy
-import           Lens.Micro                               ( (^.) )
-import qualified Data.List                               as L
-import qualified Data.Map.Strict                         as M
-import qualified Data.Set                                as S
+import Database.Beam.AutoMigrate.Util (pkFieldNames)
+import Database.Beam.AutoMigrate.Types
+import Data.Bifunctor
+import Data.Kind
+import Data.Proxy
+import Lens.Micro ((^.))
+import qualified Data.List as L
+import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 
-import           GHC.Generics
-import           GHC.TypeLits
+import GHC.Generics
+import GHC.TypeLits
 
-import           Database.Beam.Schema                     ( PrimaryKey
-                                                          , TableEntity
-                                                          )
-import qualified Database.Beam.Schema                    as Beam
-import           Database.Beam.Schema.Tables              ( dbEntityDescriptor
-                                                          , dbEntityName
-                                                          , Beamable(..)
-                                                          )
+import Database.Beam.Schema (PrimaryKey, TableEntity)
+import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema.Tables (dbEntityDescriptor, dbEntityName, Beamable(..))
 
-import           Database.Beam.AutoMigrate.Annotated
-import           Database.Beam.AutoMigrate.Compat
+import Database.Beam.AutoMigrate.Annotated
+import Database.Beam.AutoMigrate.Compat
 
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.

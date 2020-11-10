@@ -10,58 +10,56 @@
 {-# LANGUAGE TypeFamilies       #-}
 module Example where
 
-import           Data.Text                      ( Text )
-import           Data.Proxy
+import Data.Text (Text)
+import Data.Proxy
 
-import           GHC.Generics
-import           Control.Exception
+import GHC.Generics
+import Control.Exception
 
-import           Database.Beam.Postgres
-import           Database.Beam.Schema           ( Beamable
-                                                , Columnar
-                                                , Database
-                                                , DatabaseSettings
-                                                , PrimaryKey
-                                                , TableEntity
-                                                , dbModification
-                                                , defaultDbSettings
-                                                , fieldNamed
-                                                , modifyTableFields
-                                                , tableModification
-                                                , withDbModification
-                                                )
-import qualified Database.Beam.Schema          as Beam
-import           Database.Beam.Schema.Tables    ( primaryKey )
-import           Database.Beam.Query            (val_, currentTimestamp_)
-import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
+import Database.Beam.Postgres
+import Database.Beam.Schema ( Beamable
+                            , Columnar
+                            , Database
+                            , DatabaseSettings
+                            , PrimaryKey
+                            , TableEntity
+                            , dbModification
+                            , defaultDbSettings
+                            , fieldNamed
+                            , modifyTableFields
+                            , tableModification
+                            , withDbModification
+                            )
+import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema.Tables (primaryKey)
+import Database.Beam.Query (val_, currentTimestamp_)
+import Database.Beam.Backend.SQL.Types (SqlSerial(..))
 
-import           Database.Beam.AutoMigrate.Annotated
+import Database.Beam.AutoMigrate.Annotated
 
-import           Database.Beam.AutoMigrate          ( Schema
-                                                , Diff
-                                                , Migration
-                                                , fromAnnotatedDbSettings
-                                                , defaultAnnotatedDbSettings
-                                                , diff
-                                                , unsafeRunMigration
-                                                , printMigration
-                                                , migrate
-                                                , DbEnum
-                                                , PgEnum
-                                                , ReferenceAction(..)
-                                                , HasColumnType
-                                                )
-import           Database.Beam.AutoMigrate.Postgres ( getSchema )
+import Database.Beam.AutoMigrate ( Schema
+                                 , Diff
+                                 , Migration
+                                 , fromAnnotatedDbSettings
+                                 , defaultAnnotatedDbSettings
+                                 , diff
+                                 , unsafeRunMigration
+                                 , printMigration
+                                 , migrate
+                                 , DbEnum
+                                 , PgEnum
+                                 , ReferenceAction(..)
+                                 , HasColumnType
+                                 )
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 
-import qualified Database.PostgreSQL.Simple    as Pg
+import qualified Database.PostgreSQL.Simple as Pg
 import qualified Database.Beam.Postgres as Pg
 
-import           Data.ByteString                          ( ByteString )
-import           Data.Int                       ( Int32
-                                                , Int64
-                                                )
-import           Data.Time                      ( LocalTime )
-import           Data.Aeson.TH
+import Data.ByteString (ByteString)
+import Data.Int (Int32 , Int64)
+import Data.Time (LocalTime)
+import Data.Aeson.TH
 
 --
 -- Example

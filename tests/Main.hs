@@ -6,9 +6,9 @@ import Database.Beam.AutoMigrate.Validity
 
 import qualified Data.List as L
 import qualified Data.Text.Lazy as TL
-import           Test.Tasty
-import           Test.Tasty.QuickCheck         as QC
-import           Test.QuickCheck
+import Test.Tasty
+import Test.Tasty.QuickCheck as QC
+import Test.QuickCheck
 
 import Text.Pretty.Simple (pShowNoColor)
 

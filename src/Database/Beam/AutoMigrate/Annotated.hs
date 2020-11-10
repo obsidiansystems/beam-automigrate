@@ -53,41 +53,37 @@ module Database.Beam.AutoMigrate.Annotated (
   , pgDefaultConstraint
   ) where
 
-import           Data.Kind
-import           Data.Proxy
-import qualified Lens.Micro                              as Lens
-import           Lens.Micro                               ( SimpleGetter
-                                                          , (^.)
-                                                          )
-import           GHC.Generics                            as Generic
-import qualified Data.Text                               as T
-import           Data.Set                                 ( Set )
-import qualified Data.Set                                as S
-import           Data.Monoid                              ( Endo(..) )
+import Data.Kind
+import Data.Proxy
+import qualified Lens.Micro as Lens
+import Lens.Micro (SimpleGetter, (^.))
+import GHC.Generics as Generic
+import qualified Data.Text as T
+import Data.Set (Set)
+import qualified Data.Set as S
+import Data.Monoid (Endo(..))
 
-import qualified Database.Beam                           as Beam
-import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax(..)
-                                                          , displaySyntax
-                                                          )
-import qualified Database.Beam.Postgres.Syntax           as Pg
-import           Database.Beam.Postgres                   ( Postgres )
-import           Database.Beam.Query                      ( QExpr )
-import           Database.Beam.AutoMigrate.Types
-import           Database.Beam.AutoMigrate.Compat
-import           Database.Beam.AutoMigrate.Util
-import           Database.Beam.Schema.Tables              ( PrimaryKey
-                                                          , IsDatabaseEntity
-                                                          , DatabaseEntityDescriptor
-                                                          , TableEntity
-                                                          , DatabaseEntity
-                                                          , DatabaseEntityDefaultRequirements
-                                                          , DatabaseEntityRegularRequirements
-                                                          , dbEntityDescriptor
-                                                          , dbEntityName
-                                                          , dbTableSettings
-                                                          , FieldModification(..)
-                                                          , EntityModification(..)
-                                                          )
+import qualified Database.Beam as Beam
+import Database.Beam.Backend.SQL (HasSqlValueSyntax(..), displaySyntax)
+import qualified Database.Beam.Postgres.Syntax as Pg
+import Database.Beam.Postgres (Postgres)
+import Database.Beam.Query (QExpr)
+import Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Compat
+import Database.Beam.AutoMigrate.Util
+import Database.Beam.Schema.Tables ( PrimaryKey
+                                   , IsDatabaseEntity
+                                   , DatabaseEntityDescriptor
+                                   , TableEntity
+                                   , DatabaseEntity
+                                   , DatabaseEntityDefaultRequirements
+                                   , DatabaseEntityRegularRequirements
+                                   , dbEntityDescriptor
+                                   , dbEntityName
+                                   , dbTableSettings
+                                   , FieldModification(..)
+                                   , EntityModification(..)
+                                   )
 
 --
 -- Annotating a 'DatabaseSettings' with meta information.

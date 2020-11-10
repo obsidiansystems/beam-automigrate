@@ -2,28 +2,17 @@
 {-# LANGUAGE FlexibleContexts     #-}
 module Database.Beam.AutoMigrate.Util where
 
-import           Control.Applicative.Lift
-import           Control.Monad.Except
+import Control.Applicative.Lift
+import Control.Monad.Except
 
-import           Lens.Micro                     ( (^.) )
+import Lens.Micro ((^.))
 
-import           Data.Functor.Constant
-import           Database.Beam.Schema           ( Beamable
-                                                , PrimaryKey
-                                                , TableEntity
-                                                , TableSettings
-                                                )
-import qualified Database.Beam.Schema          as Beam
-import           Database.Beam.Schema.Tables    ( Columnar'(..)
-                                                , allBeamValues
-                                                , dbEntityDescriptor
-                                                , dbTableSettings
-                                                , fieldName
-                                                , primaryKey
-                                                , dbEntityName
-                                                )
+import Data.Functor.Constant
+import Database.Beam.Schema (Beamable, PrimaryKey, TableEntity, TableSettings)
+import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema.Tables
 
-import           Database.Beam.AutoMigrate.Types    ( ColumnName(..), TableName(..) )
+import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
 
 import Data.String (fromString)
 import Data.Text (Text)
