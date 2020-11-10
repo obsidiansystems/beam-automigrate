@@ -1,47 +1,43 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE TypeFamilies #-}
+
 module ForeignKeys where
 
-import Data.Text (Text)
-import Data.Proxy
-
-import GHC.Generics
-
 import Control.Exception (bracket)
-
+import Data.Proxy
+import Data.Text (Text)
+import Database.Beam.AutoMigrate (AnnotatedDatabaseSettings, Migration, Schema, defaultAnnotatedDbSettings, fromAnnotatedDbSettings, migrate, printMigration, unsafeRunMigration)
 import Database.Beam.Postgres
 import Database.Beam.Schema (Beamable, Columnar, Database, PrimaryKey, TableEntity, defaultDbSettings)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables (primaryKey)
-
-import Database.Beam.AutoMigrate (Schema, fromAnnotatedDbSettings, defaultAnnotatedDbSettings, AnnotatedDatabaseSettings, Migration, printMigration, migrate, unsafeRunMigration)
-
 import qualified Database.PostgreSQL.Simple as Pg
+import GHC.Generics
 
 --
 -- Example
 --
 
 data CitiesT f = Flower
-  { ctCity     :: Columnar f Text
-  , ctLocation :: Columnar f Text
+  { ctCity :: Columnar f Text,
+    ctLocation :: Columnar f Text
   }
   deriving (Generic, Beamable)
 
 data WeatherT f = Weather
-  { wtId             :: Columnar f Int
-  , wtCity           :: PrimaryKey CitiesT f
-  , wtTempLo         :: Columnar f Int
-  , wtTempHi         :: Columnar f Int
+  { wtId :: Columnar f Int,
+    wtCity :: PrimaryKey CitiesT f,
+    wtTempLo :: Columnar f Int,
+    wtTempHi :: Columnar f Int
   }
   deriving (Generic, Beamable)
 
 data ForecastDB f = ForecastDB
-  { dbCities   :: f (TableEntity CitiesT)
-  , dbWeathers :: f (TableEntity WeatherT)
+  { dbCities :: f (TableEntity CitiesT),
+    dbWeathers :: f (TableEntity WeatherT)
   }
   deriving (Generic, Database be)
 
@@ -69,9 +65,10 @@ withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
 withBeamTestDb action = do
   let connInfo = "host=localhost port=5432 dbname=beam-test-forecast-db"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
-    Pg.withTransaction conn $ runBeamPostgres conn $ do
-      let mig = migrate conn hsSchema
-      action mig
+    Pg.withTransaction conn $
+      runBeamPostgres conn $ do
+        let mig = migrate conn hsSchema
+        action mig
 
 exampleAutoMigration :: IO ()
 exampleAutoMigration = withBeamTestDb unsafeRunMigration

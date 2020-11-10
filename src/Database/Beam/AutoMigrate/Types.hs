@@ -1,40 +1,41 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+
 module Database.Beam.AutoMigrate.Types where
 
-
-import Control.Exception
 import Control.DeepSeq
-import GHC.Generics hiding (to)
+import Control.Exception
 import Data.ByteString.Lazy (ByteString)
-import Data.String
-import Data.String.Conv (toS)
-import Data.Typeable
-import Lens.Micro (Lens', lens, _Right, to)
-import Lens.Micro.Extras (preview)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
+import Data.String
+import Data.String.Conv (toS)
 import Data.Text (Text)
 import qualified Data.Text as T
-
+import Data.Typeable
 import Database.Beam.Backend.SQL (BeamSqlBackendSyntax)
-import Database.Beam.Postgres (Postgres, Pg)
-import qualified Database.Beam.Postgres.Syntax as Syntax
 import qualified Database.Beam.Backend.SQL.AST as AST
+import Database.Beam.Postgres (Pg, Postgres)
+import qualified Database.Beam.Postgres.Syntax as Syntax
+import GHC.Generics hiding (to)
+import Lens.Micro (Lens', lens, to, _Right)
+import Lens.Micro.Extras (preview)
 
 --
 -- Types (sketched)
 --
 
-data Schema = Schema { schemaTables        :: Tables
-                     , schemaEnumerations  :: Enumerations
-                     , schemaSequences     :: Sequences
-                     } deriving (Show, Eq, Generic)
+data Schema = Schema
+  { schemaTables :: Tables,
+    schemaEnumerations :: Enumerations,
+    schemaSequences :: Sequences
+  }
+  deriving (Show, Eq, Generic)
 
 instance NFData Schema
 
@@ -55,6 +56,7 @@ newtype Enumeration = Enumeration
   deriving (Show, Eq, Ord, Generic)
 
 instance NFData EnumerationName
+
 instance NFData Enumeration
 
 --
@@ -71,12 +73,13 @@ newtype SequenceName = SequenceName
 -- For now this type is isomorphic to unit as we don't need to support anything other than plain
 -- sequences.
 data Sequence = Sequence
-  { seqTable :: TableName
-  , seqColumn :: ColumnName
+  { seqTable :: TableName,
+    seqColumn :: ColumnName
   }
   deriving (Show, Eq, Ord, Generic)
 
 instance NFData SequenceName
+
 instance NFData Sequence
 
 mkSequenceName :: TableName -> ColumnName -> SequenceName
@@ -85,7 +88,7 @@ mkSequenceName tname cname = SequenceName (tableName tname <> "___" <> columnNam
 parseSequenceName :: SequenceName -> Maybe (TableName, ColumnName)
 parseSequenceName (SequenceName sName) = case T.splitOn "___" sName of
   [tName, cName, "seq"] -> Just (TableName tName, ColumnName cName)
-  _                     -> Nothing
+  _ -> Nothing
 
 --
 -- Tables
@@ -98,10 +101,11 @@ newtype TableName = TableName
   }
   deriving (Show, Eq, Ord, NFData, Generic)
 
-
-data Table = Table { tableConstraints :: Set TableConstraint
-                   , tableColumns :: Columns
-                   } deriving (Eq, Show, Generic)
+data Table = Table
+  { tableConstraints :: Set TableConstraint,
+    tableColumns :: Columns
+  }
+  deriving (Eq, Show, Generic)
 
 instance NFData Table
 
@@ -113,31 +117,31 @@ newtype ColumnName = ColumnName
   deriving (Show, Eq, Ord, NFData, Generic)
 
 instance IsString ColumnName where
-    fromString = ColumnName . T.pack
+  fromString = ColumnName . T.pack
 
-data Column = Column {
-    columnType        :: ColumnType
-  , columnConstraints :: Set ColumnConstraint
-  } deriving (Show, Eq, Generic)
+data Column = Column
+  { columnType :: ColumnType,
+    columnConstraints :: Set ColumnConstraint
+  }
+  deriving (Show, Eq, Generic)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Column where
-    rnf c = rnf (columnConstraints c)
+  rnf c = rnf (columnConstraints c)
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
-data ColumnType =
+data ColumnType
+  = -- | Standard SQL types.
     SqlStdType AST.DataType
-  -- ^ Standard SQL types.
-  | PgSpecificType PgDataType
-  -- ^ Postgres specific types.
-  | DbEnumeration EnumerationName Enumeration
-  -- ^ An enumeration implemented with text-based encoding.
+  | -- | Postgres specific types.
+    PgSpecificType PgDataType
+  | -- | An enumeration implemented with text-based encoding.
+    DbEnumeration EnumerationName Enumeration
   deriving (Show, Eq, Generic)
 
-
-data PgDataType =
-    PgJson
+data PgDataType
+  = PgJson
   | PgJsonB
   | PgRangeInt4
   | PgRangeInt8
@@ -149,16 +153,20 @@ data PgDataType =
   | PgEnumeration EnumerationName
 
 deriving instance Show PgDataType
+
 deriving instance Eq PgDataType
+
 deriving instance Generic PgDataType
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
-newtype PgEnum a =
-    PgEnum a deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
+newtype PgEnum a
+  = PgEnum a
+  deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
-newtype DbEnum a =
-    DbEnum a deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
+newtype DbEnum a
+  = DbEnum a
+  deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
 
 instance Semigroup Table where
   (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
@@ -168,32 +176,32 @@ instance Monoid Table where
 
 type ConstraintName = Text
 
-data TableConstraint =
-      PrimaryKey ConstraintName (Set ColumnName)
-      -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
-    | ForeignKey ConstraintName TableName (Set (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
-      -- ^ This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
-      -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
-      -- The set stores a (fk_column, pk_column) correspondence.
-    | Unique ConstraintName (Set ColumnName)
-    deriving (Show, Eq, Ord, Generic)
+data TableConstraint
+  = -- | This set of 'Column's identifies the Table's 'PrimaryKey'.
+    PrimaryKey ConstraintName (Set ColumnName)
+  | -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
+    -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
+    -- The set stores a (fk_column, pk_column) correspondence.
+    ForeignKey ConstraintName TableName (Set (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
+  | Unique ConstraintName (Set ColumnName)
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData TableConstraint
 
-data ColumnConstraint =
-      NotNull
-    | Default Text {- the actual default -}
-    deriving (Show, Eq, Ord, Generic)
+data ColumnConstraint
+  = NotNull
+  | Default Text {- the actual default -}
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData ColumnConstraint
 
-data ReferenceAction =
-      NoAction
-    | Restrict
-    | Cascade
-    | SetNull
-    | SetDefault
-    deriving (Show, Eq, Ord, Generic)
+data ReferenceAction
+  = NoAction
+  | Restrict
+  | Cascade
+  | SetNull
+  | SetDefault
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData ReferenceAction
 
@@ -202,8 +210,8 @@ instance NFData ReferenceAction
 --
 
 -- | A possible list of edits on a 'Schema'.
-data EditAction =
-    TableAdded TableName Table
+data EditAction
+  = TableAdded TableName Table
   | TableRemoved TableName
   | TableConstraintAdded TableName TableConstraint
   | TableConstraintRemoved TableName TableConstraint
@@ -222,7 +230,6 @@ data EditAction =
 -- | Safety rating for a given edit.
 --
 -- "Safety" is defined as some 'EditAction' that might cause data loss.
---
 data EditSafety
   = Safe
   | PotentiallySlow
@@ -231,24 +238,24 @@ data EditSafety
 
 defaultEditSafety :: EditAction -> EditSafety
 defaultEditSafety = \case
-  TableAdded{}              -> Safe
-  TableRemoved{}            -> Unsafe
-  TableConstraintAdded{}    -> Safe
-  TableConstraintRemoved{}  -> Safe
-  ColumnAdded{}             -> Safe
-  ColumnRemoved{}           -> Unsafe
-  ColumnTypeChanged{}       -> Unsafe
-  ColumnConstraintAdded{}   -> Safe
-  ColumnConstraintRemoved{} -> Safe
-  EnumTypeAdded{}           -> Safe
-  EnumTypeRemoved{}         -> Unsafe
-  EnumTypeValueAdded{}      -> Safe
-  SequenceAdded{}           -> Safe
-  SequenceRemoved{}         -> Unsafe
+  TableAdded {} -> Safe
+  TableRemoved {} -> Unsafe
+  TableConstraintAdded {} -> Safe
+  TableConstraintRemoved {} -> Safe
+  ColumnAdded {} -> Safe
+  ColumnRemoved {} -> Unsafe
+  ColumnTypeChanged {} -> Unsafe
+  ColumnConstraintAdded {} -> Safe
+  ColumnConstraintRemoved {} -> Safe
+  EnumTypeAdded {} -> Safe
+  EnumTypeRemoved {} -> Unsafe
+  EnumTypeValueAdded {} -> Safe
+  SequenceAdded {} -> Safe
+  SequenceRemoved {} -> Unsafe
 
 data EditCondition = EditCondition
-  { _editCondition_query :: BeamSqlBackendSyntax Postgres
-  , _editCondition_check :: Pg EditSafety
+  { _editCondition_query :: BeamSqlBackendSyntax Postgres,
+    _editCondition_check :: Pg EditSafety
   }
 
 prettyEditConditionQuery :: EditCondition -> ByteString
@@ -258,19 +265,22 @@ instance Eq EditCondition where
   ec1 == ec2 = prettyEditConditionQuery ec1 == prettyEditConditionQuery ec2
 
 instance Show EditCondition where
-  show ec = unwords
-    [ "EditConditon {"
-    , "_editCondition_query = PgCommand {"
-    , "pgCommandType = ", show $ Syntax.pgCommandType $ _editCondition_query ec
-    , "fromPgCommand = ", toS $ prettyEditConditionQuery ec
-    , "},"
-    , "_editCondition_check = <check function>"
-    , "}"
-    ]
+  show ec =
+    unwords
+      [ "EditConditon {",
+        "_editCondition_query = PgCommand {",
+        "pgCommandType = ",
+        show $ Syntax.pgCommandType $ _editCondition_query ec,
+        "fromPgCommand = ",
+        toS $ prettyEditConditionQuery ec,
+        "},",
+        "_editCondition_check = <check function>",
+        "}"
+      ]
 
 data Edit = Edit
-  { _editAction :: EditAction
-  , _editCondition :: Either EditCondition EditSafety
+  { _editAction :: EditAction,
+    _editCondition :: Either EditCondition EditSafety
   }
   deriving (Show, Eq)
 
@@ -289,8 +299,8 @@ mkEditWith isSafe e = Edit e (Right $ isSafe e)
 defMkEdit :: EditAction -> Edit
 defMkEdit = mkEditWith defaultEditSafety
 
-data InsertionOrder =
-    Before
+data InsertionOrder
+  = Before
   | After
   deriving (Show, Eq, Generic)
 
@@ -300,31 +310,32 @@ instance NFData InsertionOrder
 instance NFData EditAction where
   rnf (TableAdded tName tbl) = tName `deepseq` tbl `deepseq` ()
   rnf (TableRemoved tName) = rnf tName
-  rnf (TableConstraintAdded   tName tCon) = tName `deepseq` tCon `deepseq` ()
+  rnf (TableConstraintAdded tName tCon) = tName `deepseq` tCon `deepseq` ()
   rnf (TableConstraintRemoved tName tCon) = tName `deepseq` tCon `deepseq` ()
   rnf (ColumnAdded tName cName col) = tName `deepseq` cName `deepseq` col `deepseq` ()
   rnf (ColumnRemoved tName colName) = tName `deepseq` colName `deepseq` ()
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
-  rnf (ColumnConstraintAdded   tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
+  rnf (ColumnConstraintAdded tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
-  rnf (EnumTypeAdded       eName enum) = eName `deepseq` enum `deepseq` ()
-  rnf (EnumTypeRemoved     eName) = eName `deepseq` ()
-  rnf (EnumTypeValueAdded  eName inserted order insertionPoint) =
-      eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
+  rnf (EnumTypeAdded eName enum) = eName `deepseq` enum `deepseq` ()
+  rnf (EnumTypeRemoved eName) = eName `deepseq` ()
+  rnf (EnumTypeValueAdded eName inserted order insertionPoint) =
+    eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
   rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
   rnf (SequenceRemoved sName) = sName `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
-data DiffError =
-    AutomaticDiffNotPossible
-    -- ^ The diff couldn't be completed. TODO(adn) We need extra information
+data DiffError
+  = -- | The diff couldn't be completed. TODO(adn) We need extra information
     -- we can later on reify into the raw SQL queries users can try to run
     -- themselves.
-  | ValuesRemovedFromEnum EnumerationName [Text]
-  -- ^ Postgres doesn't support removing values from an enum.
+    AutomaticDiffNotPossible
+  | -- | Postgres doesn't support removing values from an enum.
+    ValuesRemovedFromEnum EnumerationName [Text]
   deriving (Show, Generic, Eq)
 
 instance Exception DiffError
+
 instance NFData DiffError
 
 --

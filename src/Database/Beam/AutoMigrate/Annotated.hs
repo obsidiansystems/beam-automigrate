@@ -1,89 +1,98 @@
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleContexts #-}
 
-{- | This module provides an 'AnnotatedDatabaseSettings' type to be used as a drop-in replacement for the
-standard 'DatabaseSettings'. Is it possible to \"downcast\" an 'AnnotatedDatabaseSettings' to a standard
-'DatabaseSettings' simply by calling 'deAnnotateDatabase'.
--}
+-- | This module provides an 'AnnotatedDatabaseSettings' type to be used as a drop-in replacement for the
+-- standard 'DatabaseSettings'. Is it possible to \"downcast\" an 'AnnotatedDatabaseSettings' to a standard
+-- 'DatabaseSettings' simply by calling 'deAnnotateDatabase'.
+module Database.Beam.AutoMigrate.Annotated
+  ( -- * User annotations
+    Annotation (..),
 
-module Database.Beam.AutoMigrate.Annotated (
-  -- * User annotations
-    Annotation(..)
-  -- * Annotating a 'DatabaseSettings'
-  , AnnotatedDatabaseSettings
-  , AnnotatedDatabaseEntity(..)
-  , IsAnnotatedDatabaseEntity(..)
-  , TableSchema
-  , TableFieldSchema(..)
-  , FieldSchema(..)
-  , dbAnnotatedSchema
-  , dbAnnotatedConstraints
-  , annotatedDescriptor
-  , defaultTableSchema
-  -- * Downcasting annotated types
-  , lowerEntityDescriptor
-  , deannotate
-  -- * Specifying constraints
-  -- $specifyingConstraints
-  , annotateTableFields
-  -- * Specifying Column constraints
-  -- $specifyingColumnConstraints
-  , defaultsTo
-  -- * Specifying Table constraints
-  -- $specifyingTableConstraints
-  , UniqueConstraint(..)
-  -- ** Unique constraint
-  , uniqueConstraintOn
-  -- ** Foreign key constraint
-  , ForeignKeyConstraint(..)
-  , foreignKeyOnPk
-  , foreignKeyOn
-  -- * Other types and functions
-  , TableKind
-  , DatabaseKind
-  -- * Ports from Beam
-  , zipTables
-  , GZipDatabase
-  -- * Internals
-  , pgDefaultConstraint
-  ) where
+    -- * Annotating a 'DatabaseSettings'
+    AnnotatedDatabaseSettings,
+    AnnotatedDatabaseEntity (..),
+    IsAnnotatedDatabaseEntity (..),
+    TableSchema,
+    TableFieldSchema (..),
+    FieldSchema (..),
+    dbAnnotatedSchema,
+    dbAnnotatedConstraints,
+    annotatedDescriptor,
+    defaultTableSchema,
+
+    -- * Downcasting annotated types
+    lowerEntityDescriptor,
+    deannotate,
+
+    -- * Specifying constraints
+    -- $specifyingConstraints
+    annotateTableFields,
+
+    -- * Specifying Column constraints
+    -- $specifyingColumnConstraints
+    defaultsTo,
+
+    -- * Specifying Table constraints
+    -- $specifyingTableConstraints
+    UniqueConstraint (..),
+
+    -- ** Unique constraint
+    uniqueConstraintOn,
+
+    -- ** Foreign key constraint
+    ForeignKeyConstraint (..),
+    foreignKeyOnPk,
+    foreignKeyOn,
+
+    -- * Other types and functions
+    TableKind,
+    DatabaseKind,
+
+    -- * Ports from Beam
+    zipTables,
+    GZipDatabase,
+
+    -- * Internals
+    pgDefaultConstraint,
+  )
+where
 
 import Data.Kind
+import Data.Monoid (Endo (..))
 import Data.Proxy
-import qualified Lens.Micro as Lens
-import Lens.Micro (SimpleGetter, (^.))
-import GHC.Generics as Generic
-import qualified Data.Text as T
 import Data.Set (Set)
 import qualified Data.Set as S
-import Data.Monoid (Endo(..))
-
+import qualified Data.Text as T
 import qualified Database.Beam as Beam
-import Database.Beam.Backend.SQL (HasSqlValueSyntax(..), displaySyntax)
-import qualified Database.Beam.Postgres.Syntax as Pg
-import Database.Beam.Postgres (Postgres)
-import Database.Beam.Query (QExpr)
-import Database.Beam.AutoMigrate.Types
 import Database.Beam.AutoMigrate.Compat
+import Database.Beam.AutoMigrate.Types
 import Database.Beam.AutoMigrate.Util
-import Database.Beam.Schema.Tables ( PrimaryKey
-                                   , IsDatabaseEntity
-                                   , DatabaseEntityDescriptor
-                                   , TableEntity
-                                   , DatabaseEntity
-                                   , DatabaseEntityDefaultRequirements
-                                   , DatabaseEntityRegularRequirements
-                                   , dbEntityDescriptor
-                                   , dbEntityName
-                                   , dbTableSettings
-                                   , FieldModification(..)
-                                   , EntityModification(..)
-                                   )
+import Database.Beam.Backend.SQL (HasSqlValueSyntax (..), displaySyntax)
+import Database.Beam.Postgres (Postgres)
+import qualified Database.Beam.Postgres.Syntax as Pg
+import Database.Beam.Query (QExpr)
+import Database.Beam.Schema.Tables
+  ( DatabaseEntity,
+    DatabaseEntityDefaultRequirements,
+    DatabaseEntityDescriptor,
+    DatabaseEntityRegularRequirements,
+    EntityModification (..),
+    FieldModification (..),
+    IsDatabaseEntity,
+    PrimaryKey,
+    TableEntity,
+    dbEntityDescriptor,
+    dbEntityName,
+    dbTableSettings,
+  )
+import GHC.Generics as Generic
+import Lens.Micro (SimpleGetter, (^.))
+import qualified Lens.Micro as Lens
 
 --
 -- Annotating a 'DatabaseSettings' with meta information.
@@ -93,27 +102,27 @@ import Database.Beam.Schema.Tables ( PrimaryKey
 type DatabaseKind = (Type -> Type) -> Type
 
 -- | To make kind signatures more readable.
-type TableKind    = (Type -> Type) -> Type
+type TableKind = (Type -> Type) -> Type
 
 -- | A user-defined annotation. Currently the only possible annotation is the ability to specify for which
 -- tables the FK-discovery algorithm is \"turned\" off.
 data Annotation where
-    -- | Specifies that the given 'TableKind' (i.e. a table) has user-specified FK constraints. This is
-    -- useful in case of ambiguity, i.e. when the automatic FK-discovery algorithm is not capable to
-    -- infer the correct 'ForeignKey' constraints for a 'Table'. This can happen when the 'PrimaryKey' type
-    -- family is not injective, which means there are multiple tables of table @FooT@ in the DB. Consider a
-    -- situation where we have a table @BarT@ having a field of type @barField :: PrimaryKey FooT f@ but
-    -- (crucially) there are two tables with type @f (TableEntity FooT)@ in the final database. In this
-    -- circumstance the FK-discovery algorithm will bail out with a (static) error, and this is where this
-    -- annotation comes into play: it allows us to selectively \"disable\" the discovery for the given
-    -- table(s), and manually override the FKs.
-    --
-    -- /Caveat emptor/: Due to what we said earlier (namely that we cannot enforce that tables are not
-    -- repeated multiple times within a DB) there might be situations where also the specified 'TableKind'
-    -- is not unique. In this case the annotation would affect all the tables of the same type, but that is
-    -- usually unavoidable, as the ambiguity was already present the minute we introduced in the DB two tables
-    -- of the same type, and so it makes sense for the user to fully resolve the ambiguity manually.
-    UserDefinedFk ::TableKind -> Annotation
+  -- | Specifies that the given 'TableKind' (i.e. a table) has user-specified FK constraints. This is
+  -- useful in case of ambiguity, i.e. when the automatic FK-discovery algorithm is not capable to
+  -- infer the correct 'ForeignKey' constraints for a 'Table'. This can happen when the 'PrimaryKey' type
+  -- family is not injective, which means there are multiple tables of table @FooT@ in the DB. Consider a
+  -- situation where we have a table @BarT@ having a field of type @barField :: PrimaryKey FooT f@ but
+  -- (crucially) there are two tables with type @f (TableEntity FooT)@ in the final database. In this
+  -- circumstance the FK-discovery algorithm will bail out with a (static) error, and this is where this
+  -- annotation comes into play: it allows us to selectively \"disable\" the discovery for the given
+  -- table(s), and manually override the FKs.
+  --
+  -- /Caveat emptor/: Due to what we said earlier (namely that we cannot enforce that tables are not
+  -- repeated multiple times within a DB) there might be situations where also the specified 'TableKind'
+  -- is not unique. In this case the annotation would affect all the tables of the same type, but that is
+  -- usually unavoidable, as the ambiguity was already present the minute we introduced in the DB two tables
+  -- of the same type, and so it makes sense for the user to fully resolve the ambiguity manually.
+  UserDefinedFk :: TableKind -> Annotation
 
 -- | Zip tables together. Unfortunately we cannot reuse the stock 'zipTables' from 'beam-core', because it
 -- works by supplying a rank-2 function with 'IsDatabaseEntity' and 'DatabaseEntityRegularRequirements' as
@@ -121,15 +130,18 @@ data Annotation where
 --
 -- This function can be written without the need of a typeclass, but alas it requires the /unexported/
 -- 'GZipDatabase' from 'beam-core', so we had to re-implement this ourselves for now.
-zipTables :: ( Generic (db f), Generic (db g), Generic (db h)
-             , Monad m
-             , GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
-             )
-          => Proxy be
-          -> (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl))
-          -> db f
-          -> db g
-          -> m (db h)
+zipTables ::
+  ( Generic (db f),
+    Generic (db g),
+    Generic (db h),
+    Monad m,
+    GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
+  ) =>
+  Proxy be ->
+  (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl)) ->
+  db f ->
+  db g ->
+  m (db h)
 -- We need the pattern type signature on 'combine' to get around a type checking bug in GHC 8.0.1.
 -- In future releases, we will switch to the standard forall.
 zipTables be combine (f :: db f) (g :: db g) =
@@ -142,36 +154,46 @@ zipTables be combine (f :: db f) (g :: db g) =
 
 -- | See above on why this class has been re-implemented.
 class GZipDatabase be f g h x y z where
-  gZipDatabase :: Monad m
-               => (Proxy f, Proxy g, Proxy h, Proxy be)
-               -> (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl))
-               -> x ()
-               -> y ()
-               -> m (z ())
+  gZipDatabase ::
+    Monad m =>
+    (Proxy f, Proxy g, Proxy h, Proxy be) ->
+    (forall tbl. (IsAnnotatedDatabaseEntity be tbl, AnnotatedDatabaseEntityRegularRequirements be tbl) => f tbl -> g tbl -> m (h tbl)) ->
+    x () ->
+    y () ->
+    m (z ())
 
 instance GZipDatabase be f g h x y z => GZipDatabase be f g h (M1 a b x) (M1 a b y) (M1 a b z) where
   gZipDatabase p combine ~(M1 f) ~(M1 g) = M1 <$> gZipDatabase p combine f g
 
-instance ( GZipDatabase be f g h ax ay az
-         , GZipDatabase be f g h bx by bz
-         )
-         => GZipDatabase be f g h (ax :*: bx) (ay :*: by) (az :*: bz) where
+instance
+  ( GZipDatabase be f g h ax ay az,
+    GZipDatabase be f g h bx by bz
+  ) =>
+  GZipDatabase be f g h (ax :*: bx) (ay :*: by) (az :*: bz)
+  where
   gZipDatabase p combine ~(ax :*: bx) ~(ay :*: by) = do
     a <- gZipDatabase p combine ax ay
     b <- gZipDatabase p combine bx by
     pure (a :*: b)
 
-instance ( IsAnnotatedDatabaseEntity be tbl
-         , AnnotatedDatabaseEntityRegularRequirements be tbl
-         ) => GZipDatabase be f g h (K1 Generic.R (f tbl)) (K1 Generic.R (g tbl)) (K1 Generic.R (h tbl)) where
+instance
+  ( IsAnnotatedDatabaseEntity be tbl,
+    AnnotatedDatabaseEntityRegularRequirements be tbl
+  ) =>
+  GZipDatabase be f g h (K1 Generic.R (f tbl)) (K1 Generic.R (g tbl)) (K1 Generic.R (h tbl))
+  where
   gZipDatabase _ combine ~(K1 x) ~(K1 y) =
     K1 <$> combine x y
 
-instance ( Beam.Database be db
-         , Generic (db f)
-         , Generic (db g), Generic (db h)
-         , GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
-         ) => GZipDatabase be f g h (K1 Generic.R (db f)) (K1 Generic.R (db g)) (K1 Generic.R (db h)) where
+instance
+  ( Beam.Database be db,
+    Generic (db f),
+    Generic (db g),
+    Generic (db h),
+    GZipDatabase be f g h (Rep (db f)) (Rep (db g)) (Rep (db h))
+  ) =>
+  GZipDatabase be f g h (K1 Generic.R (db f)) (K1 Generic.R (db g)) (K1 Generic.R (db h))
+  where
   gZipDatabase _ combine ~(K1 x) ~(K1 y) =
     K1 <$> zipTables (Proxy :: Proxy be) combine x y
 
@@ -191,36 +213,42 @@ type AnnotatedDatabaseSettings be db = db (AnnotatedDatabaseEntity be db)
 -- An 'AnnotatedDatabaseEntityDescriptor' is not a concrete type, but rather a data family provided by the
 -- 'IsAnnotatedDatabaseEntity'.
 data AnnotatedDatabaseEntity be (db :: (* -> *) -> *) entityType where
-  AnnotatedDatabaseEntity :: (IsAnnotatedDatabaseEntity be entityType, IsDatabaseEntity be entityType)
-                          => AnnotatedDatabaseEntityDescriptor be entityType
-                          -> DatabaseEntity be db entityType
-                          -> AnnotatedDatabaseEntity be db entityType
+  AnnotatedDatabaseEntity ::
+    (IsAnnotatedDatabaseEntity be entityType, IsDatabaseEntity be entityType) =>
+    AnnotatedDatabaseEntityDescriptor be entityType ->
+    DatabaseEntity be db entityType ->
+    AnnotatedDatabaseEntity be db entityType
 
 class IsDatabaseEntity be entityType => IsAnnotatedDatabaseEntity be entityType where
   data AnnotatedDatabaseEntityDescriptor be entityType :: *
   type AnnotatedDatabaseEntityDefaultRequirements be entityType :: Constraint
   type AnnotatedDatabaseEntityRegularRequirements be entityType :: Constraint
 
-  dbAnnotatedEntityAuto :: AnnotatedDatabaseEntityRegularRequirements be entityType
-                        => DatabaseEntityDescriptor be entityType
-                        -> AnnotatedDatabaseEntityDescriptor be entityType
+  dbAnnotatedEntityAuto ::
+    AnnotatedDatabaseEntityRegularRequirements be entityType =>
+    DatabaseEntityDescriptor be entityType ->
+    AnnotatedDatabaseEntityDescriptor be entityType
 
-instance IsDatabaseEntity be (TableEntity tbl)
-         => IsAnnotatedDatabaseEntity be (TableEntity tbl) where
+instance
+  IsDatabaseEntity be (TableEntity tbl) =>
+  IsAnnotatedDatabaseEntity be (TableEntity tbl)
+  where
   data AnnotatedDatabaseEntityDescriptor be (TableEntity tbl) where
-    AnnotatedDatabaseTable
-      :: Beam.Table tbl =>
-       { dbAnnotatedSchema      :: TableSchema tbl
-       , dbAnnotatedConstraints :: Set TableConstraint
-       }
-      -> AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)
-  type AnnotatedDatabaseEntityDefaultRequirements be (TableEntity tbl) =
+    AnnotatedDatabaseTable ::
+      Beam.Table tbl =>
+      { dbAnnotatedSchema :: TableSchema tbl,
+        dbAnnotatedConstraints :: Set TableConstraint
+      } ->
+      AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)
+  type
+    AnnotatedDatabaseEntityDefaultRequirements be (TableEntity tbl) =
       (DatabaseEntityDefaultRequirements be (TableEntity tbl))
-  type AnnotatedDatabaseEntityRegularRequirements be (TableEntity tbl) =
-      (DatabaseEntityRegularRequirements be (TableEntity tbl)
-      , GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ())
-      , Generic (TableSchema tbl)
-      , Generic (Beam.TableSettings tbl)
+  type
+    AnnotatedDatabaseEntityRegularRequirements be (TableEntity tbl) =
+      ( DatabaseEntityRegularRequirements be (TableEntity tbl),
+        GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ()),
+        Generic (TableSchema tbl),
+        Generic (Beam.TableSettings tbl)
       )
 
   dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) mempty
@@ -237,20 +265,21 @@ deannotate = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e)
 
 -- | A table schema.
 type TableSchema tbl =
-    tbl (TableFieldSchema tbl)
+  tbl (TableFieldSchema tbl)
 
 -- | A schema for a field within a given table
 data TableFieldSchema (tbl :: (* -> *) -> *) ty where
-    TableFieldSchema
-      ::
-      { tableFieldName :: ColumnName
-      , tableFieldSchema :: FieldSchema ty }
-      -> TableFieldSchema tbl ty
+  TableFieldSchema ::
+    { tableFieldName :: ColumnName,
+      tableFieldSchema :: FieldSchema ty
+    } ->
+    TableFieldSchema tbl ty
 
 data FieldSchema ty where
-  FieldSchema :: ColumnType
-              -> Set ColumnConstraint
-              -> FieldSchema ty
+  FieldSchema ::
+    ColumnType ->
+    Set ColumnConstraint ->
+    FieldSchema ty
 
 deriving instance Show (FieldSchema ty)
 
@@ -259,63 +288,81 @@ deriving instance Show (FieldSchema ty)
 --
 
 class GDefaultTableSchema x y where
-    gDefTblSchema :: Proxy x -> y -> x
+  gDefTblSchema :: Proxy x -> y -> x
 
 instance GDefaultTableSchema (x p) (y p) => GDefaultTableSchema (D1 f x p) (D1 f y p) where
-    gDefTblSchema (Proxy :: Proxy (D1 f x p)) (M1 y) =
-        M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
+  gDefTblSchema (Proxy :: Proxy (D1 f x p)) (M1 y) =
+    M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
 
 instance GDefaultTableSchema (x p) (y p) => GDefaultTableSchema (C1 f x p) (C1 f y p) where
-    gDefTblSchema (Proxy :: Proxy (C1 f x p)) (M1 y) =
-        M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
+  gDefTblSchema (Proxy :: Proxy (C1 f x p)) (M1 y) =
+    M1 $ gDefTblSchema (Proxy :: Proxy (x p)) y
 
-instance (GDefaultTableSchema (a p) (c p), GDefaultTableSchema (b p) (d p))
-    => GDefaultTableSchema ((a :*: b) p) ((c :*: d) p) where
-    gDefTblSchema (Proxy :: Proxy ((a :*: b) p)) (c :*: d) =
-        gDefTblSchema (Proxy :: Proxy (a p)) c :*:
-        gDefTblSchema (Proxy :: Proxy (b p)) d
+instance
+  (GDefaultTableSchema (a p) (c p), GDefaultTableSchema (b p) (d p)) =>
+  GDefaultTableSchema ((a :*: b) p) ((c :*: d) p)
+  where
+  gDefTblSchema (Proxy :: Proxy ((a :*: b) p)) (c :*: d) =
+    gDefTblSchema (Proxy :: Proxy (a p)) c
+      :*: gDefTblSchema (Proxy :: Proxy (b p)) d
 
-instance ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint
-         , HasSchemaConstraints (Beam.TableField tbl ty), HasColumnType ty
-         )
-    => GDefaultTableSchema (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)
-                           (S1 f (K1 Generic.R (Beam.TableField tbl ty)) p) where
-    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)) (M1 (K1 fName)) = M1 (K1 s)
-      where s = TableFieldSchema (ColumnName $ fName ^. Beam.fieldName) defaultFieldSchema
-            defaultFieldSchema = FieldSchema (defaultColumnType (Proxy @ty))
-                                             (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
+instance
+  ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint,
+    HasSchemaConstraints (Beam.TableField tbl ty),
+    HasColumnType ty
+  ) =>
+  GDefaultTableSchema
+    (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)
+    (S1 f (K1 Generic.R (Beam.TableField tbl ty)) p)
+  where
+  gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (TableFieldSchema tbl ty)) p)) (M1 (K1 fName)) = M1 (K1 s)
+    where
+      s = TableFieldSchema (ColumnName $ fName ^. Beam.fieldName) defaultFieldSchema
+      defaultFieldSchema =
+        FieldSchema
+          (defaultColumnType (Proxy @ty))
+          (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
 
 -- | Instance where /g/ is things like a 'PrimaryKey' or a /mixin/.
-instance ( Generic (g (Beam.TableField tbl2))
-         , Generic (g (TableFieldSchema tbl2))
-         , GDefaultTableSchema (Rep (g (TableFieldSchema tbl2)) ())
-                               (Rep (g (Beam.TableField tbl2)) ())
-         )
-    => GDefaultTableSchema (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())
-                           (S1 f (K1 Generic.R (g (Beam.TableField tbl2))) ()) where
-    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) =
-      M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
+instance
+  ( Generic (g (Beam.TableField tbl2)),
+    Generic (g (TableFieldSchema tbl2)),
+    GDefaultTableSchema
+      (Rep (g (TableFieldSchema tbl2)) ())
+      (Rep (g (Beam.TableField tbl2)) ())
+  ) =>
+  GDefaultTableSchema
+    (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())
+    (S1 f (K1 Generic.R (g (Beam.TableField tbl2))) ())
+  where
+  gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (g (TableFieldSchema tbl2))) ())) (M1 (K1 fName)) =
+    M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
 
 -- | Instance for things like 'Nullable (TableFieldSchema tbl)'.
-instance ( Generic (PrimaryKey tbl1 (g (Beam.TableField tbl2)))
-         , Generic (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))
-         , GDefaultTableSchema (Rep (PrimaryKey tbl1 (g (TableFieldSchema tbl2))) ())
-                               (Rep (PrimaryKey tbl1 (g (Beam.TableField tbl2))) ())
-         )
-    => GDefaultTableSchema (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)
-                           (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (Beam.TableField tbl2)))) p) where
-    gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)) (M1 (K1 fName)) =
-      M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
+instance
+  ( Generic (PrimaryKey tbl1 (g (Beam.TableField tbl2))),
+    Generic (PrimaryKey tbl1 (g (TableFieldSchema tbl2))),
+    GDefaultTableSchema
+      (Rep (PrimaryKey tbl1 (g (TableFieldSchema tbl2))) ())
+      (Rep (PrimaryKey tbl1 (g (Beam.TableField tbl2))) ())
+  ) =>
+  GDefaultTableSchema
+    (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)
+    (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (Beam.TableField tbl2)))) p)
+  where
+  gDefTblSchema (_ :: Proxy (S1 f (K1 Generic.R (PrimaryKey tbl1 (g (TableFieldSchema tbl2)))) p)) (M1 (K1 fName)) =
+    M1 (K1 $ to' $ gDefTblSchema Proxy (from' fName))
 
-defaultTableSchema :: forall tbl.
-                   ( GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ())
-                   , Generic (TableSchema tbl)
-                   , Generic (Beam.TableSettings tbl)
-                   )
-                   => Beam.TableSettings tbl
-                   -> TableSchema tbl
+defaultTableSchema ::
+  forall tbl.
+  ( GDefaultTableSchema (Rep (TableSchema tbl) ()) (Rep (Beam.TableSettings tbl) ()),
+    Generic (TableSchema tbl),
+    Generic (Beam.TableSettings tbl)
+  ) =>
+  Beam.TableSettings tbl ->
+  TableSchema tbl
 defaultTableSchema tSettings =
-    to $ gDefTblSchema (Proxy :: Proxy (Rep (TableSchema tbl) ())) (from' tSettings)
+  to $ gDefTblSchema (Proxy :: Proxy (Rep (TableSchema tbl) ())) (from' tSettings)
 
 from' :: Generic a => a -> Rep a ()
 from' = from
@@ -350,13 +397,21 @@ to' = to
 
 -- | Annotate the table fields for a given 'AnnotatedDatabaseEntity'. Refer to the $specifyingConstraints
 -- section for an example.
-annotateTableFields :: tbl (FieldModification (TableFieldSchema tbl))
-                    -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+annotateTableFields ::
+  tbl (FieldModification (TableFieldSchema tbl)) ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 annotateTableFields modFields =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e)
-      -> AnnotatedDatabaseEntity (tbl {
-       dbAnnotatedSchema = Beam.withTableModification modFields (dbAnnotatedSchema tbl)
-                            }) e))
+  EntityModification
+    ( Endo
+        ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+            AnnotatedDatabaseEntity
+              ( tbl
+                  { dbAnnotatedSchema = Beam.withTableModification modFields (dbAnnotatedSchema tbl)
+                  }
+              )
+              e
+        )
+    )
 
 --
 -- Specifying default values (Postgres-specific)
@@ -372,31 +427,34 @@ annotateTableFields modFields =
 -- accept, for example:
 --
 -- > defaultsTo (val_ $ Just 10)
---
-defaultsTo :: (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty)
-           => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
-           -> FieldModification (TableFieldSchema tbl) ty
+defaultsTo ::
+  (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty) =>
+  (forall ctx s. Beam.QGenExpr ctx Postgres s ty) ->
+  FieldModification (TableFieldSchema tbl) ty
 defaultsTo tyVal = FieldModification $ \old ->
-    case tableFieldSchema old of
-      FieldSchema ty c -> old {
-          tableFieldSchema =
+  case tableFieldSchema old of
+    FieldSchema ty c ->
+      old
+        { tableFieldSchema =
             FieldSchema ty $ S.singleton (pgDefaultConstraint tyVal) <> c
         }
 
 -- | Postgres-specific function to convert any 'QGenExpr' into a meaningful 'PgExpressionSyntax', so
 -- that it can be rendered inside a 'Default' column constraint.
-pgDefaultConstraint :: forall ty. (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty)
-                    => (forall ctx s. Beam.QGenExpr ctx Postgres s ty)
-                    -> ColumnConstraint
+pgDefaultConstraint ::
+  forall ty.
+  (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty) =>
+  (forall ctx s. Beam.QGenExpr ctx Postgres s ty) ->
+  ColumnConstraint
 pgDefaultConstraint tyVal =
   let syntaxFragment = T.pack . displaySyntax . Pg.fromPgExpression $ defaultTo_ tyVal
       dVal = case defaultTypeCast (Proxy @ty) of
-            Nothing -> syntaxFragment
-            Just tc | T.head syntaxFragment == '\'' -> syntaxFragment <> "::" <> tc
-            -- NOTE(and) Special-case handling for CURRENT_TIMESTAMP. See issue #31.
-            Just tc | syntaxFragment == "CURRENT_TIMESTAMP" -> "(" <> syntaxFragment <> ")::" <> tc
-            Just tc -> "'" <> syntaxFragment <> "'::" <> tc
-  in Default dVal
+        Nothing -> syntaxFragment
+        Just tc | T.head syntaxFragment == '\'' -> syntaxFragment <> "::" <> tc
+        -- NOTE(and) Special-case handling for CURRENT_TIMESTAMP. See issue #31.
+        Just tc | syntaxFragment == "CURRENT_TIMESTAMP" -> "(" <> syntaxFragment <> ")::" <> tc
+        Just tc -> "'" <> syntaxFragment <> "'::" <> tc
+   in Default dVal
   where
     -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
     -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,
@@ -418,7 +476,7 @@ pgDefaultConstraint tyVal =
 
 data UniqueConstraint (tbl :: ((* -> *) -> *)) where
   -- | Use this to \"tag\" a standard Beam 'TableField' selector or 'PrimaryKey'.
-  U   :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
+  U :: HasColumnNames entity tbl => (tbl (Beam.TableField tbl) -> entity) -> UniqueConstraint tbl
 
 -- | Given a list of 'TableField' selectors wrapped in a 'UniqueConstraint' type constructor, it adds
 -- to the relevant 'AnnotatedDatabaseEntity' a new @UNIQUE@ 'TableConstraint' composed by /all/ the
@@ -426,79 +484,112 @@ data UniqueConstraint (tbl :: ((* -> *) -> *)) where
 -- @UNIQUE@ constraint composed by the listed fields.
 -- If a 'PrimaryKey' is passed as input, it will desugar under the hood into as many columns as
 -- the primary key refers to.
-uniqueConstraintOn :: [UniqueConstraint tbl]
-                   -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+uniqueConstraintOn ::
+  [UniqueConstraint tbl] ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 uniqueConstraintOn us =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e)
-      -> AnnotatedDatabaseEntity (tbl {
-       dbAnnotatedConstraints =
-           let cols    = concatMap (\case (U f) -> colNames (tableSettings e) f) us
-               tName   = e ^. dbEntityDescriptor . dbEntityName
-               conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
-           in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
-                            }) e))
+  EntityModification
+    ( Endo
+        ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+            AnnotatedDatabaseEntity
+              ( tbl
+                  { dbAnnotatedConstraints =
+                      let cols = concatMap (\case (U f) -> colNames (tableSettings e) f) us
+                          tName = e ^. dbEntityDescriptor . dbEntityName
+                          conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
+                       in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
+                  }
+              )
+              e
+        )
+    )
 
 --
 -- Specifying FK constrainst
 --
 
 data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) where
-  References :: Beam.Beamable (PrimaryKey tbl')
-             => ( tbl (Beam.TableField tbl)   -> PrimaryKey tbl' (Beam.TableField tbl))
-             -> ( tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty))
-             -> ForeignKeyConstraint tbl tbl'
-
+  References ::
+    Beam.Beamable (PrimaryKey tbl') =>
+    (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) ->
+    (tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty)) ->
+    ForeignKeyConstraint tbl tbl'
 
 -- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
 -- target table.
-foreignKeyOnPk :: ( Beam.Beamable (PrimaryKey tbl')
-                  , Beam.Beamable tbl'
-                  , Beam.Table tbl'
-                  , PrimaryKey tbl' f ~ PrimaryKey tbl' g
-                  )
-               => DatabaseEntity be db (TableEntity tbl')
-               -- ^ The 'DatabaseEntity' of the /referenced/ table.
-               -> (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl))
-               -- ^ A function yielding a 'PrimaryKey'. This is usually a record field of the table
-               -- you want to define the FK /for/, and it must have /PrimaryKey externalTable f/ as
-               -- its column-tag.
-               -> ReferenceAction
-               -- ^ What do to \"on delete\"
-               -> ReferenceAction
-               -- ^ What do to \"on update\"
-               -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnPk ::
+  ( Beam.Beamable (PrimaryKey tbl'),
+    Beam.Beamable tbl',
+    Beam.Table tbl',
+    PrimaryKey tbl' f ~ PrimaryKey tbl' g
+  ) =>
+  -- | The 'DatabaseEntity' of the /referenced/ table.
+  DatabaseEntity be db (TableEntity tbl') ->
+  -- | A function yielding a 'PrimaryKey'. This is usually a record field of the table
+  -- you want to define the FK /for/, and it must have /PrimaryKey externalTable f/ as
+  -- its column-tag.
+  (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) ->
+  -- | What do to \"on delete\"
+  ReferenceAction ->
+  -- | What do to \"on update\"
+  ReferenceAction ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e)
-      -> AnnotatedDatabaseEntity (tbl {
-       dbAnnotatedConstraints =
-           let colPairs = zipWith (,)
-                          (fieldAsColumnNames (ourColumn (tableSettings e)))
-                          (fieldAsColumnNames (Beam.pk   (tableSettings externalEntity)))
-               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
-               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
-           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                       (dbAnnotatedConstraints tbl)
-                            }) e))
+  EntityModification
+    ( Endo
+        ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+            AnnotatedDatabaseEntity
+              ( tbl
+                  { dbAnnotatedConstraints =
+                      let colPairs =
+                            zipWith
+                              (,)
+                              (fieldAsColumnNames (ourColumn (tableSettings e)))
+                              (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
+                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
+                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                       in S.insert
+                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
+                            (dbAnnotatedConstraints tbl)
+                  }
+              )
+              e
+        )
+    )
 
-foreignKeyOn :: Beam.Beamable tbl'
-             => DatabaseEntity be db (TableEntity tbl')
-             -> [ForeignKeyConstraint tbl tbl']
-             -> ReferenceAction
-             -- ^ On Delete
-             -> ReferenceAction
-             -- ^ On Update
-             -> EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOn ::
+  Beam.Beamable tbl' =>
+  DatabaseEntity be db (TableEntity tbl') ->
+  [ForeignKeyConstraint tbl tbl'] ->
+  -- | On Delete
+  ReferenceAction ->
+  -- | On Update
+  ReferenceAction ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 foreignKeyOn externalEntity us onDelete onUpdate =
-    EntityModification (Endo (\(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e)
-      -> AnnotatedDatabaseEntity (tbl {
-       dbAnnotatedConstraints =
-           let colPairs = concatMap (\case
-                 (References ours theirs) -> zipWith (,)
-                     (fieldAsColumnNames (ours   (tableSettings e)))
-                     [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
-                     ) us
-               tName   = externalEntity ^. dbEntityDescriptor . dbEntityName
-               conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
-           in S.insert (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                       (dbAnnotatedConstraints tbl)
-                            }) e))
+  EntityModification
+    ( Endo
+        ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+            AnnotatedDatabaseEntity
+              ( tbl
+                  { dbAnnotatedConstraints =
+                      let colPairs =
+                            concatMap
+                              ( \case
+                                  (References ours theirs) ->
+                                    zipWith
+                                      (,)
+                                      (fieldAsColumnNames (ours (tableSettings e)))
+                                      [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
+                              )
+                              us
+                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
+                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                       in S.insert
+                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
+                            (dbAnnotatedConstraints tbl)
+                  }
+              )
+              e
+        )
+    )
