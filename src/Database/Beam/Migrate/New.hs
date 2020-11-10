@@ -57,6 +57,7 @@ import           Control.Monad.IO.Class                   ( liftIO
                                                           )
 import           Data.Function                            ( (&) )
 import           Lens.Micro                               ( (^.), over, _1, _2 )
+import           Data.Int                                 ( Int64 )
 import           Data.Proxy
 import           Data.Maybe                               ( fromMaybe )
 import           Data.String.Conv                         ( toS )
@@ -290,7 +291,7 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
 -- * <https://www.postgresql.org/docs/current/catalog-pg-class.html PostgreSQL Manual for @pg_class@>
 -- for more information.
 --
-fastApproximateRowCountFor :: TableName -> Pg.Pg (Maybe Int)
+fastApproximateRowCountFor :: TableName -> Pg.Pg (Maybe Int64)
 fastApproximateRowCountFor tblName = runReturningOne $ selectCmd $ Pg.PgSelectSyntax $ qry
   where
     qry = Pg.emit $ toS

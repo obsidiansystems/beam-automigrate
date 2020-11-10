@@ -100,7 +100,7 @@ simply by calling `fromAnnotatedDbSettings`, like so:
 
 ```
 hsSchema :: Schema
-hsSchema = fromAnnotatedDbSettings forecastDB
+hsSchema = fromAnnotatedDbSettings forecastDB (Proxy @'[])
 ```
 
 This will generate something like this:
