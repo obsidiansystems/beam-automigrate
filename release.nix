@@ -6,10 +6,9 @@ let inherit (reflex-platform) hackGet;
     beam = hackGet ./dep/beam;
     x = reflex-platform.ghc.override {
       overrides = self: super: {
-        beam-core = self.callCabal2nix "beam-core" (beam + "/beam-core") {};
-        beam-migrate = self.callCabal2nix "beam-migrate" (beam + "/beam-migrate") {};
-        beam-postgres = dontCheck (self.callCabal2nix "beam-postgres" (beam + "/beam-postgres") {});
-        postgresql-simple = dontCheck (self.callCabal2nix "postgresql-simple" (hackGet ./dep/postgresql-simple) {});
+        beam-core = self.callHackage "beam-core" "0.9.0.0" {};
+        beam-migrate = self.callHackage "beam-migrate" "0.5.0.0" {};
+        beam-postgres = dontCheck (self.callHackage "beam-postgres" "0.5.0.0" {});
       };
     };
-in x.callCabal2nix "beam-migrate-prototype" ./. {}
+in x.callCabal2nix "beam-automigrate" ./. {}
