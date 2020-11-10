@@ -26,7 +26,6 @@ import Database.Beam.AutoMigrate.Types
 import qualified Database.Beam.AutoMigrate.Util as Util
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
-import Database.Beam.Backend.SQL.Types as Beam
 import qualified Database.Beam.Postgres as Pg
 
 --

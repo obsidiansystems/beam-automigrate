@@ -27,6 +27,7 @@ module Database.Beam.AutoMigrate
     migrate,
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
+    tryRunMigrationsWithEditUpdate,
 
     -- * Creating a migration from a Diff
     createMigration,
@@ -56,7 +57,7 @@ module Database.Beam.AutoMigrate
   )
 where
 
-import Control.Exception (Exception, throwIO)
+import Control.Exception
 import Control.Monad.Except
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Identity (runIdentity)
@@ -651,3 +652,41 @@ prettyEditActionDescription =
 
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
+
+-- | Compare the existing schema in the database with the expected
+-- schema in Haskell and try to edit the existing schema as necessary
+tryRunMigrationsWithEditUpdate
+  :: ( Generic (db (DatabaseEntity be db))
+     , (Generic (db (AnnotatedDatabaseEntity be db)))
+     , Database be db
+     , (GZipDatabase be
+         (AnnotatedDatabaseEntity be db)
+         (AnnotatedDatabaseEntity be db)
+         (DatabaseEntity be db)
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (DatabaseEntity be db)))
+       )
+     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+     )
+  => AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdate annotatedDb conn = do
+    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    actualDatabaseSchema <- getSchema conn
+    case diff expectedHaskellSchema actualDatabaseSchema of
+      Left err -> do
+        putStrLn "Error detecting database migration requirements: "
+        print err
+      Right [] ->
+        putStrLn "No database migration required, continuing startup."
+      Right edits -> do
+        putStrLn "Database migration required, attempting..."
+        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+
+        try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
+          Left (e :: SomeException) ->
+            error $ "Database migration error: " <> displayException e
+          Right _ ->
+            pure ()
