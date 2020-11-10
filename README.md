@@ -20,6 +20,7 @@ Table of Contents
    * [Deriving information from an AnnotatedDatabaseSettings](#deriving-information-from-an-annotateddatabasesettings)
    * [What is implemented](#what-is-implemented)
    * [Shortcomings and limitations](#shortcomings-and-limitations)
+* [Contributors](#contributors)
 
 Getting started (User guide/reference)
 ======================================
@@ -431,3 +432,8 @@ the types of each individual columns.
 - [ ] There is no support yet for manual migrations;
 - [ ] There is no support/design for "composable databases";
 - [ ] Some parts of the library are Pg-specific.
+
+Contributors
+============
+
+This library was originally written for [Obsidian Systems](https://obsidian.systems) by Alfredo Di Napoli and Andres Löh of Well Typed. Other contributors include Dan Bornside, Sean Chalmers, Ryan Trinkle, and Ali Abrar.
