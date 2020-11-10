@@ -147,7 +147,7 @@ simply by calling `fromAnnotatedDbSettings`, like so:
 
 ```
 > hsSchema :: BA.Schema
-> hsSchema = BA.fromAnnotatedDbSettings forecastDB (Proxy @'[])
+> hsSchema = BA.fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 ```
 
@@ -265,7 +265,7 @@ something like this:
 >
 > exampleAutoMigration :: IO ()
 > exampleAutoMigration = readmeDbTransaction $ \conn ->
->   BA.tryRunMigrationsWithEditUpdate forecastDB conn
+>   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
 >
 > main :: IO ()
 > main = do
