@@ -16,9 +16,25 @@ Table of Contents
 Getting started (User guide/reference)
 ======================================
 
-For a complete working example refer to the `examples` folder. There is also
-a smaller-scale example available at `example/ForeignKeys.hs`, which has been used
-to write this guide.
+This example is a literate haskell source file. You can run it interactively
+with the following command:
+
+```bash
+$ cabal repl readme
+```
+
+If you're using [nix](https://nixos.org/nix), you can enter a shell with the
+appropriate dependencies with the following commands:
+
+```bash
+$ nix-shell release.nix -A env
+```
+
+From that nix-shell, you can run `cabal repl readme`.
+
+To run the example code, run `main` inside of the cabal repl.
+
+For a more examples, refer to the `examples` folder.
 
 Deriving an AnnotatedDatabaseSettings
 -------------------------------------
