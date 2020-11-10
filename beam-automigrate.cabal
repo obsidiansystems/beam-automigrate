@@ -7,6 +7,9 @@ author:             Alfredo Di Napoli, Andres Löh, Well-Typed LLP, and Obsidian
 copyright:          2020 Obsidian Systems LLC
 maintainer:         maintainer@obsidian.systems
 category:           Database
+license:            BSD3
+license-file:       LICENSE
+bug-reports:        https://github.com/obsidiansystems/beam-automigrate/issues
 synopsis:           DB migration library for beam, targeting Postgres.
 description:
   This package offers an alternative to @<https://hackage.haskell.org/package/beam-migrate beam-migrate>@
@@ -204,3 +207,7 @@ flag integration-tests
   description: Enable integration tests that talks to a Postgres DB.
   default:     False
   manual:      True
+
+source-repository head
+  type: git
+  location: https://github.com/obsidiansystems/beam-automigrate
