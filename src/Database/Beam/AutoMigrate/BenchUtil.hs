@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Database.Beam.Migrate.New.BenchUtil
+module Database.Beam.AutoMigrate.BenchUtil
     ( SpineStrict(..)
     , predictableSchemas
     , connInfo
@@ -16,8 +16,8 @@ import           Control.Exception                        ( finally )
 import           Test.QuickCheck.Gen
 import           Test.QuickCheck.Random
 
-import           Database.Beam.Migrate.New
-import           Database.Beam.Migrate.New.Schema.Gen         ( genSimilarSchemas )
+import           Database.Beam.AutoMigrate
+import           Database.Beam.AutoMigrate.Schema.Gen         ( genSimilarSchemas )
 
 import qualified Database.PostgreSQL.Simple              as Pg
 

@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts     #-}
-module Database.Beam.Migrate.New.Util where
+module Database.Beam.AutoMigrate.Util where
 
 import           Control.Applicative.Lift
 import           Control.Monad.Except
@@ -23,7 +23,7 @@ import           Database.Beam.Schema.Tables    ( Columnar'(..)
                                                 , dbEntityName
                                                 )
 
-import           Database.Beam.Migrate.New.Types    ( ColumnName(..), TableName(..) )
+import           Database.Beam.AutoMigrate.Types    ( ColumnName(..), TableName(..) )
 
 import Data.String (fromString)
 import Data.Text (Text)

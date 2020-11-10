@@ -8,13 +8,13 @@ import           Control.Exception                        ( bracket )
 import qualified Data.Map.Strict                         as M
 
 
-import           Database.Beam.Migrate.New
-import           Database.Beam.Migrate.New.Postgres           ( getSchema )
+import           Database.Beam.AutoMigrate
+import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
 
 import qualified Database.PostgreSQL.Simple              as Pg
 import           Database.Beam.Postgres                   ( runBeamPostgres )
 
-import           Database.Beam.Migrate.New.BenchUtil
+import           Database.Beam.AutoMigrate.BenchUtil
 
 pgMigrate :: Pg.Connection -> Schema -> IO ()
 pgMigrate conn hsSchema =

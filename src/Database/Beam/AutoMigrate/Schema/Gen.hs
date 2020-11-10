@@ -5,7 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Database.Beam.Migrate.New.Schema.Gen
+module Database.Beam.AutoMigrate.Schema.Gen
     ( genSchema
     , genSimilarSchemas
     , SimilarSchemas(..)
@@ -36,17 +36,17 @@ import           Data.Time                                ( Day
                                                           , LocalTime
                                                           )
 
-import           Database.Beam.Migrate.New.Types
+import           Database.Beam.AutoMigrate.Types
 import qualified Database.Beam.Backend.SQL.AST           as AST
 import           Database.Beam.Backend.SQL                ( HasSqlValueSyntax, timestampType )
 import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
-import           Database.Beam.Migrate.New                    ( sqlSingleQuoted
+import           Database.Beam.AutoMigrate                    ( sqlSingleQuoted
                                                           , defaultColumnType
                                                           , HasColumnType
                                                           )
 import qualified Database.Beam.Postgres.Syntax           as Pg
 import qualified Database.Beam.Postgres                  as Pg
-import           Database.Beam.Migrate.New.Annotated          ( pgDefaultConstraint )
+import           Database.Beam.AutoMigrate.Annotated          ( pgDefaultConstraint )
 import           Database.Beam.Query                      ( val_
                                                           , currentTimestamp_
                                                           )
@@ -135,15 +135,13 @@ genColumnType = oneof [ genSqlStdType
                       ]
 
 -- | Rather than trying to generate __all__ the possible values, we restrict ourselves to only the types
--- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.Migrate.New.Compat', and we piggyback
+-- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.AutoMigrate.Compat', and we piggyback
 -- on 'beam-core' machinery in order to generate the default values.
 genSqlStdType :: Gen (ColumnType, ColumnConstraint)
 genSqlStdType = oneof [
-    genType arbitrary    (Proxy @Int)
-  , genType arbitrary    (Proxy @Int32)
+    genType arbitrary    (Proxy @Int32)
   , genType arbitrary    (Proxy @Int16)
   , genType arbitrary    (Proxy @Int64)
-  , genType arbitrary    (Proxy @Word)
   , genType arbitrary    (Proxy @Word16)
   , genType arbitrary    (Proxy @Word32)
   , genType arbitrary    (Proxy @Word64)
@@ -162,7 +160,7 @@ genSqlStdType = oneof [
   , genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime)
   -- Explicitly test for the 'CURRENT_TIMESTAMP' case.
   , pure ( SqlStdType $ timestampType Nothing False, pgDefaultConstraint @LocalTime currentTimestamp_)
-  , genType (fmap SqlSerial arbitrary) (Proxy @(SqlSerial Int))
+  , genType (fmap SqlSerial arbitrary) (Proxy @(SqlSerial Int64))
   ]
 
 genType :: forall a.

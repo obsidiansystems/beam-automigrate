@@ -35,9 +35,9 @@ import           Database.Beam.Schema.Tables    ( primaryKey )
 import           Database.Beam.Query            (val_, currentTimestamp_)
 import           Database.Beam.Backend.SQL.Types          ( SqlSerial(..) )
 
-import           Database.Beam.Migrate.New.Annotated
+import           Database.Beam.AutoMigrate.Annotated
 
-import           Database.Beam.Migrate.New          ( Schema
+import           Database.Beam.AutoMigrate          ( Schema
                                                 , Diff
                                                 , Migration
                                                 , fromAnnotatedDbSettings
@@ -51,7 +51,7 @@ import           Database.Beam.Migrate.New          ( Schema
                                                 , ReferenceAction(..)
                                                 , HasColumnType
                                                 )
-import           Database.Beam.Migrate.New.Postgres ( getSchema )
+import           Database.Beam.AutoMigrate.Postgres ( getSchema )
 
 import qualified Database.PostgreSQL.Simple    as Pg
 import qualified Database.Beam.Postgres as Pg
@@ -118,10 +118,10 @@ data FlowerT f = Flower
   deriving (Generic, Beamable)
 
 data OrderT f = Order
-  { orderID          :: Columnar f (SqlSerial Int)
+  { orderID          :: Columnar f (SqlSerial Int64)
   , orderTime        :: Columnar f LocalTime
   , orderFlowerIdRef :: PrimaryKey FlowerT f
-  , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt4Range Int)
+  , orderValidity    :: Columnar f (Pg.PgRange Pg.PgInt8Range Int64)
   , orderAddress     :: Address f
   , orderLineItemRef :: PrimaryKey LineItemT f
   }
@@ -138,7 +138,7 @@ data LineItemT f = LineItem
   deriving (Generic, Beamable)
 
 data LineItemTwoT f = LineItemTwo
-  { lineItemTwoID       :: Columnar f Int
+  { lineItemTwoID       :: Columnar f Int64
   , lineItemTwoFk       :: PrimaryKey LineItemT f
   }
   deriving (Generic, Beamable)
@@ -158,7 +158,7 @@ instance Beam.Table FlowerT where
   primaryKey = FlowerID . flowerID
 
 instance Beam.Table OrderT where
-  data PrimaryKey OrderT f = OrderID (Columnar f (SqlSerial Int))
+  data PrimaryKey OrderT f = OrderID (Columnar f (SqlSerial Int64))
     deriving (Generic, Beamable)
   primaryKey = OrderID . orderID
 
@@ -169,7 +169,7 @@ instance Beam.Table LineItemT where
   primaryKey = LineItemID <$> lineItemOrderID <*> lineItemFlowerID
 
 instance Beam.Table LineItemTwoT where
-  data PrimaryKey LineItemTwoT f = LineItemTwoID (Columnar f Int)
+  data PrimaryKey LineItemTwoT f = LineItemTwoID (Columnar f Int64)
     deriving (Generic, Beamable)
   primaryKey = LineItemTwoID <$> lineItemTwoID
 

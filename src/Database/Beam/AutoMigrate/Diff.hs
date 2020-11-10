@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleInstances #-}
-module Database.Beam.Migrate.New.Diff
+module Database.Beam.AutoMigrate.Diff
   ( Diffable(..)
   , Diff
   , Priority(..)
@@ -41,7 +41,7 @@ import           Data.Map.Merge.Strict                    ( mergeA
 import qualified Data.Map.Strict                         as M
 import qualified Data.Set                                as S
 import           Data.Foldable                            ( foldlM )
-import           Database.Beam.Migrate.New.Types
+import           Database.Beam.AutoMigrate.Types
 
 --
 -- Simple typeclass to diff things

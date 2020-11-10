@@ -1,10 +1,10 @@
 module Main where
 
-import           Database.Beam.Migrate.New
-import           Database.Beam.Migrate.New.Schema.Gen
-import           Database.Beam.Migrate.New.Validity
-import           Database.Beam.Migrate.New.Postgres           ( getSchema )
-import           Database.Beam.Migrate.New.BenchUtil          ( tearDownDatabase
+import           Database.Beam.AutoMigrate
+import           Database.Beam.AutoMigrate.Schema.Gen
+import           Database.Beam.AutoMigrate.Validity
+import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
+import           Database.Beam.AutoMigrate.BenchUtil          ( tearDownDatabase
                                                           , cleanDatabase
                                                           )
 
@@ -19,7 +19,7 @@ import           Test.QuickCheck
 import           Test.QuickCheck.Monadic
 
 import qualified Database.Postgres.Temp                  as Tmp
-import qualified Test.Database.Beam.Migrate.New.Arbitrary as Pretty
+import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
 
 
 main :: IO ()

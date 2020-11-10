@@ -11,7 +11,7 @@
 
 {- | This module provides the high-level API to migrate a database. -}
 
-module Database.Beam.Migrate.New
+module Database.Beam.AutoMigrate
   ( -- * Annotating a database
     -- $annotatingDbSettings
     defaultAnnotatedDbSettings
@@ -81,14 +81,14 @@ import           Database.Beam.Schema                     ( Database
 import           Database.Beam.Schema.Tables              ( DatabaseEntity(..)
                                                           )
 
-import           Database.Beam.Migrate.New.Annotated         as Exports
-import           Database.Beam.Migrate.New.Generic           as Exports
-import           Database.Beam.Migrate.New.Types             as Exports
-import           Database.Beam.Migrate.New.Diff              as Exports
-import           Database.Beam.Migrate.New.Compat            as Exports
-import           Database.Beam.Migrate.New.Validity          as Exports
-import           Database.Beam.Migrate.New.Postgres           ( getSchema )
-import Database.Beam.Migrate.New.Util hiding (tableName)
+import           Database.Beam.AutoMigrate.Annotated         as Exports
+import           Database.Beam.AutoMigrate.Generic           as Exports
+import           Database.Beam.AutoMigrate.Types             as Exports
+import           Database.Beam.AutoMigrate.Diff              as Exports
+import           Database.Beam.AutoMigrate.Compat            as Exports
+import           Database.Beam.AutoMigrate.Validity          as Exports
+import           Database.Beam.AutoMigrate.Postgres           ( getSchema )
+import Database.Beam.AutoMigrate.Util hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST           as AST
 
 import           Database.Beam.Backend.SQL         hiding ( tableName )
@@ -154,7 +154,7 @@ deAnnotateDatabase db =
 -- Once you have an 'AnnotatedDatabaseSettings', you can produce a 'Schema' simply by calling
 -- 'fromAnnotatedDbSettings'. The second parameter can be used to selectively turn off automatic FK-discovery
 -- for one or more tables. For more information about specifying your own table constraints, refer to the
--- 'Database.Beam.Migrate.New.Annotated' module.
+-- 'Database.Beam.AutoMigrate.Annotated' module.
 
 -- | Turns an 'AnnotatedDatabaseSettings' into a 'Schema'. Under the hood, this function will do the
 -- following:

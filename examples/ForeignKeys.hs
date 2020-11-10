@@ -23,7 +23,7 @@ import           Database.Beam.Schema                     ( Beamable
 import qualified Database.Beam.Schema                    as Beam
 import           Database.Beam.Schema.Tables              ( primaryKey )
 
-import           Database.Beam.Migrate.New                    ( Schema
+import           Database.Beam.AutoMigrate                    ( Schema
                                                           , fromAnnotatedDbSettings
                                                           , defaultAnnotatedDbSettings
                                                           , AnnotatedDatabaseSettings
