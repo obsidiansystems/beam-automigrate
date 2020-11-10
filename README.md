@@ -4,7 +4,7 @@ beam-automigrate
 
 Automatic migrations for [beam](https://hackage.haskell.org/package/beam-core) databases!
 
-[![Auto-migration example animation](https://imgur.com/a/weq9NKC)]
+![Auto-migration example animation](https://i.imgur.com/xuPyUfg.gif)
 
 Table of Contents
 -----------------
