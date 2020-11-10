@@ -24,7 +24,7 @@ $ cabal repl readme
 ```
 
 If you're using [nix](https://nixos.org/nix), you can enter a shell with the
-appropriate dependencies with the following commands:
+appropriate dependencies with the following command:
 
 ```bash
 $ nix-shell release.nix -A env
