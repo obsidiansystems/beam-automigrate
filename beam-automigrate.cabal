@@ -15,6 +15,8 @@ description:
   This package offers an alternative to @<https://hackage.haskell.org/package/beam-migrate beam-migrate>@
   and can be used to migrate a database between different versions of a Haskell schema. It doesn't depend
   on @beam-migrate@ if not transitively (@beam-postgres@ depends on it, for example).
+  .
+  <<https://i.imgur.com/xuPyUfg.gif>>
 
 extra-source-files:
   README.md
