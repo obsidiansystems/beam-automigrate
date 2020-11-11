@@ -436,4 +436,4 @@ the types of each individual columns.
 Contributors
 ============
 
-This library was originally written for [Obsidian Systems](https://obsidian.systems) by Alfredo Di Napoli and Andres Löh of Well Typed. Other contributors include Dan Bornside, Sean Chalmers, Ryan Trinkle, and Ali Abrar.
+This library was originally written for [Obsidian Systems](https://obsidian.systems) by Alfredo Di Napoli and Andres Löh of [Well-Typed](https://www.well-typed.com/). Other contributors include Dan Bornside, Sean Chalmers, Ryan Trinkle, and Ali Abrar.
