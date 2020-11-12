@@ -3,7 +3,6 @@
 }: 
 let inherit (reflex-platform) hackGet;
     inherit (reflex-platform.nixpkgs.haskell.lib) dontCheck;
-    beam = hackGet ./dep/beam;
     x = reflex-platform.ghc.override {
       overrides = self: super: {
         beam-core = self.callHackage "beam-core" "0.9.0.0" {};
