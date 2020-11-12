@@ -71,7 +71,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Data.Pool (withResource)
 > import Data.Text
 >
-> data CitiesT f = Flower
+> data CitiesT f = City
 >   { ctCity     :: Columnar f Text
 >   , ctLocation :: Columnar f Text
 >   , ctCapital  :: Columnar f Bool
@@ -121,8 +121,7 @@ Overriding the defaults of an `AnnotatedDatabaseSettings`
 It is likely that the end user would like to attach extra meta-information to an `AnnotatedDatabaseSettings`.
 For example, the user might want to specify which is the default value for a nullable field, or simple express
 things like uniqueness constraints or foreign keys (when the inference algorithm cannot proceed due to
-ambiguity). To do this, we can piggyback on the familiar API from `beam-core`. For example, given an
-imaginary `FlowerDB`, we can do something like this:
+ambiguity). To do this, we can piggyback on the familiar API from `beam-core`. For example, we can do something like this:
 
 ```haskell
 
@@ -436,4 +435,4 @@ the types of each individual columns.
 Contributors
 ============
 
-This library was originally written for [Obsidian Systems](https://obsidian.systems) by Alfredo Di Napoli and Andres Löh of [Well-Typed](https://www.well-typed.com/). Other contributors include Dan Bornside, Sean Chalmers, Ryan Trinkle, and Ali Abrar.
+This library was originally written for [Obsidian Systems](https://obsidian.systems) by Alfredo Di Napoli and Andres Löh of [Well-Typed](https://www.well-typed.com/). Other contributors include Dan Bornside, Sean Chalmers, Ryan Trinkle, and Ali Abrar of Obsidian Systems.
