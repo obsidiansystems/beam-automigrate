@@ -272,8 +272,9 @@ something like this:
 >     BA.printMigration $ BA.migrate conn hsSchema
 >
 > exampleAutoMigration :: IO ()
-> exampleAutoMigration = readmeDbTransaction $ \conn ->
->   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
+> exampleAutoMigration = withDb "readme-db" $ \pool ->
+>   withResource pool $ \conn ->
+>     BA.tryRunMigrationsWithEditUpdate annotatedDB conn
 >
 > main :: IO ()
 > main = do
