@@ -34,7 +34,22 @@ jobs:
           ${{ runner.os }}-${{ matrix.ghc }}-build-
           ${{ runner.os }}-${{ matrix.ghc }}-
           ${{ runner.os }}
-
+    - name: install postgres (linux)
+      run: |
+        sudo apt-get update
+        sudo apt-get install postgresql-10
+        export PATH=$PATH:/usr/lib/postgresql/10/bin
+        which pg_ctl
+        echo "/usr/lib/postgresql/10/bin" >> $GITHUB_PATH
+      if: matrix.os == 'ubuntu-latest'
+    - name: install postgres (macos)
+      run: |
+        brew update
+        brew install postgresql@10
+        export PATH=$PATH:`brew --prefix`/bin
+        which pg_ctl
+        echo "$(brew --prefix)/bin" >> $GITHUB_PATH
+      if: matrix.os == 'macos-latest'
     - name: Install dependencies
       run: |
         cabal update
