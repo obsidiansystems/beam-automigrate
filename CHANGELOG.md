@@ -1,5 +1,10 @@
 # Revision history for beam-automigrate
 
+## 0.1.0.2
+
+* readme: Fix warning about a transaction already running
+* Support for GHC 8.10
+
 ## 0.1.0.1
 
 * Loosen time version bounds
