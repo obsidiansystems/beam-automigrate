@@ -28,7 +28,7 @@ import Database.Beam.AutoMigrate.Types
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.PostgreSQL.Simple as Pg
-import Database.PostgreSQL.Simple.FromField (FromField (..), fromField)
+import Database.PostgreSQL.Simple.FromField (FromField (..), fromField, returnError)
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import qualified Database.PostgreSQL.Simple.TypeInfo.Static as Pg
 import qualified Database.PostgreSQL.Simple.Types as Pg
@@ -84,11 +84,11 @@ instance FromField ColumnName where
 
 instance FromField SqlRawOtherConstraintType where
   fromField f dat = do
-    t <- fromField f dat
+    t :: String <- fromField f dat
     case t of
       "p" -> pure SQL_raw_pk
       "u" -> pure SQL_raw_unique
-      _ -> fail ("Unexpected costraint type: " <> t)
+      _ -> returnError Pg.ConversionFailed f t
 
 --
 -- Postgres queries to extract the schema out of the DB

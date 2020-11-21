@@ -6,9 +6,9 @@ import Control.Exception (bracket)
 import Control.Monad.IO.Class (liftIO)
 import Criterion.Main
 import qualified Data.Map.Strict as M
-import Database.Beam.Migrate.New
-import Database.Beam.Migrate.New.BenchUtil
-import Database.Beam.Migrate.New.Postgres (getSchema)
+import Database.Beam.AutoMigrate
+import Database.Beam.AutoMigrate.BenchUtil
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 import Database.Beam.Postgres (runBeamPostgres)
 import qualified Database.PostgreSQL.Simple as Pg
 
