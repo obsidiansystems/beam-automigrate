@@ -1,5 +1,5 @@
 name:               beam-automigrate
-version:            0.1.0.0
+version:            0.1.0.1
 license-file:       LICENSE
 build-type:         Simple
 cabal-version:      >=1.10
@@ -21,6 +21,8 @@ description:
 extra-source-files:
   README.md
   CHANGELOG.md
+
+tested-with:        GHC ==8.6.5 || ==8.8.4 || ==8.10.2
 
 library
   exposed-modules:
@@ -49,7 +51,7 @@ library
     , microlens             >=0.4.10   && <0.6
     , mtl                   >=2.2.2    && <2.4
     , postgresql-simple     >=0.5.4    && <0.7.0.0
-    , pretty-simple         >=2.2.0    && <2.3
+    , pretty-simple         >=2.2.0    && <3.3
     , QuickCheck            >=2.13     && <2.15
     , quickcheck-instances  >=0.3      && <0.4
     , scientific            >=0.3.6    && <0.5
