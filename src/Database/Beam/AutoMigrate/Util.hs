@@ -8,6 +8,7 @@ import Control.Monad.Except
 import Data.Functor.Constant
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Types (ColumnName (..), TableName (..))
 import Database.Beam.Schema (Beamable, PrimaryKey, TableEntity, TableSettings)
 import qualified Database.Beam.Schema as Beam
@@ -104,7 +105,7 @@ sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
 sqlEscaped :: Text -> Text
-sqlEscaped t = "\"" <> t <> "\""
+sqlEscaped t = if T.toLower t == t then t else "\"" <> t <> "\""
 
 sqlSingleQuoted :: Text -> Text
 sqlSingleQuoted t = "'" <> t <> "'"
