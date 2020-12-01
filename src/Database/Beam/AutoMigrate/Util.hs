@@ -105,21 +105,26 @@ sqlOptCharSet :: Maybe Text -> Text
 sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
--- | Escape a sql identifier according to the rules defined in the postgres
--- <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS manual>
+-- | Escape a sql identifier according to the rules defined in the postgres manual
 sqlEscaped :: Text -> Text
-sqlEscaped t =
-  case T.uncons t of
-    Nothing -> t
-    Just (c, rest) ->
-      if validUnescapedHead c && validUnescapedTail rest
-        then t
-        else quoted
+sqlEscaped t = if sqlValidUnescaped t
+  then t
+  else
+    -- Double-quotes inside identifier names must be escaped by with an additional double-quote
+    "\"" <> (T.intercalate "\"\"" $ T.splitOn "\"" t) <> "\""
+
+-- | Check whether an identifier is valid without escaping (True) or must be escaped (False)
+-- according to the postgres <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS manual>
+sqlValidUnescaped :: Text -> Bool
+sqlValidUnescaped t = case T.uncons t of
+  Nothing -> True
+  Just (c, rest) -> validUnescapedHead c && validUnescapedTail rest
   where
-    quoted = "\"" <> t <> "\""
     validUnescapedHead c = c `elem` ("1234567890_"::String) || isAlpha c
     validUnescapedTail = all
       (\r -> (isAlpha r && isLower r) || r `elem` ("1234567890$_"::String)) . T.unpack
+
+
 sqlSingleQuoted :: Text -> Text
 sqlSingleQuoted t = "'" <> t <> "'"
 
