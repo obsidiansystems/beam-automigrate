@@ -5,6 +5,7 @@ module Database.Beam.AutoMigrate.Util where
 
 import Control.Applicative.Lift
 import Control.Monad.Except
+import Data.Char
 import Data.Functor.Constant
 import Data.String (fromString)
 import Data.Text (Text)
@@ -104,9 +105,21 @@ sqlOptCharSet :: Maybe Text -> Text
 sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
+-- | Escape a sql identifier according to the rules defined in the postgres
+-- <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS manual>
 sqlEscaped :: Text -> Text
-sqlEscaped t = if T.toLower t == t then t else "\"" <> t <> "\""
-
+sqlEscaped t =
+  case T.uncons t of
+    Nothing -> t
+    Just (c, rest) ->
+      if validUnescapedHead c && validUnescapedTail rest
+        then t
+        else quoted
+  where
+    quoted = "\"" <> t <> "\""
+    validUnescapedHead c = c `elem` ("1234567890_"::String) || isAlpha c
+    validUnescapedTail = all
+      (\r -> (isAlpha r && isLower r) || r `elem` ("1234567890$_"::String)) . T.unpack
 sqlSingleQuoted :: Text -> Text
 sqlSingleQuoted t = "'" <> t <> "'"
 
