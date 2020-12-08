@@ -7,10 +7,12 @@ import Control.Applicative.Lift
 import Control.Monad.Except
 import Data.Char
 import Data.Functor.Constant
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.Beam.AutoMigrate.Types (ColumnName (..), TableName (..))
+import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
 import Database.Beam.Schema (Beamable, PrimaryKey, TableEntity, TableSettings)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables
@@ -125,12 +127,12 @@ sqlValidUnescaped t = case T.uncons t of
       (\r -> (isAlpha r && isLower r) || r `elem` ("1234567890$_"::String)) . T.unpack
 
 sqlIsReservedKeyword :: Text -> Bool
-sqlIsReservedKeyword t = T.toCaseFold t `elem` postgresKeywordsReserved
+sqlIsReservedKeyword t = T.toCaseFold t `Set.member` postgresKeywordsReserved
 
 -- | Reserved keywords according to
 -- https://www.postgresql.org/docs/current/sql-keywords-appendix.html
-postgresKeywordsReserved :: [Text]
-postgresKeywordsReserved = map T.toCaseFold
+postgresKeywordsReserved :: Set Text
+postgresKeywordsReserved = Set.fromList $ map T.toCaseFold
   [ "ALL"
   , "ANALYSE"
   , "ANALYZE"
