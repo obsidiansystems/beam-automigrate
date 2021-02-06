@@ -39,6 +39,7 @@ module Database.Beam.AutoMigrate
     -- * Printing migrations for debugging purposes
     prettyEditActionDescription,
     prettyEditSQL,
+    showMigration,
     printMigration,
     printMigrationIO,
 
@@ -571,10 +572,15 @@ createMigration (Right edits) = ExceptT $ do
 -- | Prints the migration to stdout. Useful for debugging and diagnostic.
 printMigration :: MonadIO m => Migration m -> m ()
 printMigration m = do
+  showMigration m >>= liftIO . putStrLn
+
+-- | Pretty-prints the migration. Useful for debugging and diagnostic.
+showMigration :: MonadIO m => Migration m -> m String
+showMigration m = do
   (a, sortedEdits) <- fmap sortEdits <$> runStateT (runExceptT m) mempty
   case a of
     Left e -> liftIO $ throwIO e
-    Right () -> liftIO $ putStrLn (unlines . map displaySyntax $ editsToPgSyntax sortedEdits)
+    Right () -> return $ unlines $ map displaySyntax $ editsToPgSyntax sortedEdits
 
 printMigrationIO :: Migration Pg.Pg -> IO ()
 printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMigration mig
