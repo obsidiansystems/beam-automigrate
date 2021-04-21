@@ -268,7 +268,7 @@ something like this:
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =
->   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
+>   BA.tryRunMigrationsWithEditUpdate annotatedDB id conn
 >
 > main :: IO ()
 > main = do

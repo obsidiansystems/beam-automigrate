@@ -260,7 +260,7 @@ runMigrationWithEditUpdate ::
   Schema ->
   IO ()
 runMigrationWithEditUpdate editUpdate conn hsSchema = do
-  -- Create the migration with all the safeety information
+  -- Create the migration with all the safety information
   edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
   -- Apply the user function to possibly update the list of edits to allow the user to
   -- intervene in the event of unsafe edits.
@@ -707,9 +707,10 @@ tryRunMigrationsWithEditUpdate
      , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
      )
   => AnnotatedDatabaseSettings be db
+  -> ([WithPriority Edit] -> [WithPriority Edit])
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdate annotatedDb conn = do
+tryRunMigrationsWithEditUpdate annotatedDb editUpdate conn = do
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
     actualDatabaseSchema <- getSchema conn
     case diff expectedHaskellSchema actualDatabaseSchema of
@@ -722,7 +723,7 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "Database migration required, attempting..."
         prettyPrintEdits edits
 
-        try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
+        try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
             error $ "Database migration error: " <> displayException e
           Right _ ->
