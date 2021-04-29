@@ -106,6 +106,9 @@ instance GEnums be db x => GEnums be db (C1 f x) where
 instance (GEnums be db a, GEnums be db b) => GEnums be db (a :*: b) where
   gEnums db (a :*: b) = gEnums db a <> gEnums db b
 
+instance GEnums be db U1 where
+  gEnums _ U1 = M.empty
+
 instance
   ( IsAnnotatedDatabaseEntity be (TableEntity tbl),
     Beam.Table tbl,
@@ -277,6 +280,12 @@ instance (GColumns p a, GColumns p b) => GColumns p (a :*: b) where
 
 instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => GTableConstraintColumns be db (a :*: b) where
   gTableConstraintsColumns db tbl (a :*: b) = S.union (gTableConstraintsColumns db tbl a) (gTableConstraintsColumns db tbl b)
+
+instance GColumns p U1 where
+  gColumns _ _ U1 = (M.empty, M.empty)
+
+instance GTableConstraintColumns be db U1 where
+  gTableConstraintsColumns _ _ U1 = S.empty
 
 --
 -- Column entries

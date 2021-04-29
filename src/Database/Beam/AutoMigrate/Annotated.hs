@@ -307,6 +307,9 @@ instance
     gDefTblSchema (Proxy :: Proxy (a p)) c
       :*: gDefTblSchema (Proxy :: Proxy (b p)) d
 
+instance GDefaultTableSchema (U1 p) (U1 p) where
+  gDefTblSchema _ U1 = U1
+
 instance
   ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint,
     HasSchemaConstraints (Beam.TableField tbl ty),
