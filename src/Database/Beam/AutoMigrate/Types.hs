@@ -10,6 +10,7 @@ module Database.Beam.AutoMigrate.Types where
 import Control.DeepSeq
 import Control.Exception
 import Data.ByteString.Lazy (ByteString)
+import Data.Function (on)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
@@ -263,8 +264,31 @@ data EditCondition = EditCondition
     _editCondition_check :: Pg EditSafety
   }
 
+data EditCommand = EditCommand
+  { _editCommand_query :: BeamSqlBackendSyntax Postgres
+  , _editCommand_command :: Pg ()
+  }
+
+instance Eq EditCommand where
+  (==) = (==) `on` (prettyEditQuery . _editCommand_query)
+instance Show EditCommand where
+  show (EditCommand query command) = unwords
+    [ "EditCommand {"
+    , "_editCommand_query = PgCommand {"
+    , "pgCommandType = "
+    , show $ Syntax.pgCommandType query
+    , "fromPgCommand = "
+    , toS $ prettyEditQuery query
+    , "},"
+    , "_editCommand_command = <command function>"
+    , "}"
+    ]
+
+prettyEditQuery :: BeamSqlBackendSyntax Postgres -> ByteString
+prettyEditQuery = Syntax.pgRenderSyntaxScript . Syntax.fromPgCommand
+
 prettyEditConditionQuery :: EditCondition -> ByteString
-prettyEditConditionQuery = Syntax.pgRenderSyntaxScript . Syntax.fromPgCommand . _editCondition_query
+prettyEditConditionQuery = prettyEditQuery . _editCondition_query
 
 instance Eq EditCondition where
   ec1 == ec2 = prettyEditConditionQuery ec1 == prettyEditConditionQuery ec2
@@ -284,13 +308,13 @@ instance Show EditCondition where
       ]
 
 data Edit = Edit
-  { _editAction :: EditAction,
-    _editCondition :: Either EditCondition EditSafety
+  { _editAction :: (EditAction, Maybe EditCommand)
+  , _editCondition :: Either EditCondition EditSafety
   }
   deriving (Show, Eq)
 
-editAction :: Lens' Edit EditAction
-editAction = lens _editAction (\(Edit _ ec) ea -> Edit ea ec)
+editAction :: Lens' Edit (EditAction, Maybe EditCommand)
+editAction = lens _editAction (\(Edit _ ec) (ea) -> Edit ea ec)
 
 editCondition :: Lens' Edit (Either EditCondition EditSafety)
 editCondition = lens _editCondition (\(Edit ea _) ec -> Edit ea ec)
@@ -299,7 +323,7 @@ editSafetyIs :: EditSafety -> Edit -> Bool
 editSafetyIs s = fromMaybe False . preview (editCondition . _Right . to (== s))
 
 mkEditWith :: (EditAction -> EditSafety) -> EditAction -> Edit
-mkEditWith isSafe e = Edit e (Right $ isSafe e)
+mkEditWith isSafe e = Edit (e, Nothing) (Right $ isSafe e)
 
 defMkEdit :: EditAction -> Edit
 defMkEdit = mkEditWith defaultEditSafety
@@ -330,7 +354,7 @@ instance NFData EditAction where
   rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
   rnf (SequenceRemoved sName) = sName `deepseq` ()
 
--- | A possible enumerations of the reasons why a 'diff' operation might not work.
+-- | A possible enumeration of the reasons why a 'diff' operation might not work.
 data DiffError
   = -- | The diff couldn't be completed. TODO(adn) We need extra information
     -- we can later on reify into the raw SQL queries users can try to run

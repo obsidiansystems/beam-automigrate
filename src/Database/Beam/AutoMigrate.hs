@@ -64,11 +64,12 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
 import Data.Bifunctor (first)
+import Data.Foldable (traverse_)
 import Data.Function ((&))
 import Data.Int (Int64)
 import Data.List (foldl')
 import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.Proxy
 import qualified Data.Set as S
 import Data.String.Conv (toS)
@@ -195,7 +196,7 @@ fromAnnotatedDbSettings ::
 fromAnnotatedDbSettings db p = gSchema db p (from db)
 
 editsToPgSyntax :: [WithPriority Edit] -> [Pg.PgSyntax]
-editsToPgSyntax = map (toSqlSyntax . fst . unPriority)
+editsToPgSyntax = join . map (toSqlSyntax . fst . unPriority)
 
 -- | A database 'Migration'.
 type Migration m = ExceptT MigrationError (StateT [WithPriority Edit] m) ()
@@ -268,13 +269,13 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
   let newEdits = sortEdits $ editUpdate $ sortEdits edits
   -- If the new list of edits still contains any unsafe edits then fail out.
   when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
-    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> fst $ _editAction e) newEdits
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
     Pg.runBeamPostgres conn $
       forM_ newEdits $ \(WithPriority (edit, _)) -> do
         case _editCondition edit of
-          Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+          Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [fst $ _editAction edit]
           -- Safe or slow, run that edit.
           Right safeMaybeSlow -> safeOrSlow safeMaybeSlow edit
           Left ec -> do
@@ -285,7 +286,7 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
               Unsafe -> do
                 -- Edit determined to be unsafe, don't run it.
                 printmsg "edit unsafe by condition"
-                liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+                liftIO $ throwIO $ UnsafeEditsDetected [fst $ _editAction edit]
               safeMaybeSlow -> do
                 -- Safe or slow, run that edit.
                 printmsg "edit condition satisfied"
@@ -294,9 +295,9 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
     safeOrSlow safety edit = do
       when (safety == PotentiallySlow) $ do
         printmsg "Running potentially slow edit"
-        printmsg $ T.unpack $ prettyEditActionDescription $ _editAction edit
+        printmsg $ T.unpack $ prettyEditActionDescription $ fst $ _editAction edit
 
-      runNoReturn $ editToSqlCommand edit
+      traverse_ runNoReturn $ editToSqlCommand edit
 
     printmsg :: MonadIO m => String -> m ()
     printmsg = liftIO . putStrLn . mappend "[beam-migrate] "
@@ -331,10 +332,14 @@ data AlterTableAction
   deriving (Show, Eq)
 
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
-toSqlSyntax :: Edit -> Pg.PgSyntax
-toSqlSyntax e =
-  safetyPrefix $
-    _editAction e & \case
+toSqlSyntax :: Edit -> [Pg.PgSyntax]
+toSqlSyntax e = [schemaChangeSql] <> customSql
+  where
+    customSql = flip fmap (maybeToList $ snd $ _editAction e) $ ()
+
+    schemaChangeSql = safetyPrefix $ actionSyntax $ fst $ _editAction e
+
+    actionSyntax = \case
       TableAdded tblName tbl ->
         ddlSyntax
           ( "CREATE TABLE " <> sqlEscaped (tableName tblName)
@@ -402,7 +407,7 @@ toSqlSyntax e =
               <> " DROP "
               <> renderColumnConstraint DropConstraint cstr
           )
-  where
+
     safetyPrefix query =
       if editSafetyIs Safe e
         then Pg.emit "        " <> query
@@ -592,11 +597,11 @@ showMigration m = do
 printMigrationIO :: Migration Pg.Pg -> IO ()
 printMigrationIO mig = Pg.runBeamPostgres (undefined :: Pg.Connection) $ printMigration mig
 
-editToSqlCommand :: Edit -> Pg.PgCommandSyntax
-editToSqlCommand = Pg.PgCommandSyntax Pg.PgCommandTypeDdl . toSqlSyntax
+editToSqlCommand :: Edit -> [Pg.PgCommandSyntax]
+editToSqlCommand = fmap (Pg.PgCommandSyntax Pg.PgCommandTypeDdl) . toSqlSyntax
 
 prettyEditSQL :: Edit -> Text
-prettyEditSQL = T.pack . displaySyntax . Pg.fromPgCommand . editToSqlCommand
+prettyEditSQL = T.concat . fmap (T.pack . displaySyntax . Pg.fromPgCommand) . editToSqlCommand
 
 prettyEditActionDescription :: EditAction -> Text
 prettyEditActionDescription =

@@ -364,12 +364,12 @@ applyEdits :: [WithPriority Edit] -> Schema -> Either ApplyFailed Schema
 applyEdits (sortEdits -> edits) s = foldM applyEdit s (map (fst . unPriority) edits)
 
 applyEdit :: Schema -> Edit -> Either ApplyFailed Schema
-applyEdit s edit@(Edit e _safety) = runExcept $ case e of
+applyEdit s edit@(Edit (e, _command) _safety) = runExcept $ case e of
   TableAdded tName tbl -> liftEither $ do
     tables' <-
       M.alterF
         ( \case
-            -- Constaints are added as a separate edit step.
+            -- Constraints are added as a separate edit step.
             Nothing -> Right (Just tbl {tableConstraints = mempty})
             Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
         )
