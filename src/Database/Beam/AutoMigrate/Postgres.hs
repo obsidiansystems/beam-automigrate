@@ -471,7 +471,8 @@ getAllConstraints conn = do
       let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
       case sqlCon_constraint_type of
         SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name columnSet)
-        SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
+        SQL_raw_pk -> if S.null columnSet then pure () else
+          addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
 
 newtype ReferenceActions = ReferenceActions {getActions :: Map Text Actions}
 
