@@ -374,6 +374,13 @@ toSqlSyntax e =
           )
       ColumnRemoved tblName colName ->
         updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
+      ColumnRenamed tblName oldName newName ->
+        updateSyntax
+          ( alterTable tblName <> "RENAME COLUMN "
+            <> sqlEscaped (columnName oldName)
+            <> " TO "
+            <> sqlEscaped (columnName newName)
+          )
       ColumnTypeChanged tblName colName _old new ->
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
@@ -606,6 +613,14 @@ prettyEditActionDescription =
       ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]
     ColumnRemoved tblName colName ->
       ["remove column:", qc colName, ", from:", qt tblName]
+    ColumnRenamed tblName oldName newName ->
+      [ "rename column in table:",
+        qt tblName,
+        "\nfrom:",
+        qc oldName,
+        "\nto:",
+        qc newName
+      ]
     ColumnTypeChanged tblName colName oldColumnType newColumnType ->
       [ "change type of column:",
         qc colName,

@@ -30,6 +30,7 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
+import Lens.Micro ((&))
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).
@@ -385,6 +386,8 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
     withExistingTable tName edit s (addColumn edit colName col)
   ColumnRemoved tName colName ->
     withExistingTable tName edit s (removeColumn edit s colName tName)
+  ColumnRenamed tName oldName newName ->
+    withExistingTable tName edit s (renameColumn edit oldName newName)
   ColumnTypeChanged tName colName oldType newType ->
     withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
   ColumnConstraintAdded tName colName con ->
@@ -432,7 +435,7 @@ addColumn e colName col tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-          -- Constaints are added as a separate edit step.
+          -- Constraints are added as a separate edit step.
           Nothing -> Right (Just col {columnConstraints = mempty})
           Just existing -> Left (InvalidEdit e (ColumnAlreadyExist colName existing))
       )
@@ -451,6 +454,32 @@ removeColumn e s colName tName tbl = liftEither $ do
       colName
       (tableColumns tbl)
   pure $ Just tbl {tableColumns = columns'}
+
+renameColumn ::
+  Edit ->
+  ColumnName ->
+  -- | old name
+  ColumnName ->
+  -- | new name
+  Table ->
+  Either ApplyFailed (Maybe Table)
+renameColumn e oldName newName tbl = do
+  let oldColumns = tableColumns tbl
+
+  case M.lookup newName oldColumns of
+    Nothing -> pure ()
+    Just c -> throwError $ InvalidEdit e $ ColumnAlreadyExist newName c
+
+  c <- case M.lookup oldName oldColumns of
+    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist oldName
+    Just c -> pure c
+
+  let
+    newColumns = oldColumns
+      & M.delete oldName
+      & M.insert newName c
+
+  pure $ Just $ tbl {tableColumns = newColumns}
 
 changeColumnType ::
   Edit ->

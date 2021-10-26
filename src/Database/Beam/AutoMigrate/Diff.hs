@@ -47,6 +47,8 @@ newtype WithPriority a = WithPriority {unPriority :: (a, Priority)} deriving (Sh
 
 editPriority :: EditAction -> Priority
 editPriority = \case
+  -- TODO: This one can't be auto-detected and can only be manually specified to replace a drop/add pair - should it even have a priority?
+  ColumnRenamed {} -> Priority 0
   -- Operations that create tables, sequences or enums have top priority
   EnumTypeAdded {} -> Priority 0
   SequenceAdded {} -> Priority 1

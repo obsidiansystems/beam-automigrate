@@ -217,6 +217,7 @@ data EditAction
   | TableConstraintRemoved TableName TableConstraint
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
+  | ColumnRenamed TableName ColumnName {- old name -} ColumnName {- new name -}
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
   | ColumnConstraintAdded TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
@@ -244,6 +245,7 @@ defaultEditSafety = \case
   TableConstraintRemoved {} -> Safe
   ColumnAdded {} -> Safe
   ColumnRemoved {} -> Unsafe
+  ColumnRenamed {} -> Safe
   ColumnTypeChanged {} -> Unsafe
   ColumnConstraintAdded {} -> Safe
   ColumnConstraintRemoved {} -> Safe
@@ -314,6 +316,7 @@ instance NFData EditAction where
   rnf (TableConstraintRemoved tName tCon) = tName `deepseq` tCon `deepseq` ()
   rnf (ColumnAdded tName cName col) = tName `deepseq` cName `deepseq` col `deepseq` ()
   rnf (ColumnRemoved tName colName) = tName `deepseq` colName `deepseq` ()
+  rnf (ColumnRenamed tName oldName newName) = tName `deepseq` oldName `deepseq` newName `deepseq` ()
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
   rnf (ColumnConstraintAdded tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
