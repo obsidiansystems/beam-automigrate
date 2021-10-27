@@ -274,7 +274,7 @@ something like this:
 > exampleAutoMigration :: IO ()
 > exampleAutoMigration = withDb "readme-db" $ \pool ->
 >   withResource pool $ \conn ->
->     BA.tryRunMigrationsWithEditUpdate annotatedDB id conn
+>     BA.tryRunMigrationsWithEditUpdate annotatedDB (const id) conn
 >
 > main :: IO ()
 > main = do
