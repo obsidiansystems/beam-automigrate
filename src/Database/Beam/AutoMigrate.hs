@@ -693,7 +693,7 @@ tryRunMigrationsWithEditUpdate
      , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
      )
   => AnnotatedDatabaseSettings be db
-  -> ([WithPriority Edit] -> [WithPriority Edit])
+  -> (Schema -> [WithPriority Edit] -> [WithPriority Edit])
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate annotatedDb editUpdate conn = do
@@ -709,7 +709,7 @@ tryRunMigrationsWithEditUpdate annotatedDb editUpdate conn = do
         putStrLn "Database migration required, attempting..."
         putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) (sortEdits edits)
 
-        try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
+        try (runMigrationWithEditUpdate (editUpdate actualDatabaseSchema) conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
             error $ "Database migration error: " <> displayException e
           Right _ ->
