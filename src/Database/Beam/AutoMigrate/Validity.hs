@@ -365,62 +365,62 @@ applyEdits (sortEdits -> edits) s = foldM applyEdit s (map (fst . unPriority) ed
 
 applyEdit :: Schema -> Edit -> Either ApplyFailed Schema
 applyEdit s edit@(Edit e _safety) = runExcept $ case e of
-  TableAdded tName tbl -> liftEither $ do
-    tables' <-
-      M.alterF
-        ( \case
-            -- Constaints are added as a separate edit step.
-            Nothing -> Right (Just tbl {tableConstraints = mempty})
-            Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
-        )
-        tName
-        (schemaTables s)
-    pure $ s {schemaTables = tables'}
-  TableRemoved tName ->
-    withExistingTable tName edit s (removeTable edit s tName)
-  TableConstraintAdded tName con ->
-    withExistingTable tName edit s (addTableConstraint edit s con tName)
-  TableConstraintRemoved tName con ->
-    withExistingTable tName edit s (removeTableConstraint edit s con tName)
-  ColumnAdded tName colName col ->
-    withExistingTable tName edit s (addColumn edit colName col)
-  ColumnRemoved tName colName ->
-    withExistingTable tName edit s (removeColumn edit s colName tName)
-  ColumnRenamed tName oldName newName ->
-    withExistingTable tName edit s (renameColumn edit oldName newName)
-  ColumnTypeChanged tName colName oldType newType ->
-    withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
-  ColumnConstraintAdded tName colName con ->
-    withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
-  ColumnConstraintRemoved tName colName con ->
-    withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
-  EnumTypeAdded eName enum -> liftEither $ do
-    enums' <-
-      M.alterF
-        ( \case
-            Nothing -> Right (Just enum)
-            Just existing -> Left (InvalidEdit edit (EnumAlreadyExist eName existing))
-        )
-        eName
-        (schemaEnumerations s)
-    pure $ s {schemaEnumerations = enums'}
-  EnumTypeRemoved eName ->
-    withExistingEnum eName edit s (removeEnum edit s eName)
-  EnumTypeValueAdded eName addedValue insOrder insPoint ->
-    withExistingEnum eName edit s (addValueToEnum edit eName addedValue insOrder insPoint)
-  SequenceAdded sName seqq -> liftEither $ do
-    seqs' <-
-      M.alterF
-        ( \case
-            Nothing -> Right (Just seqq)
-            Just existing -> Left (InvalidEdit edit (SequenceAlreadyExist sName existing))
-        )
-        sName
-        (schemaSequences s)
-    pure $ s {schemaSequences = seqs'}
-  SequenceRemoved sName ->
-    withExistingSequence sName edit s (removeSequence edit s sName)
-
+  EditAction_Automatic ea -> case ea of
+    TableAdded tName tbl -> liftEither $ do
+      tables' <-
+        M.alterF
+          ( \case
+              -- Constaints are added as a separate edit step.
+              Nothing -> Right (Just tbl {tableConstraints = mempty})
+              Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
+          )
+          tName
+          (schemaTables s)
+      pure $ s {schemaTables = tables'}
+    TableRemoved tName ->
+      withExistingTable tName edit s (removeTable edit s tName)
+    TableConstraintAdded tName con ->
+      withExistingTable tName edit s (addTableConstraint edit s con tName)
+    TableConstraintRemoved tName con ->
+      withExistingTable tName edit s (removeTableConstraint edit s con tName)
+    ColumnAdded tName colName col ->
+      withExistingTable tName edit s (addColumn edit colName col)
+    ColumnRemoved tName colName ->
+      withExistingTable tName edit s (removeColumn edit s colName tName)
+    ColumnTypeChanged tName colName oldType newType ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
+    ColumnConstraintAdded tName colName con ->
+      withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
+    ColumnConstraintRemoved tName colName con ->
+      withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
+    EnumTypeAdded eName enum -> liftEither $ do
+      enums' <-
+        M.alterF
+          ( \case
+              Nothing -> Right (Just enum)
+              Just existing -> Left (InvalidEdit edit (EnumAlreadyExist eName existing))
+          )
+          eName
+          (schemaEnumerations s)
+      pure $ s {schemaEnumerations = enums'}
+    EnumTypeRemoved eName ->
+      withExistingEnum eName edit s (removeEnum edit s eName)
+    EnumTypeValueAdded eName addedValue insOrder insPoint ->
+      withExistingEnum eName edit s (addValueToEnum edit eName addedValue insOrder insPoint)
+    SequenceAdded sName seqq -> liftEither $ do
+      seqs' <-
+        M.alterF
+          ( \case
+              Nothing -> Right (Just seqq)
+              Just existing -> Left (InvalidEdit edit (SequenceAlreadyExist sName existing))
+          )
+          sName
+          (schemaSequences s)
+      pure $ s {schemaSequences = seqs'}
+    SequenceRemoved sName ->
+      withExistingSequence sName edit s (removeSequence edit s sName)
+  EditAction_Manual ea -> case ea of
+    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName)
 --
 -- Various combinators for specific parts of a Schema
 --
