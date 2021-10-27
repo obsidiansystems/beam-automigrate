@@ -705,7 +705,7 @@ tryRunMigrationsWithEditUpdate annotatedDb editUpdate conn = do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
-        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) (sortEdits edits)
 
         try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
