@@ -267,12 +267,13 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
   -- intervene in the event of unsafe edits.
   let newEdits = sortEdits $ editUpdate $ sortEdits edits
   -- If the new list of edits still contains any unsafe edits then fail out.
-  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
-    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
 
-  when (newEdits /= edits) $ do
+  when (sortEdits newEdits /= sortEdits edits) $ do
     putStrLn "Changes requested to diff induced migration. Attempting..."
     prettyPrintEdits newEdits
+
+  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
+    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
