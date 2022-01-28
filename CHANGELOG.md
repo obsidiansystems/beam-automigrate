@@ -1,5 +1,10 @@
 # Revision history for beam-automigrate
 
+## Unreleased
+
+* Add `showMigration`
+* Extend allowable version bounds for aeson and splitmix
+
 ## 0.1.2.0
 
 * Escape sql identifiers that are on the [postgres reserved keywords list](https://www.postgresql.org/docs/current/sql-keywords-appendix.html)
