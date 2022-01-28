@@ -151,6 +151,7 @@ data PgDataType
   | PgRangeDate
   | PgUuid
   | PgEnumeration EnumerationName
+  | PgOid
 
 deriving instance Show PgDataType
 
