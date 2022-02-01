@@ -554,6 +554,8 @@ renderDataType = \case
   PgSpecificType PgUuid -> toS $ displaySyntax Pg.pgUuidType
   -- enumerations
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
+  -- oid
+  PgSpecificType PgOid -> "oid"
 
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do
