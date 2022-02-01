@@ -27,6 +27,7 @@ import qualified Database.Beam.AutoMigrate.Util as Util
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.Beam.Postgres as Pg
+import qualified Database.PostgreSQL.Simple.Types as Psql
 
 --
 -- Specifying SQL data types and constraints
@@ -289,3 +290,10 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
 instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
   defaultTypeCast _ = Just "character varying"
+
+--
+-- support for oid
+--
+
+instance HasColumnType Psql.Oid where
+  defaultColumnType _ = PgSpecificType PgOid
