@@ -5,6 +5,7 @@
 * Add `showMigration`
 * Extend allowable version bounds for aeson and splitmix
 * Add support for postgres' oid column type
+* Add support for nullary products to GEnums, GColumns, GTableConstraintColumns and GDefaultTableSchema
 
 ## 0.1.2.0
 
