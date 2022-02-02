@@ -101,6 +101,9 @@ newtype TableName = TableName
   }
   deriving (Show, Eq, Ord, NFData, Generic)
 
+instance IsString TableName where
+  fromString = TableName . T.pack
+
 data Table = Table
   { tableConstraints :: Set TableConstraint,
     tableColumns :: Columns
@@ -151,6 +154,7 @@ data PgDataType
   | PgRangeDate
   | PgUuid
   | PgEnumeration EnumerationName
+  | PgOid
 
 deriving instance Show PgDataType
 
