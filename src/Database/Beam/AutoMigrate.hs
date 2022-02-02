@@ -267,8 +267,14 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
   -- intervene in the event of unsafe edits.
   let newEdits = sortEdits $ editUpdate $ sortEdits edits
   -- If the new list of edits still contains any unsafe edits then fail out.
+
+  when (newEdits /= sortEdits edits) $ do
+    putStrLn "Changes requested to diff induced migration. Attempting..."
+    prettyPrintEdits newEdits
+
   when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
     throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
     Pg.runBeamPostgres conn $
@@ -661,6 +667,9 @@ prettyEditActionDescription =
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
 
+prettyPrintEdits :: [WithPriority Edit] -> IO ()
+prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+
 -- | Compare the existing schema in the database with the expected
 -- schema in Haskell and try to edit the existing schema as necessary
 tryRunMigrationsWithEditUpdate
@@ -691,7 +700,7 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
-        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+        prettyPrintEdits edits
 
         try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
