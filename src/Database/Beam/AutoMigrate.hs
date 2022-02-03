@@ -700,6 +700,8 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
           Right _ ->
             pure ()
 
+-- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
+-- database schema to the given one, without actually performing the migration.
 calcMigrationSteps
   :: ( Generic (db (DatabaseEntity be db))
      , (Generic (db (AnnotatedDatabaseEntity be db)))
