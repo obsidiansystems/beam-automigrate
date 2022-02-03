@@ -373,6 +373,8 @@ pgTypeToColumnType oid width
     Just (PgSpecificType PgRangeDate)
   | Pg.typoid Pg.uuid == oid =
     Just (PgSpecificType PgUuid)
+  | Pg.typoid Pg.oid == oid =
+    Just (PgSpecificType PgOid)
   | otherwise =
     Nothing
 
