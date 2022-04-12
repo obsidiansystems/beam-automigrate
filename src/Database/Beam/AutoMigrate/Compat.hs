@@ -245,6 +245,31 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
   defaultColumnType _ = PgSpecificType PgRangeDate
 
 --
+-- support for pg geometry types
+--
+
+instance HasColumnType Pg.PgPoint where
+  defaultColumnType _ = PgSpecificType PgPoint
+
+instance HasColumnType Pg.PgLine where
+  defaultColumnType _ = PgSpecificType PgLine
+
+instance HasColumnType Pg.PgLineSegment where
+  defaultColumnType _ = PgSpecificType PgLineSegment
+
+instance HasColumnType Pg.PgBox where
+  defaultColumnType _ = PgSpecificType PgBox
+
+instance HasColumnType Pg.PgPath where
+  defaultColumnType _ = PgSpecificType PgPath
+
+instance HasColumnType Pg.PgPolygon where
+  defaultColumnType _ = PgSpecificType PgPolygon
+
+instance HasColumnType Pg.PgCircle where
+  defaultColumnType _ = PgSpecificType PgCircle
+
+--
 -- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:
 ---
 -- CREATE SEQUENCE tablename_colname_seq;

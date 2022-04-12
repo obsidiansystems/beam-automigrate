@@ -155,6 +155,13 @@ data PgDataType
   | PgUuid
   | PgEnumeration EnumerationName
   | PgOid
+  | PgPoint
+  | PgLine
+  | PgLineSegment
+  | PgBox
+  | PgPath
+  | PgPolygon
+  | PgCircle
 
 deriving instance Show PgDataType
 

@@ -61,7 +61,6 @@ where
 
 import Control.Exception
 import Control.Monad.Except
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
 import Data.Bifunctor (first)
@@ -77,7 +76,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as LT
-import Database.Beam (MonadBeam)
 import Database.Beam.AutoMigrate.Annotated as Exports
 import Database.Beam.AutoMigrate.Compat as Exports
 import Database.Beam.AutoMigrate.Diff as Exports
@@ -92,6 +90,7 @@ import qualified Database.Beam.Postgres as Pg
 import qualified Database.Beam.Postgres.Syntax as Pg
 import Database.Beam.Schema (Database, DatabaseSettings)
 import Database.Beam.Schema.Tables (DatabaseEntity (..))
+import qualified Database.PostgreSQL.Simple.TypeInfo.Static as Pg
 import qualified Database.PostgreSQL.Simple as Pg
 import GHC.Generics hiding (prec)
 import Lens.Micro (over, (^.), _1, _2)
@@ -557,6 +556,30 @@ renderDataType = \case
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
   -- oid
   PgSpecificType PgOid -> "oid"
+  -- geometry
+  PgSpecificType PgPoint -> toS $ displaySyntax Pg.pgPointType
+  PgSpecificType PgLine -> toS $ displaySyntax Pg.pgLineType
+  PgSpecificType PgLineSegment -> toS $ displaySyntax Pg.pgLineSegmentType
+  PgSpecificType PgBox -> toS $ displaySyntax Pg.pgBoxType
+  PgSpecificType PgPath -> toS $ displaySyntax pgPathType
+  PgSpecificType PgPolygon -> toS $ displaySyntax pgPolygonType
+  PgSpecificType PgCircle -> toS $ displaySyntax pgCircleType
+ where
+  -- TODO(jrpotter): Verify this is the version we are on.
+  -- These data type syntaxes are not defined here:
+  -- https://hackage.haskell.org/package/beam-postgres-0.5.2.1/docs/src/Database.Beam.Postgres.Syntax.html#pgPointType
+  pgPathType = Pg.PgDataTypeSyntax
+    (Pg.PgDataTypeDescrOid (Pg.typoid Pg.path) Nothing)
+    (Pg.emit "PATH")
+    (Pg.pgDataTypeJSON "path")
+  pgPolygonType = Pg.PgDataTypeSyntax
+    (Pg.PgDataTypeDescrOid (Pg.typoid Pg.polygon) Nothing)
+    (Pg.emit "POLYGON")
+    (Pg.pgDataTypeJSON "polygon")
+  pgCircleType = Pg.PgDataTypeSyntax
+    (Pg.PgDataTypeDescrOid (Pg.typoid Pg.circle) Nothing)
+    (Pg.emit "CIRCLE")
+    (Pg.pgDataTypeJSON "circle")
 
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do

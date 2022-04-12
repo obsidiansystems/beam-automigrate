@@ -208,6 +208,7 @@ genPgSpecificType =
       -- , genRangeType (Proxy @Pg.PgRangeTs)   (Proxy @LocalTime)
       -- , genRangeType (Proxy @Pg.RangeDate)   (Proxy @Day)
       -- , PgEnumeration EnumerationName
+      -- TODO(jrpotter): Insert our other types.
     ]
 
 _genRangeType ::

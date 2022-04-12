@@ -353,8 +353,8 @@ pgTypeToColumnType oid width
     Just (SqlStdType $timestampType Nothing False)
   | Pg.typoid Pg.timestamptz == oid =
     Just (SqlStdType $ timestampType Nothing True)
+  -- json types
   | Pg.typoid Pg.json == oid =
-    -- json types
     Just (PgSpecificType PgJson)
   | Pg.typoid Pg.jsonb == oid =
     Just (PgSpecificType PgJsonB)
@@ -375,6 +375,21 @@ pgTypeToColumnType oid width
     Just (PgSpecificType PgUuid)
   | Pg.typoid Pg.oid == oid =
     Just (PgSpecificType PgOid)
+  -- geometry types
+  | Pg.typoid Pg.point == oid =
+    Just (PgSpecificType PgPoint)
+  | Pg.typoid Pg.line == oid =
+    Just (PgSpecificType PgLine)
+  | Pg.typoid Pg.lseg == oid =
+    Just (PgSpecificType PgLineSegment)
+  | Pg.typoid Pg.box == oid =
+    Just (PgSpecificType PgBox)
+  | Pg.typoid Pg.path == oid =
+    Just (PgSpecificType PgPath)
+  | Pg.typoid Pg.polygon == oid =
+    Just (PgSpecificType PgPolygon)
+  | Pg.typoid Pg.circle == oid =
+    Just (PgSpecificType PgCircle)
   | otherwise =
     Nothing
 

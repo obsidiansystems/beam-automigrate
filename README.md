@@ -36,7 +36,7 @@ If you're using [nix](https://nixos.org/nix), you can enter a shell with the
 appropriate dependencies with the following command:
 
 ```bash
-$ nix-shell release.nix -A env
+$ nix-shell --argstr ghc [ghc865|ghc884|ghc8102]
 ```
 
 From that nix-shell, you can run `cabal repl readme`.

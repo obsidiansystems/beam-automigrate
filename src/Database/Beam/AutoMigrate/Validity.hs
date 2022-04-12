@@ -237,7 +237,7 @@ lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
-lookupEnum (colName, col) =
+lookupEnum (_, col) =
   case columnType col of
     PgSpecificType (PgEnumeration eName) -> Just eName
     _ -> Nothing
