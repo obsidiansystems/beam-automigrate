@@ -18,6 +18,7 @@ import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Proxy
 import qualified Data.Set as S
+import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Annotated
 import Database.Beam.AutoMigrate.Compat
 import Database.Beam.AutoMigrate.Types
@@ -345,13 +346,12 @@ instance
   ) =>
   GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f)))
   where
-  gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
-    case cnames of
-      [] -> S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
-      ColumnName cname : _ ->
+  gTableConstraintsColumns db (TableName tname) (M1 (K1 e))
+    | null cnames = S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
+    | otherwise =
         S.singleton
           ( ForeignKey
-              (tname <> "_" <> cname <> "_fkey")
+              (T.intercalate "_" (tname : map columnName cnames) <> "_fkey")
               reftname
               (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
               NoAction -- TODO: what should the default be?
