@@ -160,7 +160,8 @@ mkTableEntryNoFkDiscovery ::
 mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
-      pks = S.singleton (PrimaryKey (tName <> "_pkey") (S.fromList $ pkFieldNames entity))
+      pkColSet = S.fromList $ pkFieldNames entity
+      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey (tName <> "_pkey") pkColSet)
       (columns, seqs) = gColumns (Proxy @ 'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
