@@ -149,8 +149,8 @@ foreignKeysQ =
     unlines
       [ "SELECT kcu.table_name::text as foreign_table,",
         "       rel_kcu.table_name::text as primary_table,",
-        "       array_agg(kcu.column_name::text)::text[] as fk_columns,",
-        "       array_agg(rel_kcu.column_name::text)::text[] as pk_columns,",
+        "       array_agg(kcu.column_name::text ORDER BY kcu.position_in_unique_constraint)::text[] as fk_columns,",
+        "       array_agg(rel_kcu.column_name::text ORDER BY rel_kcu.ordinal_position)::text[] as pk_columns,",
         "       kcu.constraint_name as cname",
         "FROM information_schema.table_constraints tco",
         "JOIN information_schema.key_column_usage kcu",
@@ -473,7 +473,8 @@ getAllConstraints conn = do
       let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
       case sqlCon_constraint_type of
         SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name columnSet)
-        SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
+        SQL_raw_pk -> if S.null columnSet then pure () else
+          addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
 
 newtype ReferenceActions = ReferenceActions {getActions :: Map Text Actions}
 

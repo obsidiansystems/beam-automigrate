@@ -176,17 +176,12 @@ validateTableConstraint s tName tbl c = case c of
 -- 'Enum' type which doesn't exist.
 validateColumn :: Schema -> TableName -> (ColumnName, Column) -> Either [ValidationFailed] ()
 validateColumn s tName (colName, col) =
-  when (isPgEnum $ columnType col) $
-    forM_ (M.keys $ schemaEnumerations s) $ \eName ->
-      case getAlt $ lookupEnumRef eName (colName, col) of
-        Nothing ->
-          let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
-           in Left [InvalidColumn (Qualified tName colName) reason]
-        Just _ -> Right ()
-  where
-    isPgEnum :: ColumnType -> Bool
-    isPgEnum (PgSpecificType (PgEnumeration _)) = True
-    isPgEnum _ = False
+  case lookupEnum (colName, col) of
+    Nothing -> Right ()
+    Just eName | eName `elem` M.keys (schemaEnumerations s) -> Right ()
+    Just eName ->
+      let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
+       in Left [InvalidColumn (Qualified tName colName) reason]
 
 -- | A 'Schema' enum is considered always valid in this context /except/ if it contains duplicate values.
 validateSchemaEnums :: Schema -> Either [ValidationFailed] ()
@@ -242,11 +237,17 @@ lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName
       Unique _ _ -> Nothing
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
+lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
+lookupEnum (colName, col) =
+  case columnType col of
+    PgSpecificType (PgEnumeration eName) -> Just eName
+    _ -> Nothing
+
+-- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnumRef :: EnumerationName -> (ColumnName, Column) -> Alt Maybe ColumnName
 lookupEnumRef eName (colName, col) = Alt $
   case columnType col of
-    PgSpecificType (PgEnumeration eName') ->
-      if eName' == eName then Just colName else Nothing
+    PgSpecificType (PgEnumeration eName') | eName == eName' -> Just colName
     _ -> Nothing
 
 -- | Removing an 'Enum' is valid if none of the 'Schema's tables have columns of this type.

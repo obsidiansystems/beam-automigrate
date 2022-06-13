@@ -28,6 +28,7 @@ module Database.Beam.AutoMigrate
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
     tryRunMigrationsWithEditUpdate,
+    calcMigrationSteps,
 
     -- * Creating a migration from a Diff
     createMigration,
@@ -715,3 +716,27 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
             error $ "Database migration error: " <> displayException e
           Right _ ->
             pure ()
+
+-- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
+-- database schema to the given one, without actually performing the migration.
+calcMigrationSteps
+  :: ( Generic (db (DatabaseEntity be db))
+     , (Generic (db (AnnotatedDatabaseEntity be db)))
+     , Database be db
+     , (GZipDatabase be
+         (AnnotatedDatabaseEntity be db)
+         (AnnotatedDatabaseEntity be db)
+         (DatabaseEntity be db)
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (DatabaseEntity be db)))
+       )
+     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+     )
+  => AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO Diff
+calcMigrationSteps annotatedDb conn = do
+    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    actualDatabaseSchema <- getSchema conn
+    pure $ diff expectedHaskellSchema actualDatabaseSchema
