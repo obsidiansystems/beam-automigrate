@@ -3,6 +3,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+
+
+{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Database.Beam.AutoMigrate.Postgres
@@ -17,7 +22,6 @@ import Data.Foldable (asum, foldlM)
 import Data.Map (Map)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
-import Data.Set (Set)
 import qualified Data.Set as S
 import Data.String
 import Data.Text (Text)
@@ -33,6 +37,8 @@ import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import qualified Database.PostgreSQL.Simple.TypeInfo.Static as Pg
 import qualified Database.PostgreSQL.Simple.Types as Pg
 
+import Database.Beam.AutoMigrate.Parser (parseDefaultExpr)
+
 --
 -- Necessary types to make working with the underlying raw SQL a bit more pleasant
 --
@@ -43,7 +49,7 @@ data SqlRawOtherConstraintType
   deriving (Show, Eq)
 
 data SqlOtherConstraint = SqlOtherConstraint
-  { sqlCon_name :: Text,
+  { sqlCon_name :: ConstraintName,
     sqlCon_constraint_type :: SqlRawOtherConstraintType,
     sqlCon_table :: TableName,
     sqlCon_fk_colums :: V.Vector ColumnName
@@ -52,29 +58,34 @@ data SqlOtherConstraint = SqlOtherConstraint
 
 instance Pg.FromRow SqlOtherConstraint where
   fromRow =
-    SqlOtherConstraint <$> field
+    SqlOtherConstraint <$> fmap ConstraintName field
       <*> field
       <*> fmap TableName field
       <*> fmap (V.map ColumnName) field
 
 data SqlForeignConstraint = SqlForeignConstraint
-  { sqlFk_foreign_table :: TableName,
-    sqlFk_primary_table :: TableName,
-    -- | The columns in the /foreign/ table.
-    sqlFk_fk_columns :: V.Vector ColumnName,
-    -- | The columns in the /current/ table.
-    sqlFk_pk_columns :: V.Vector ColumnName,
-    sqlFk_name :: Text
+  { sqlFk_constraint_name :: ConstraintName,
+    sqlFk_self_schema :: Text,
+    -- | the table that has the foreign key constraint on it.
+    sqlFk_self_table :: TableName,
+    sqlFk_self_columns :: V.Vector ColumnName,
+    sqlFk_foreign_schema :: Text,
+    -- | the table mentioned after the REFERENCES kewyord in the foregn key constraintj
+    sqlFk_foreign_table :: TableName,
+    sqlFk_foreign_columns :: V.Vector ColumnName
   }
   deriving (Show, Eq)
 
 instance Pg.FromRow SqlForeignConstraint where
   fromRow =
-    SqlForeignConstraint <$> fmap TableName field
+    SqlForeignConstraint
+      <$> fmap ConstraintName field
+      <*> field
       <*> fmap TableName field
       <*> fmap (V.map ColumnName) field
-      <*> fmap (V.map ColumnName) field
       <*> field
+      <*> fmap TableName field
+      <*> fmap (V.map ColumnName) field
 
 instance FromField TableName where
   fromField f dat = TableName <$> fromField f dat
@@ -140,30 +151,55 @@ enumerationsQ =
 
 -- | Get the sequence data for all sequence types in the database.
 sequencesQ :: Pg.Query
-sequencesQ = fromString "SELECT c.relname FROM pg_class c WHERE c.relkind = 'S'"
+sequencesQ = fromString $ unlines
+  [ "SELECT"
+  , "  seqclass.relname,"
+  , "  subselect.table_name,"
+  , "  subselect.column_name"
+  , "FROM pg_class AS seqclass"
+  , "LEFT OUTER JOIN ("
+  , "  SELECT"
+  , "    depclass.relname AS table_name,"
+  , "    attrib.attname   AS column_name,"
+  , "    dep.objid AS dep_objid"
+  , "  FROM pg_depend AS dep"
+  , "  JOIN pg_class AS depclass"
+  , "    ON ( dep.refobjid = depclass.relfilenode )"
+  , "  JOIN pg_attribute AS attrib"
+  , "    ON ( attrib.attnum = dep.refobjsubid"
+  , "    AND attrib.attrelid = dep.refobjid )"
+  , "  ) AS subselect"
+  , "  ON ( seqclass.relfilenode = subselect.dep_objid )"
+  , "WHERE  seqclass.relkind = 'S'"
+  ]
+
 
 -- | Return all foreign key constraints for /all/ 'Table's.
+-- SEE: https://dba.stackexchange.com/a/218969
 foreignKeysQ :: Pg.Query
 foreignKeysQ =
   fromString $
     unlines
-      [ "SELECT kcu.table_name::text as foreign_table,",
-        "       rel_kcu.table_name::text as primary_table,",
-        "       array_agg(kcu.column_name::text)::text[] as fk_columns,",
-        "       array_agg(rel_kcu.column_name::text)::text[] as pk_columns,",
-        "       kcu.constraint_name as cname",
-        "FROM information_schema.table_constraints tco",
-        "JOIN information_schema.key_column_usage kcu",
-        "          on tco.constraint_schema = kcu.constraint_schema",
-        "          and tco.constraint_name = kcu.constraint_name",
-        "JOIN information_schema.referential_constraints rco",
-        "          on tco.constraint_schema = rco.constraint_schema",
-        "          and tco.constraint_name = rco.constraint_name",
-        "JOIN information_schema.key_column_usage rel_kcu",
-        "          on rco.unique_constraint_schema = rel_kcu.constraint_schema",
-        "          and rco.unique_constraint_name = rel_kcu.constraint_name",
-        "          and kcu.ordinal_position = rel_kcu.ordinal_position",
-        "GROUP BY foreign_table, primary_table, cname"
+      [ "SELECT c.conname                                 AS constraint_name,",
+        -- "   c.contype                                     AS constraint_type,",
+        "   sch.nspname                                   AS self_schema,",
+        "   tbl.relname                                   AS self_table,",
+        "   ARRAY_AGG(col.attname ORDER BY u.attposition) AS self_columns,",
+        "   f_sch.nspname                                 AS foreign_schema,",
+        "   f_tbl.relname                                 AS foreign_table,",
+        "   ARRAY_AGG(f_col.attname ORDER BY f_u.attposition) AS foreign_columns",
+        "FROM pg_constraint c",
+        "       LEFT JOIN LATERAL UNNEST(c.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE",
+        "       LEFT JOIN LATERAL UNNEST(c.confkey) WITH ORDINALITY AS f_u(attnum, attposition) ON f_u.attposition = u.attposition",
+        "       JOIN pg_class tbl ON tbl.oid = c.conrelid",
+        "       JOIN pg_namespace sch ON sch.oid = tbl.relnamespace",
+        "       LEFT JOIN pg_attribute col ON (col.attrelid = tbl.oid AND col.attnum = u.attnum)",
+        "       LEFT JOIN pg_class f_tbl ON f_tbl.oid = c.confrelid",
+        "       LEFT JOIN pg_namespace f_sch ON f_sch.oid = f_tbl.relnamespace",
+        "       LEFT JOIN pg_attribute f_col ON (f_col.attrelid = f_tbl.oid AND f_col.attnum = f_u.attnum)",
+        "WHERE c.contype = 'f'",
+        "GROUP BY constraint_name, c.contype, self_schema, self_table, foreign_schema, foreign_table",
+        "ORDER BY self_schema, self_table"
       ]
 
 -- | Return /all other constraints that are not FKs/ (i.e. 'PRIMARY KEY', 'UNIQUE', etc) for all the tables.
@@ -222,13 +258,11 @@ getSchema conn = do
 
     getSequence ::
       Sequences ->
-      Pg.Only Text ->
+      (Text, Maybe Text, Maybe Text) ->
       IO Sequences
-    getSequence allSeqs (Pg.Only seqName) =
-      case T.splitOn "___" seqName of
-        [tName, cName, "seq"] ->
-          pure $ M.insert (SequenceName seqName) (Sequence (TableName tName) (ColumnName cName)) allSeqs
-        _ -> pure allSeqs
+    getSequence allSeqs (seqName, tNames, cNames) = do
+      let seqOwner = Sequence <$> fmap TableName tNames <*> fmap ColumnName cNames
+      pure $ M.insert (SequenceName seqName) seqOwner allSeqs
 
     getTable ::
       AllDefaults ->
@@ -270,14 +304,13 @@ getSchema conn = do
             M.lookup columnName x
 
       case asum
-        [ pgSerialTyColumnType atttypid mbDefault,
+        [ -- pgSerialTyColumnType atttypid mbDefault,
           pgTypeToColumnType atttypid mbPrecision,
           pgEnumTypeToColumnType enumData atttypid
         ] of
         Just cType -> do
-          let nullConstraint = if attnotnull then S.fromList [NotNull] else mempty
-          let inferredConstraints = nullConstraint <> fromMaybe mempty (S.singleton <$> mbDefault)
-          let newColumn = Column cType inferredConstraints
+          let nullConstraint = if attnotnull then NotNull else Null
+          let newColumn = Column cType $ ColumnConstraints nullConstraint mbDefault
           pure $ M.insert columnName newColumn c
         Nothing ->
           fail $
@@ -298,14 +331,15 @@ pgEnumTypeToColumnType ::
 pgEnumTypeToColumnType enumData oid =
   (\(n, _) -> PgSpecificType (PgEnumeration n)) <$> M.lookup oid enumData
 
-pgSerialTyColumnType ::
-  Pg.Oid ->
-  Maybe ColumnConstraint ->
-  Maybe ColumnType
-pgSerialTyColumnType oid (Just (Default d)) = do
-  guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
-  pure $ SqlStdType intType
-pgSerialTyColumnType _ _ = Nothing
+-- XXX: I don't understand how this comes to a different answer to pgTypeToColumnType
+-- pgSerialTyColumnType ::
+--   Pg.Oid ->
+--   Maybe ColumnConstraint ->
+--   Maybe ColumnType
+-- pgSerialTyColumnType oid (Just (Default d)) = do
+--   guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
+--   pure $ SqlStdType intType
+-- pgSerialTyColumnType _ _ = Nothing
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).
@@ -380,11 +414,11 @@ pgTypeToColumnType oid width
 -- Constraints discovery
 --
 
-type AllTableConstraints = Map TableName (Set TableConstraint)
+type AllTableConstraints = Map TableName TableConstraints
 
 type AllDefaults = Map TableName Defaults
 
-type Defaults = Map ColumnName ColumnConstraint
+type Defaults = Map ColumnName DefaultConstraint
 
 -- Get all defaults values for /all/ the columns.
 -- FIXME(adn) __IMPORTANT:__ This function currently __always_ attach an explicit type annotation to the
@@ -427,13 +461,9 @@ getAllDefaults :: Pg.Connection -> IO AllDefaults
 getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
   where
     addDefault :: AllDefaults -> (TableName, ColumnName, Text, Text) -> AllDefaults
-    addDefault m (tName, colName, defValue, dataType) =
-      let cleanedDefault = case T.breakOn "::" defValue of
-            (uncasted, defMb)
-              | T.null defMb ->
-                "'" <> T.dropAround ((==) '\'') uncasted <> "'::" <> dataType
-            _ -> defValue
-          entry = M.singleton colName (Default cleanedDefault)
+    addDefault m (tName, colName, defValue, _dataType) =
+      let cleanedDefault = parseDefaultExpr defValue
+          entry = M.singleton colName cleanedDefault
        in M.alter
             ( \case
                 Nothing -> Just entry
@@ -454,13 +484,14 @@ getAllConstraints conn = do
       SqlForeignConstraint ->
       AllTableConstraints
     addFkConstraint actions st SqlForeignConstraint {..} = flip execState st $ do
-      let currentTable = sqlFk_foreign_table
-      let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
+      let columnSet = S.fromList $ zip (V.toList sqlFk_self_columns) (V.toList sqlFk_foreign_columns)
       let (onDelete, onUpdate) =
-            case M.lookup sqlFk_name (getActions actions) of
+            case M.lookup sqlFk_constraint_name (getActions actions) of
               Nothing -> (NoAction, NoAction)
               Just a -> (actionOnDelete a, actionOnUpdate a)
-      addTableConstraint currentTable (ForeignKey sqlFk_name sqlFk_primary_table columnSet onDelete onUpdate)
+      addFKConstraint (sqlFk_self_table)
+        (ForeignKey sqlFk_foreign_table columnSet)
+        (ForeignKeyConstraintOptions (Just sqlFk_constraint_name) onDelete onUpdate)
 
     addOtherConstraint ::
       AllTableConstraints ->
@@ -470,12 +501,12 @@ getAllConstraints conn = do
       let currentTable = sqlCon_table
       let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
       case sqlCon_constraint_type of
-        SQL_raw_unique -> addTableConstraint currentTable (Unique sqlCon_name columnSet)
-        SQL_raw_pk -> addTableConstraint currentTable (PrimaryKey sqlCon_name columnSet)
+        SQL_raw_unique -> addUniqConstraint currentTable (Unique columnSet) (UniqueConstraintOptions (Just sqlCon_name))
+        SQL_raw_pk -> addPKConstraint currentTable (PrimaryKey columnSet) (UniqueConstraintOptions (Just sqlCon_name))
 
-newtype ReferenceActions = ReferenceActions {getActions :: Map Text Actions}
+newtype ReferenceActions = ReferenceActions {getActions :: Map ConstraintName Actions}
 
-newtype RefEntry = RefEntry {unRefEntry :: (Text, ReferenceAction, ReferenceAction)}
+newtype RefEntry = RefEntry {unRefEntry :: (ConstraintName, ReferenceAction, ReferenceAction)}
 
 mkActions :: [RefEntry] -> ReferenceActions
 mkActions = ReferenceActions . M.fromList . map ((\(a, b, c) -> (a, Actions b c)) . unRefEntry)
@@ -484,7 +515,7 @@ instance Pg.FromRow RefEntry where
   fromRow =
     fmap
       RefEntry
-      ( (,,) <$> field
+      ( (,,) <$> fmap ConstraintName field
           <*> fmap mkAction field
           <*> fmap mkAction field
       )
@@ -507,16 +538,22 @@ mkAction c = case c of
 -- Useful combinators to add constraints for a column or table if already there.
 --
 
+
+
+addFKConstraint :: TableName -> ForeignKey -> ForeignKeyConstraintOptions -> State AllTableConstraints ()
+addFKConstraint tName cns cnso = addTableConstraint tName $ noTableConstraints
+  { foreignKeyConstraints = M.singleton cns cnso }
+
+addUniqConstraint :: TableName -> Unique -> UniqueConstraintOptions -> State AllTableConstraints ()
+addUniqConstraint tName cns cnso = addTableConstraint tName $ noTableConstraints
+  { uniqueConstraints = M.singleton cns cnso }
+
+addPKConstraint :: TableName -> PrimaryKeyConstraint -> UniqueConstraintOptions -> State AllTableConstraints ()
+addPKConstraint tName cns cnso = addTableConstraint tName $ noTableConstraints
+  { primaryKeyConstraint = Just (cns, cnso) }
+
 addTableConstraint ::
   TableName ->
-  TableConstraint ->
+  TableConstraints ->
   State AllTableConstraints ()
-addTableConstraint tName cns =
-  modify'
-    ( M.alter
-        ( \case
-            Nothing -> Just $ S.singleton cns
-            Just ss -> Just $ S.insert cns ss
-        )
-        tName
-    )
+addTableConstraint tName cns = modify' $ M.unionWith (<>) (M.singleton tName cns)

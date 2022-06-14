@@ -3,6 +3,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 -- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
 --     without the extra complication of importing and using the library itself.
 module Database.Beam.AutoMigrate.Compat where
@@ -12,8 +14,6 @@ import Data.ByteString (ByteString)
 import Data.Int
 import qualified Data.Map.Strict as M
 import Data.Scientific (Scientific)
-import Data.Set (Set)
-import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (LocalTime, TimeOfDay, UTCTime)
@@ -23,7 +23,7 @@ import Data.UUID
 import Data.Word
 import qualified Database.Beam as Beam
 import Database.Beam.AutoMigrate.Types
-import qualified Database.Beam.AutoMigrate.Util as Util
+-- import qualified Database.Beam.AutoMigrate.Util as Util
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.Beam.Postgres as Pg
@@ -43,17 +43,16 @@ class HasColumnType ty where
   defaultEnums :: Proxy ty -> Enumerations
   defaultEnums _ = mempty
 
-class Ord (SchemaConstraint ty) => HasSchemaConstraints ty where
+class HasSchemaConstraints ty where
   -- | Provide arbitrary constraints on a field of the requested type.
-  schemaConstraints :: Proxy ty -> Set (SchemaConstraint ty)
-  schemaConstraints _ = mempty
+  schemaConstraints :: Proxy ty -> SchemaConstraint ty
 
-class Ord (SchemaConstraint ty) => HasSchemaConstraints' (nullary :: Bool) ty where
-  schemaConstraints' :: Proxy nullary -> Proxy ty -> Set (SchemaConstraint ty)
+class HasSchemaConstraints' (nullary :: Bool) ty where
+  schemaConstraints' :: Proxy nullary -> Proxy ty -> SchemaConstraint ty
 
 type family SchemaConstraint (k :: *) where
-  SchemaConstraint (Beam.TableEntity e) = TableConstraint
-  SchemaConstraint (Beam.TableField e t) = ColumnConstraint
+  SchemaConstraint (Beam.TableEntity e) = TableConstraints
+  SchemaConstraint (Beam.TableField e t) = ColumnConstraints
 
 type family IsMaybe (k :: *) :: Bool where
   IsMaybe (Maybe x) = 'True
@@ -63,24 +62,24 @@ type family IsMaybe (k :: *) :: Bool where
 
 -- Default /table-level/ constraints.
 instance HasSchemaConstraints' 'True (Beam.TableEntity tbl) where
-  schemaConstraints' Proxy Proxy = mempty
+  schemaConstraints' Proxy Proxy = noTableConstraints
 
 instance HasSchemaConstraints' 'False (Beam.TableEntity tbl) where
-  schemaConstraints' Proxy Proxy = mempty
+  schemaConstraints' Proxy Proxy = noTableConstraints
 
 -- Default /field-level/ constraints.
 
 instance HasSchemaConstraints' 'True (Beam.TableField e (Beam.TableField e t)) where
-  schemaConstraints' Proxy Proxy = mempty
+  schemaConstraints' Proxy Proxy = noColumnConstraints
 
 instance HasSchemaConstraints' 'False (Beam.TableField e (Beam.TableField e t)) where
-  schemaConstraints' Proxy Proxy = S.singleton NotNull
+  schemaConstraints' Proxy Proxy = noColumnConstraints { columnNullable = NotNull }
 
 instance HasSchemaConstraints' 'True (Beam.TableField e (Maybe t)) where
-  schemaConstraints' Proxy Proxy = mempty
+  schemaConstraints' Proxy Proxy = noColumnConstraints
 
 instance HasSchemaConstraints' 'False (Beam.TableField e t) where
-  schemaConstraints' Proxy Proxy = S.singleton NotNull
+  schemaConstraints' Proxy Proxy = noColumnConstraints { columnNullable = NotNull }
 
 instance
   ( IsMaybe a ~ nullary,
@@ -104,14 +103,14 @@ class HasCompanionSequence' (generatesSeq :: Bool) ty where
     Proxy ty ->
     TableName ->
     ColumnName ->
-    Maybe ((SequenceName, Sequence), ColumnConstraint)
+    Maybe ((Maybe SequenceName, Sequence), DefaultConstraint)
 
 class HasCompanionSequence ty where
   hasCompanionSequence ::
     Proxy ty ->
     TableName ->
     ColumnName ->
-    Maybe ((SequenceName, Sequence), ColumnConstraint)
+    Maybe ((Maybe SequenceName, Sequence), DefaultConstraint)
 
 instance
   ( GeneratesSqlSequence ty ~ genSeq,
@@ -250,6 +249,7 @@ instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
 -- CREATE TABLE tablename (
 --     colname integer DEFAULT nextval('tablename_colname_seq') NOT NULL
 -- );
+-- ALTER SEQUENCE tablename_colname_seq OWNED BY tablename.colname;
 --
 -- Historically this was treated as a richer type (i.e. a 'PgSpecificType PgSerial') which had the advantage
 -- of being able, for example, to track down when a column type changed so that we were able to drop the
@@ -264,11 +264,8 @@ instance (Integral ty, HasColumnType ty) => HasColumnType (SqlSerial ty) where
 
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname =
-    let s@(SequenceName sname) = mkSeqName
-     in Just ((s, Sequence tName cname), Default ("nextval('" <> Util.sqlEscaped sname <> "'::regclass)"))
-    where
-      mkSeqName :: SequenceName
-      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
+    let s = Nothing
+     in Just ((s, Sequence tName cname), Autoincrement s)
 
 --
 -- support for enum types

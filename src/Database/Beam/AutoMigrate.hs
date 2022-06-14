@@ -9,6 +9,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 -- | This module provides the high-level API to migrate a database.
 module Database.Beam.AutoMigrate
   ( -- * Annotating a database
@@ -59,7 +61,6 @@ where
 
 import Control.Exception
 import Control.Monad.Except
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
 import Data.Bifunctor (first)
@@ -75,7 +76,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as LT
-import Database.Beam (MonadBeam)
 import Database.Beam.AutoMigrate.Annotated as Exports
 import Database.Beam.AutoMigrate.Compat as Exports
 import Database.Beam.AutoMigrate.Diff as Exports
@@ -92,7 +92,7 @@ import Database.Beam.Schema (Database, DatabaseSettings)
 import Database.Beam.Schema.Tables (DatabaseEntity (..))
 import qualified Database.PostgreSQL.Simple as Pg
 import GHC.Generics hiding (prec)
-import Lens.Micro (over, (^.), _1, _2)
+import Control.Lens (over, (^.), _1, _2)
 import qualified Text.Pretty.Simple as PS
 
 -- $annotatingDbSettings
@@ -338,17 +338,30 @@ toSqlSyntax e =
         ddlSyntax
           ( "CREATE TABLE " <> sqlEscaped (tableName tblName)
               <> " ("
-              <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)))
+              <> T.intercalate ", " (map renderTableAddedColumn (M.toList (tableColumns tbl)))
               <> ")"
           )
       TableRemoved tblName ->
         ddlSyntax ("DROP TABLE " <> sqlEscaped (tableName tblName))
-      TableConstraintAdded tblName cstr ->
-        updateSyntax (alterTable tblName <> renderAddConstraint cstr)
+      PrimaryKeyAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreatePrimaryKeyConstraint cstr copt)
+      UniqueConstraintAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreateUniqueConstraint cstr copt)
+      ForeignKeyAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreateForeignKeyConstraint cstr copt)
+
+      RenameConstraint tblName (ConstraintName oldName) (ConstraintName newName) ->
+        updateSyntax (alterTable tblName
+          <> " RENAME CONSTRAINT "
+          <> sqlEscaped oldName
+          <> " TO "
+          <> sqlEscaped newName)
       TableConstraintRemoved tblName cstr ->
         updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-      SequenceAdded sName (Sequence _tName _cName) -> createSequenceSyntax sName
+      SequenceAdded sName s -> createSequenceSyntax sName s
       SequenceRemoved sName -> dropSequenceSyntax sName
+      SequenceRenamed oldName newName -> renameSequenceSyntax oldName newName
+      SequenceSetOwner sName newOwner -> setSequenceOwnerSyntax sName newOwner
       EnumTypeAdded tyName vals -> createTypeSyntax tyName vals
       EnumTypeRemoved (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
       EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
@@ -367,9 +380,10 @@ toSqlSyntax e =
               <> "ADD COLUMN "
               <> sqlEscaped (columnName colName)
               <> " "
-              <> renderDataType (columnType col)
-              <> " "
-              <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
+              <> renderDataTypeAdd col
+              -- <> " "
+              -- <> renderAddColumnConstraint col
+              -- <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
           )
       ColumnRemoved tblName colName ->
         updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
@@ -380,19 +394,21 @@ toSqlSyntax e =
               <> " TYPE "
               <> renderDataType new
           )
-      ColumnConstraintAdded tblName colName cstr ->
+      ColumnNullableChanged tblName colName nullConstr -> 
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
-              <> sqlEscaped (columnName colName)
-              <> " SET "
-              <> renderColumnConstraint SetConstraint cstr
+            <> sqlEscaped (columnName colName)
+            <> case nullConstr of
+              Null -> " DROP NOT NULL"
+              NotNull -> " SET NOT NULL"
           )
-      ColumnConstraintRemoved tblName colName cstr ->
+      ColumnDefaultChanged _ tblName colName dfltConst -> 
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
-              <> sqlEscaped (columnName colName)
-              <> " DROP "
-              <> renderColumnConstraint DropConstraint cstr
+            <> sqlEscaped (columnName colName)
+            <> case dfltConst of
+              Nothing -> " DROP DEFAULT"
+              Just d -> " SET " <> renderColumnDefault d
           )
   where
     safetyPrefix query =
@@ -406,35 +422,36 @@ toSqlSyntax e =
     alterTable :: TableName -> Text
     alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " "
 
-    renderTableColumn :: (ColumnName, Column) -> Text
-    renderTableColumn (colName, col) =
+    renderTableAddedColumn :: (ColumnName, Column) -> Text
+    renderTableAddedColumn (colName, col) =
       sqlEscaped (columnName colName) <> " "
-        <> renderDataType (columnType col)
-        <> " "
-        <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
+        <> renderDataTypeAdd col
+        -- <> " "
+        -- <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
 
     renderInsertionOrder :: InsertionOrder -> Text
     renderInsertionOrder Before = "BEFORE"
     renderInsertionOrder After = "AFTER"
 
-    renderCreateTableConstraint :: TableConstraint -> Text
-    renderCreateTableConstraint = \case
-      Unique fname cols ->
-        conKeyword <> sqlEscaped fname
+    renderCreateUniqueConstraint :: Unique -> UniqueConstraintOptions -> Text
+    renderCreateUniqueConstraint (Unique cols) (UniqueConstraintOptions fname) =
+        conKeyword fname
           <> " UNIQUE ("
           <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
           <> ")"
-      PrimaryKey fname cols ->
-        conKeyword <> sqlEscaped fname
+    renderCreatePrimaryKeyConstraint :: PrimaryKeyConstraint -> UniqueConstraintOptions -> Text
+    renderCreatePrimaryKeyConstraint (PrimaryKey cols) (UniqueConstraintOptions fname) =
+        conKeyword fname
           <> " PRIMARY KEY ("
           <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
           <> ")"
-      ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
+    renderCreateForeignKeyConstraint :: ForeignKey -> ForeignKeyConstraintOptions -> Text
+    renderCreateForeignKeyConstraint (ForeignKey (tableName -> tName) (S.toList -> colPair)) constr  =
         let (fkCols, referenced) =
               ( map (sqlEscaped . columnName . fst) colPair,
                 map (sqlEscaped . columnName . snd) colPair
               )
-         in conKeyword <> sqlEscaped fname
+         in conKeyword (foreignKeyConstraintName constr)
               <> " FOREIGN KEY ("
               <> T.intercalate ", " fkCols
               <> ") REFERENCES "
@@ -442,21 +459,18 @@ toSqlSyntax e =
               <> "("
               <> T.intercalate ", " referenced
               <> ")"
-              <> renderAction "ON DELETE" onDelete
-              <> renderAction "ON UPDATE" onUpdate
-      where
-        conKeyword = "CONSTRAINT "
+              <> renderAction "ON DELETE" (onDelete constr)
+              <> renderAction "ON UPDATE" (onUpdate constr)
 
-    renderAddConstraint :: TableConstraint -> Text
-    renderAddConstraint = mappend "ADD " . renderCreateTableConstraint
+    conKeyword = \case
+      Nothing -> ""
+      Just (ConstraintName fname) -> "CONSTRAINT " <> sqlEscaped fname
 
-    renderDropConstraint :: TableConstraint -> Text
-    renderDropConstraint tc = case tc of
-      Unique cName _ -> dropC cName
-      PrimaryKey cName _ -> dropC cName
-      ForeignKey cName _ _ _ _ -> dropC cName
-      where
-        dropC = mappend "DROP CONSTRAINT " . sqlEscaped
+    -- renderAddConstraint :: TableConstraint -> Text
+    -- renderAddConstraint = mappend "ADD " . renderCreateTableConstraint
+
+    renderDropConstraint :: ConstraintName -> Text
+    renderDropConstraint = mappend "DROP CONSTRAINT " . sqlEscaped . unConsraintName
 
     renderAction actionPrefix = \case
       NoAction -> mempty
@@ -465,11 +479,15 @@ toSqlSyntax e =
       SetNull -> " " <> actionPrefix <> " " <> "SET NULL "
       SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
 
-    renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
-    renderColumnConstraint act = \case
-      NotNull -> "NOT NULL"
-      Default defValue | act == SetConstraint -> "DEFAULT " <> defValue
-      Default _ -> "DEFAULT"
+    -- renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
+    -- renderColumnConstraint act = \case
+    --   NotNull -> "NOT NULL"
+    --   Default (Autoincrement Nothing) -> "" -- Don't render the default, use "serial/bigserial" as tye type instead
+    --   Default defValue | act == SetConstraint -> "DEFAULT " <> case defValue of
+    --     DefaultExpr defValueExpr -> defValueExpr
+    --     Autoincrement x -> flip foldMap x $ \(SequenceName sName) ->
+    --       "nextval(" <> sqlSingleQuoted sName <> "::regclass)"
+    --   Default _ -> "DEFAULT"
 
     createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
     createTypeSyntax (EnumerationName ty) (Enumeration vals) =
@@ -477,8 +495,30 @@ toSqlSyntax e =
         toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
-    createSequenceSyntax :: SequenceName -> Pg.PgSyntax
-    createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> sqlEscaped s <> ";\n"
+    createSequenceSyntax :: SequenceName -> Maybe Sequence -> Pg.PgSyntax
+    createSequenceSyntax (SequenceName sName) sOwner = Pg.emit $ toS
+      $ "CREATE SEQUENCE " <> sqlEscaped sName
+      <> sequenceOwnerSyntax sOwner
+      <> ";\n"
+
+    renameSequenceSyntax :: SequenceName -> SequenceName -> Pg.PgSyntax
+    renameSequenceSyntax (SequenceName sName) (SequenceName sName') = Pg.emit $ toS
+      $ "ALTER SEQUENCE " <> sqlEscaped sName
+      <> "RENAME TO " <> sqlEscaped sName'
+      <> ";\n"
+
+    setSequenceOwnerSyntax :: SequenceName -> Maybe Sequence -> Pg.PgSyntax
+    setSequenceOwnerSyntax (SequenceName sName) sOwner = Pg.emit $ toS
+      $ "ALTER SEQUENCE " <> sqlEscaped sName
+      <> sequenceOwnerSyntax sOwner
+      <> ";\n"
+
+
+    sequenceOwnerSyntax :: Maybe Sequence -> Text
+    sequenceOwnerSyntax sOwner = " OWNED BY " <> case sOwner of
+      Nothing -> " NONE "
+      Just (Sequence (tableName -> tName) (columnName -> cName)) ->
+        sqlEscaped tName <> "." <> sqlEscaped cName
 
     dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
     dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> sqlEscaped s <> ";\n"
@@ -532,6 +572,40 @@ renderStdType = \case
     wTz withTz tt prec =
       tt <> sqlOptPrec prec <> (if withTz then " WITH" else " WITHOUT") <> " TIME ZONE"
 
+-- -- as a special case, when adding a column, we can potentially specify SERIAL, and save some effort creating a name for a sequence and setting it's ownership up.k
+renderDataTypeAdd :: Column -> Text
+renderDataTypeAdd col =
+  let
+    autoIncrement = Just (Autoincrement Nothing) == columnDefault (columnConstraints col)
+    dataType = case (autoIncrement, (columnType col)) of
+      (False, cType) -> renderDataType cType
+      (True, SqlStdType AST.DataTypeInteger) -> " SERIAL "
+      (True, SqlStdType AST.DataTypeSmallInt) -> " SMALLSERIAL "
+      (True, SqlStdType AST.DataTypeBigInt) -> " BIGSERIAL "
+      (True, dtype) -> error $ "inferred illegal autoincrement column: " <> show dtype
+  in mconcat
+    [ dataType
+    , case columnNullable $ columnConstraints col of
+      NotNull -> " NOT NULL"
+      Null -> " "
+    , foldMap renderColumnDefault $ columnDefault $ columnConstraints col
+
+    ]
+
+-- | render the part of a columnconstraint that sets its' default.  This
+-- renders nothing if the sequence name is not known; and so should not be
+-- called if that's possible outside of a context that also adds the column as
+-- a SERIAL type.   It's up to the caller to prefix SET or DROP when needed.
+renderColumnDefault :: DefaultConstraint -> Text
+renderColumnDefault = \case
+  Autoincrement Nothing -> "" -- Don't render the default, use "serial/bigserial" as tye type instead
+  defValue -> "DEFAULT " <> case defValue of
+    DefaultExpr defValueExpr -> defValueExpr
+    Autoincrement x -> flip foldMap x $ \(SequenceName sName) ->
+      "nextval(" <> sqlSingleQuoted sName <> "::regclass)"
+
+
+-- 
 -- This function also overlaps with beam-migrate functionalities.
 renderDataType :: ColumnType -> Text
 renderDataType = \case
@@ -590,10 +664,16 @@ prettyEditActionDescription =
   T.unwords . \case
     TableAdded tblName table ->
       ["create table:", qt tblName, "\n", pshow' table]
+    RenameConstraint tblName oldConstraint newConstraint ->
+      ["constraint ", qn oldConstraint, " on table ", qt tblName," renamed to: ", qn newConstraint]
     TableRemoved tblName ->
       ["remove table:", qt tblName]
-    TableConstraintAdded tblName tableConstraint ->
-      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint]
+    PrimaryKeyAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
+    UniqueConstraintAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
+    ForeignKeyAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
     TableConstraintRemoved tblName tableConstraint ->
       ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
     ColumnAdded tblName colName column ->
@@ -610,22 +690,26 @@ prettyEditActionDescription =
         "\nto:",
         renderDataType newColumnType
       ]
-    ColumnConstraintAdded tblName colName columnConstraint ->
-      [ "add column constraint to:",
-        qc colName,
-        "in table:",
-        qt tblName,
-        "\n",
-        pshow' columnConstraint
-      ]
-    ColumnConstraintRemoved tblName colName columnConstraint ->
-      [ "remove column constraint from:",
-        qc colName,
-        "in table:",
-        qt tblName,
-        "\n",
-        pshow' columnConstraint
-      ]
+    ColumnNullableChanged tblName colName nullConstr ->
+      ["column:", qq tblName colName, " chanted to ", pshow' nullConstr]
+    ColumnDefaultChanged _ tblName colName dfltConstr ->
+      ["column:", qq tblName colName, " default changed to ", pshow' dfltConstr]
+    -- ColumnConstraintAdded tblName colName columnConstraint ->
+    --   [ "add column constraint to:",
+    --     qc colName,
+    --     "in table:",
+    --     qt tblName,
+    --     "\n",
+    --     pshow' columnConstraint
+    --   ]
+    -- ColumnConstraintRemoved tblName colName columnConstraint ->
+    --   [ "remove column constraint from:",
+    --     qc colName,
+    --     "in table:",
+    --     qt tblName,
+    --     "\n",
+    --     pshow' columnConstraint
+    --   ]
     EnumTypeAdded eName enumeration ->
       ["add enum type:", enumName eName, pshow' enumeration]
     EnumTypeRemoved eName ->
@@ -642,13 +726,19 @@ prettyEditActionDescription =
       ]
     SequenceAdded sequenceName sequence0 ->
       ["add sequence:", qs sequenceName, pshow' sequence0]
+    SequenceRenamed sequenceName sequence0 ->
+      ["renamed sequence:", qs sequenceName, " to:", qs sequence0]
     SequenceRemoved sequenceName ->
       ["remove sequence:", qs sequenceName]
+    SequenceSetOwner sequenceName sequence0 ->
+      ["alter sequence:", qs sequenceName, pshow' sequence0]
   where
     q t = "'" <> t <> "'"
     qt = q . tableName
     qc = q . columnName
     qs = q . seqName
+    qn = q . unConsraintName
+    qq t c = qt t <> "." <> qc c
 
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
@@ -657,25 +747,32 @@ prettyEditActionDescription =
 -- schema in Haskell and try to edit the existing schema as necessary
 tryRunMigrationsWithEditUpdate
   :: ( Generic (db (DatabaseEntity be db))
-     , (Generic (db (AnnotatedDatabaseEntity be db)))
+     , Generic (db (AnnotatedDatabaseEntity be db))
      , Database be db
-     , (GZipDatabase be
-         (AnnotatedDatabaseEntity be db)
-         (AnnotatedDatabaseEntity be db)
-         (DatabaseEntity be db)
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (DatabaseEntity be db)))
-       )
-     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
      )
   => AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate annotatedDb conn = do
+    -- putStrLn "tryRunMigrationsWithEditUpdate START"
+
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    -- putStrLn "tryRunMigrationsWithEditUpdate expectedHaskellSchema"
+    -- putStrLn $ show expectedHaskellSchema
+
     actualDatabaseSchema <- getSchema conn
-    case diff expectedHaskellSchema actualDatabaseSchema of
+    -- putStrLn "tryRunMigrationsWithEditUpdate actualDatabaseSchema"
+    -- putStrLn $ show actualDatabaseSchema
+
+    case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
       Left err -> do
         putStrLn "Error detecting database migration requirements: "
         print err
@@ -683,6 +780,7 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
+        -- forM_ edits (print . fst . unPriority)
         putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
 
         try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case

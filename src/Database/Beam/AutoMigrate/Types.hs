@@ -4,12 +4,17 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Database.Beam.AutoMigrate.Types where
 
 import Control.DeepSeq
+import Control.Applicative
 import Control.Exception
 import Data.ByteString.Lazy (ByteString)
+import Data.Default.Class (Default(..))
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
@@ -17,14 +22,17 @@ import Data.String
 import Data.String.Conv (toS)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Map as Map
 import Data.Typeable
 import Database.Beam.Backend.SQL (BeamSqlBackendSyntax)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import Database.Beam.Postgres (Pg, Postgres)
 import qualified Database.Beam.Postgres.Syntax as Syntax
 import GHC.Generics hiding (to)
-import Lens.Micro (Lens', lens, to, _Right)
-import Lens.Micro.Extras (preview)
+import Control.Lens (Lens', lens, to, _Right)
+import Control.Lens (preview, set)
+
+import Control.Lens.TH
 
 --
 -- Types (sketched)
@@ -63,7 +71,7 @@ instance NFData Enumeration
 -- Sequences
 --
 
-type Sequences = Map SequenceName Sequence
+type Sequences = Map SequenceName (Maybe Sequence)
 
 newtype SequenceName = SequenceName
   { seqName :: Text
@@ -85,11 +93,6 @@ instance NFData Sequence
 mkSequenceName :: TableName -> ColumnName -> SequenceName
 mkSequenceName tname cname = SequenceName (tableName tname <> "___" <> columnName cname <> "___seq")
 
-parseSequenceName :: SequenceName -> Maybe (TableName, ColumnName)
-parseSequenceName (SequenceName sName) = case T.splitOn "___" sName of
-  [tName, cName, "seq"] -> Just (TableName tName, ColumnName cName)
-  _ -> Nothing
-
 --
 -- Tables
 --
@@ -101,8 +104,22 @@ newtype TableName = TableName
   }
   deriving (Show, Eq, Ord, NFData, Generic)
 
+data TableConstraints = TableConstraints
+  { primaryKeyConstraint :: Maybe (PrimaryKeyConstraint, UniqueConstraintOptions)
+  , foreignKeyConstraints :: Map ForeignKey ForeignKeyConstraintOptions
+  , uniqueConstraints :: Map Unique UniqueConstraintOptions
+  } deriving (Eq, Show, Generic)
+
+instance Semigroup TableConstraints where
+  TableConstraints pk1 fk1 u1 <> TableConstraints pk2 fk2 u2 = TableConstraints
+    (pk1 <> pk2)
+    (Map.unionWith (<>) fk1 fk2)
+    (Map.unionWith (<>) u1 u2)
+
+instance NFData TableConstraints
+
 data Table = Table
-  { tableConstraints :: Set TableConstraint,
+  { tableConstraints :: TableConstraints,
     tableColumns :: Columns
   }
   deriving (Eq, Show, Generic)
@@ -119,15 +136,27 @@ newtype ColumnName = ColumnName
 instance IsString ColumnName where
   fromString = ColumnName . T.pack
 
+data NullableConstraint = Null | NotNull
+  deriving (Show, Eq, Generic)
+
+instance NFData NullableConstraint
+
+data ColumnConstraints = ColumnConstraints
+  { columnNullable :: NullableConstraint,
+    columnDefault :: Maybe DefaultConstraint
+  } deriving (Show, Eq, Generic)
+
+instance NFData ColumnConstraints
+
 data Column = Column
   { columnType :: ColumnType,
-    columnConstraints :: Set ColumnConstraint
+    columnConstraints :: ColumnConstraints
   }
   deriving (Show, Eq, Generic)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Column where
-  rnf c = rnf (columnConstraints c)
+  rnf c = columnConstraints c `deepseq` ()
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
@@ -168,32 +197,84 @@ newtype DbEnum a
   = DbEnum a
   deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
 
-instance Semigroup Table where
-  (Table c1 t1) <> (Table c2 t2) = Table (c1 <> c2) (t1 <> t2)
+newtype ConstraintName = ConstraintName { unConsraintName :: Text }
+  deriving (IsString, Eq, Ord, Show, NFData)
 
-instance Monoid Table where
-  mempty = Table mempty mempty
+data PrimaryKeyConstraint = PrimaryKey
+      -- | This set of 'Column's identifies the Table's 'PrimaryKey'.
+      (Set ColumnName)
+  deriving (Eq, Ord, Show, Generic)
 
-type ConstraintName = Text
 
-data TableConstraint
-  = -- | This set of 'Column's identifies the Table's 'PrimaryKey'.
-    PrimaryKey ConstraintName (Set ColumnName)
-  | -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
+instance Semigroup PrimaryKeyConstraint where
+  PrimaryKey c1 <> PrimaryKey c2 = PrimaryKey (c1 <> c2)
+
+instance NFData PrimaryKeyConstraint
+
+  -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
     -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
     -- The set stores a (fk_column, pk_column) correspondence.
-    ForeignKey ConstraintName TableName (Set (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
-  | Unique ConstraintName (Set ColumnName)
+data ForeignKey = ForeignKey
+  TableName
+  (Set (ColumnName, ColumnName))
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData ForeignKey
+
+data ForeignKeyConstraintOptions = ForeignKeyConstraintOptions
+  { foreignKeyConstraintName :: Maybe ConstraintName -- ^ The Maybe indicates not that the constraint might not have a name, but that we aren't obligated it to name it immediately.
+  , onDelete :: ReferenceAction {- onDelete -}
+  , onUpdate :: ReferenceAction {- onUpdate -}
+  }
+  deriving (Eq, Ord, Show, Generic)
+
+instance Default ForeignKeyConstraintOptions where
+  def = ForeignKeyConstraintOptions Nothing NoAction NoAction
+
+instance Semigroup ForeignKeyConstraintOptions where
+  ForeignKeyConstraintOptions n1 d1 u1 <> ForeignKeyConstraintOptions n2 d2 u2 = ForeignKeyConstraintOptions
+    (n1 <|> n2)
+    (const d1 d2)
+    (const u1 u2)
+
+instance NFData ForeignKeyConstraintOptions
+
+data Unique = Unique (Set ColumnName)
   deriving (Show, Eq, Ord, Generic)
 
-instance NFData TableConstraint
+instance NFData Unique
 
-data ColumnConstraint
-  = NotNull
-  | Default Text {- the actual default -}
+data UniqueConstraintOptions = UniqueConstraintOptions
+  { uniqueConstraintName :: Maybe ConstraintName -- ^ The Maybe indicates not that the constraint might not have a name, but that we aren't obligated it to name it immediately.
+  }
+  deriving (Eq, Ord, Show, Generic)
+
+-- | suitable default options which allows postgres to choose a constraint name
+instance Default UniqueConstraintOptions where
+  def = UniqueConstraintOptions Nothing
+
+instance Semigroup UniqueConstraintOptions where
+  UniqueConstraintOptions n1 <> UniqueConstraintOptions n2 = UniqueConstraintOptions
+    (n1 <|> n2)
+
+instance NFData UniqueConstraintOptions
+
+-- | we will treat default constraint expressions specially in the case that a column is associated with a sequence.
+--
+-- We only ever represent two kinds of sequence, either the sequence is owned by a column which has a default of nextval(sequence); or else the sequence is not owned, and must have a name.
+data DefaultConstraint
+  = DefaultExpr Text
+  | Autoincrement (Maybe SequenceName)
   deriving (Show, Eq, Ord, Generic)
 
-instance NFData ColumnConstraint
+instance NFData DefaultConstraint
+
+-- data ColumnConstraint
+--   = NotNull
+--   | Default DefaultConstraint {- the actual default -}
+--   deriving (Show, Eq, Ord, Generic)
+-- 
+-- instance NFData ColumnConstraint
 
 data ReferenceAction
   = NoAction
@@ -213,18 +294,31 @@ instance NFData ReferenceAction
 data EditAction
   = TableAdded TableName Table
   | TableRemoved TableName
-  | TableConstraintAdded TableName TableConstraint
-  | TableConstraintRemoved TableName TableConstraint
+
+
+  | PrimaryKeyAdded TableName PrimaryKeyConstraint UniqueConstraintOptions
+  | UniqueConstraintAdded TableName Unique UniqueConstraintOptions
+  | ForeignKeyAdded TableName ForeignKey ForeignKeyConstraintOptions
+
+  | TableConstraintRemoved TableName ConstraintName
+  | RenameConstraint TableName
+    ConstraintName {- old name -}
+    ConstraintName {- new name -}
+
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
-  | ColumnConstraintAdded TableName ColumnName ColumnConstraint
-  | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
+  | ColumnNullableChanged TableName ColumnName NullableConstraint {- is nullable -}
+  | ColumnDefaultChanged String TableName ColumnName (Maybe DefaultConstraint)
   | EnumTypeAdded EnumerationName Enumeration
   | EnumTypeRemoved EnumerationName
   | EnumTypeValueAdded EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
-  | SequenceAdded SequenceName Sequence
+  | SequenceAdded SequenceName (Maybe Sequence)
   | SequenceRemoved SequenceName
+  | SequenceRenamed
+    SequenceName {- old name -}
+    SequenceName {- new name -}
+  | SequenceSetOwner SequenceName (Maybe Sequence)
   deriving (Show, Eq)
 
 -- | Safety rating for a given edit.
@@ -238,15 +332,20 @@ data EditSafety
 
 defaultEditSafety :: EditAction -> EditSafety
 defaultEditSafety = \case
+  SequenceRenamed {} -> Safe
+  SequenceSetOwner {} -> Safe
   TableAdded {} -> Safe
   TableRemoved {} -> Unsafe
-  TableConstraintAdded {} -> Safe
+  PrimaryKeyAdded {} -> Safe
+  ForeignKeyAdded {} -> Safe
+  UniqueConstraintAdded {} -> Safe
   TableConstraintRemoved {} -> Safe
+  RenameConstraint {} -> Safe
   ColumnAdded {} -> Safe
   ColumnRemoved {} -> Unsafe
   ColumnTypeChanged {} -> Unsafe
-  ColumnConstraintAdded {} -> Safe
-  ColumnConstraintRemoved {} -> Safe
+  ColumnNullableChanged {} -> Safe
+  ColumnDefaultChanged {} -> Safe
   EnumTypeAdded {} -> Safe
   EnumTypeRemoved {} -> Unsafe
   EnumTypeValueAdded {} -> Safe
@@ -310,19 +409,24 @@ instance NFData InsertionOrder
 instance NFData EditAction where
   rnf (TableAdded tName tbl) = tName `deepseq` tbl `deepseq` ()
   rnf (TableRemoved tName) = rnf tName
-  rnf (TableConstraintAdded tName tCon) = tName `deepseq` tCon `deepseq` ()
-  rnf (TableConstraintRemoved tName tCon) = tName `deepseq` tCon `deepseq` ()
+  rnf (UniqueConstraintAdded tName tCon tOpts) = tName `deepseq` tCon `deepseq` tOpts `deepseq` ()
+  rnf (ForeignKeyAdded tName tCon tOpts) = tName `deepseq` tCon `deepseq` tOpts `deepseq` ()
+  rnf (PrimaryKeyAdded tName tCon tOpts) = tName `deepseq` tCon `deepseq` tOpts `deepseq` ()
   rnf (ColumnAdded tName cName col) = tName `deepseq` cName `deepseq` col `deepseq` ()
   rnf (ColumnRemoved tName colName) = tName `deepseq` colName `deepseq` ()
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
-  rnf (ColumnConstraintAdded tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
-  rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
+  rnf (ColumnNullableChanged tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
+  rnf (ColumnDefaultChanged _ tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
   rnf (EnumTypeAdded eName enum) = eName `deepseq` enum `deepseq` ()
   rnf (EnumTypeRemoved eName) = eName `deepseq` ()
   rnf (EnumTypeValueAdded eName inserted order insertionPoint) =
     eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
   rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
   rnf (SequenceRemoved sName) = sName `deepseq` ()
+  rnf (TableConstraintRemoved tName cName) = tName `deepseq` cName `deepseq` ()
+  rnf (RenameConstraint tName cName cName') = tName `deepseq` cName `deepseq` cName' `deepseq` ()
+  rnf (SequenceRenamed sName sName') = sName `deepseq` sName' `deepseq` ()
+  rnf (SequenceSetOwner sName sOwner) = sName `deepseq` sOwner `deepseq` ()
 
 -- | A possible enumerations of the reasons why a 'diff' operation might not work.
 data DiffError
@@ -345,8 +449,22 @@ instance NFData DiffError
 noSchema :: Schema
 noSchema = Schema mempty mempty mempty
 
-noTableConstraints :: Set TableConstraint
-noTableConstraints = mempty
+noTableConstraints :: TableConstraints
+noTableConstraints = TableConstraints
+  { primaryKeyConstraint = Nothing
+  , foreignKeyConstraints = Map.empty
+  , uniqueConstraints = Map.empty
+  }
 
-noColumnConstraints :: Set ColumnConstraint
-noColumnConstraints = mempty
+noColumnConstraints :: ColumnConstraints
+noColumnConstraints = ColumnConstraints Null Nothing
+
+
+fmap concat $ traverse (makeLensesWith (set lensField (mappingNamer $ pure . ('_':)) defaultFieldRules))
+  [ ''Schema
+  , ''Sequence
+  , ''TableConstraints
+  , ''Table
+  , ''Column
+  , ''ColumnConstraints
+  ]

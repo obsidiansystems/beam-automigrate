@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+
 module Database.Beam.AutoMigrate.Util where
 
 import Control.Applicative.Lift
@@ -13,10 +15,9 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
-import Database.Beam.Schema (Beamable, PrimaryKey, TableEntity, TableSettings)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables
-import Lens.Micro ((^.))
+import Control.Lens ((^.))
 
 --
 -- Retrieving all the column names for a beam entity.
