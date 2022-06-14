@@ -82,12 +82,15 @@ instance NormalizeDefaultExprs Table where
   normalizeDefaultExprs t = t { tableColumns = Map.map normalizeDefaultExprs (tableColumns t)}
 
 instance NormalizeDefaultExprs Column where
-  normalizeDefaultExprs c = c { columnConstraints = Set.map normalizeDefaultExprs (columnConstraints c) }
+  normalizeDefaultExprs c = c { columnConstraints = normalizeDefaultExprs (columnConstraints c) }
 
-instance NormalizeDefaultExprs ColumnConstraint where
+instance NormalizeDefaultExprs ColumnConstraints where
+  normalizeDefaultExprs c =  c { columnDefault = fmap normalizeDefaultExprs (columnDefault c) }
+
+instance NormalizeDefaultExprs DefaultConstraint where
   normalizeDefaultExprs = \case
-    NotNull -> NotNull
-    Default t -> Default (normalizeDefaultExpr t)
+    DefaultExpr t -> DefaultExpr $ normalizeDefaultExpr t
+    Autoincrement mseq -> Autoincrement mseq
 
 normalizeDefaultExpr :: Text -> Text
 normalizeDefaultExpr t = case PgParsing.run PgParsing.aExpr t of

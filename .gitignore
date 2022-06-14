@@ -6,3 +6,5 @@ hie.yaml
 *.prof
 .stack-work
 cabal.project.freeze
+
+readme-db

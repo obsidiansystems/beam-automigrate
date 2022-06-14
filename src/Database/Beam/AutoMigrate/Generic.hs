@@ -8,10 +8,13 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module Database.Beam.AutoMigrate.Generic where
 
+import Data.Default.Class (def)
 import Data.Bifunctor
 import Data.Kind
 import qualified Data.List as L
@@ -27,7 +30,7 @@ import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables (Beamable (..), dbEntityDescriptor, dbEntityName)
 import GHC.Generics
 import GHC.TypeLits
-import Lens.Micro ((^.))
+import Control.Lens ((^.))
 
 --
 --- Machinery to derive a 'Schema' from a 'DatabaseSettings'.
@@ -69,7 +72,7 @@ class GColumns (genSeqs :: GenSequencesForSerial) (x :: * -> *) where
   gColumns :: Proxy genSeqs -> TableName -> x p -> (Columns, Sequences)
 
 class GTableConstraintColumns be db x where
-  gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> S.Set TableConstraint
+  gTableConstraintsColumns :: AnnotatedDatabaseSettings be db -> TableName -> x p -> TableConstraints
 
 --
 -- Deriving information about 'Schema's
@@ -160,9 +163,8 @@ mkTableEntryNoFkDiscovery ::
 mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
-      pkColSet = S.fromList $ pkFieldNames entity
-      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey (tName <> "_pkey") pkColSet)
-      (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
+      pks = noTableConstraints {primaryKeyConstraint = Just (PrimaryKey $ S.fromList $ pkFieldNames entity, def)} -- TODO: expose default?
+      (columns, seqs) = gColumns (Proxy @ 'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
 
@@ -276,7 +278,7 @@ instance (GColumns p a, GColumns p b) => GColumns p (a :*: b) where
   gColumns p t (a :*: b) = gColumns p t a <> gColumns p t b
 
 instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => GTableConstraintColumns be db (a :*: b) where
-  gTableConstraintsColumns db tbl (a :*: b) = S.union (gTableConstraintsColumns db tbl a) (gTableConstraintsColumns db tbl b)
+  gTableConstraintsColumns db tbl (a :*: b) = (gTableConstraintsColumns db tbl a) <> (gTableConstraintsColumns db tbl b)
 
 --
 -- Column entries
@@ -288,7 +290,9 @@ instance HasCompanionSequence ty => GColumns 'GenSequences (S1 m (K1 R (TableFie
       Nothing ->
         (M.singleton name (Column ty constr), mempty)
       Just (sq, extraDefault) ->
-        (M.singleton name (Column ty (S.insert extraDefault constr)), uncurry M.singleton sq)
+        ( M.singleton name (Column ty $ constr { columnDefault = Just extraDefault }),
+          uncurry (foldMap (\sName -> M.singleton sName . Just)) sq
+        )
 
 instance GColumns 'NoGenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns Proxy _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
@@ -322,7 +326,7 @@ instance
   gColumns _ t (M1 (K1 e)) = gColumns (Proxy @NoGenSequences) t (from e)
 
 instance GTableConstraintColumns be db (S1 m (K1 R (TableFieldSchema tbl ty))) where
-  gTableConstraintsColumns _db _tbl (M1 (K1 _)) = S.empty
+  gTableConstraintsColumns _db _tbl (M1 (K1 _)) = noTableConstraints
 
 instance
   {-# OVERLAPS #-}
@@ -346,17 +350,16 @@ instance
   GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f)))
   where
   gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
-    case cnames of
-      [] -> S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
-      ColumnName cname : _ ->
-        S.singleton
-          ( ForeignKey
-              (tname <> "_" <> cname <> "_fkey")
-              reftname
-              (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
-              NoAction -- TODO: what should the default be?
-              NoAction -- TODO: what should the default be?
-          )
+    noTableConstraints { foreignKeyConstraints =
+      case cnames of
+        [] -> M.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
+        ColumnName _ : _ ->
+          M.singleton
+            ( ForeignKey
+                reftname
+                (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
+            ) def -- TODO: what should the default be?
+        }
     where
       cnames :: [ColumnName]
       cnames = M.keys $ fst (gColumns (Proxy @NoGenSequences) (TableName tname) (from e))

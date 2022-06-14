@@ -3,6 +3,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
+
+{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Database.Beam.AutoMigrate.Schema.Gen
@@ -13,16 +15,16 @@ module Database.Beam.AutoMigrate.Schema.Gen
   )
 where
 
+import Data.Default.Class (def)
+import Control.Lens (over)
+import Data.Foldable
 import Control.Monad
 import Control.Monad.State.Strict
-import Data.Foldable (foldlM)
 import Data.Functor ((<&>))
-import Data.Functor.Identity
 import Data.Int (Int16, Int32, Int64)
 import qualified Data.Map.Strict as M
 import Data.Proxy
 import Data.Scientific (Scientific, scientific)
-import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -77,14 +79,14 @@ genColumnName = genName ColumnName
 -- \"standard\" SQL types, to avoid the complication of dealing with indexes. For example trying to use
 -- a JSON column would have Postgres fail with an error like:
 -- \"[..]data type json has no default operator class for access method btree[..]\"
-genUniqueConstraint :: Columns -> Gen (Set TableConstraint)
+genUniqueConstraint :: Columns -> Gen TableConstraints
 genUniqueConstraint allCols = do
   someCols <- map fst . filter isStdType . take 32 <$> listOf1 (elements $ M.toList allCols) -- indexes are capped to 32 colums.
   case someCols of
-    [] -> pure mempty
+    [] -> pure noTableConstraints
     _ -> do
-      constraintName <- runIdentity <$> genName Identity
-      pure $ S.singleton $ Unique (constraintName <> "_unique") (S.fromList someCols)
+      pure noTableConstraints
+        { uniqueConstraints = M.singleton (Unique (S.fromList someCols)) def }
 
 isStdType :: (ColumnName, Column) -> Bool
 isStdType (_, columnType -> SqlStdType _) = True
@@ -95,29 +97,29 @@ isStdType _ = False
 -- important because otherwise Postgres will assume so even though we didn't generate this constraint in
 -- the first place, and our roundtrip tests will fail.
 -- Same consideration on the \"standard types\" applies as above (crf 'genUniqueConstraint').
-genPkConstraint :: Columns -> Gen (Set TableConstraint)
+genPkConstraint :: Columns -> Gen TableConstraints
 genPkConstraint allCols = do
   someCols <- take 32 . filter (\x -> isStdType x && notNull x) <$> listOf1 (elements $ M.toList allCols) -- indexes are capped to 32 colums.
   case someCols of
-    [] -> pure mempty
+    [] -> pure noTableConstraints
     _ -> do
-      constraintName <- runIdentity <$> genName Identity
-      pure $ S.singleton $ PrimaryKey (constraintName <> "_pk") (S.fromList $ map fst someCols)
+      pure noTableConstraints
+        { primaryKeyConstraint = Just ( PrimaryKey (S.fromList $ map fst someCols), def) }
   where
     notNull :: (ColumnName, Column) -> Bool
-    notNull (_, col) = NotNull `S.member` columnConstraints col
+    notNull (_, col) = NotNull == columnNullable (columnConstraints col)
 
-genTableConstraints :: Tables -> Columns -> Gen (Set TableConstraint)
+genTableConstraints :: Tables -> Columns -> Gen TableConstraints
 genTableConstraints _allOtherTables ourColums =
   frequency
-    [ (60, pure mempty),
+    [ (60, pure noTableConstraints),
       (30, genUniqueConstraint ourColums),
       (30, genPkConstraint ourColums),
-      (15, mappend <$> genPkConstraint ourColums <*> genUniqueConstraint ourColums)
+      (15, (<>) <$> genPkConstraint ourColums <*> genUniqueConstraint ourColums)
     ]
 
 -- Generate a 'ColumnType' alongside a possible default value.
-genColumnType :: Gen (ColumnType, ColumnConstraint)
+genColumnType :: Gen Column
 genColumnType =
   oneof
     [ genSqlStdType,
@@ -128,7 +130,7 @@ genColumnType =
 -- | Rather than trying to generate __all__ the possible values, we restrict ourselves to only the types
 -- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.AutoMigrate.Compat', and we piggyback
 -- on 'beam-core' machinery in order to generate the default values.
-genSqlStdType :: Gen (ColumnType, ColumnConstraint)
+genSqlStdType :: Gen Column
 genSqlStdType =
   oneof
     [ genType arbitrary (Proxy @Int32),
@@ -151,9 +153,13 @@ genSqlStdType =
       -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
       genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime),
       -- Explicitly test for the 'CURRENT_TIMESTAMP' case.
-      pure (SqlStdType $ timestampType Nothing False, pgDefaultConstraint @LocalTime currentTimestamp_),
+      pure $ uncurry Column $ (SqlStdType $ timestampType Nothing False, asDefault $ pgDefaultConstraint @LocalTime currentTimestamp_),
       genType (fmap SqlSerial arbitrary) (Proxy @(SqlSerial Int64))
     ]
+
+-- | frequently useful helper to construct a ColumnConstraints from a default
+asDefault :: DefaultConstraint -> ColumnConstraints
+asDefault x = noColumnConstraints { columnDefault = Just x }
 
 genType ::
   forall a.
@@ -162,10 +168,10 @@ genType ::
   ) =>
   Gen a ->
   Proxy a ->
-  Gen (ColumnType, ColumnConstraint)
+  Gen Column
 genType gen Proxy =
-  (,) <$> pure (defaultColumnType (Proxy @a))
-    <*> (gen <&> (\(x :: a) -> pgDefaultConstraint $ val_ x))
+  Column <$> pure (defaultColumnType (Proxy @a))
+    <*> (gen <&> (\(x :: a) -> asDefault $ pgDefaultConstraint $ val_ x))
 
 -- | From postgres' documentation:
 -- \"Bit strings are strings of 1's and 0's. They can be used to store or visualize bit masks. There are
@@ -177,7 +183,7 @@ genType gen Proxy =
 -- /NOTE(and)/: This was not generated using the 'defaultsTo_' combinator, because it's unclear how
 -- \"Beam\" allows the construction and handling of a 'SqlBitString', considering that it's treated
 -- internally as an integer.
-genBitStringType :: Gen (ColumnType, ColumnConstraint)
+genBitStringType :: Gen Column
 genBitStringType = do
   varying <- arbitrary
   charPrec <- elements [1 :: Word, 2, 4, 6, 8, 16, 32, 64]
@@ -185,17 +191,17 @@ genBitStringType = do
   let txt = sqlSingleQuoted (T.pack string) <> "::bit(" <> (T.pack . show $ charPrec) <> ")"
   case varying of
     False ->
-      pure
+      pure $ uncurry Column
         ( SqlStdType $ AST.DataTypeBit False (Just charPrec),
-          Default txt
+          asDefault (DefaultExpr txt)
         )
     True ->
-      pure
+      pure $ uncurry Column
         ( SqlStdType $ AST.DataTypeBit True (Just 1),
-          Default txt
+          asDefault (DefaultExpr txt)
         )
 
-genPgSpecificType :: Gen (ColumnType, ColumnConstraint)
+genPgSpecificType :: Gen Column
 genPgSpecificType =
   oneof
     [ genType (fmap Pg.PgJSON (arbitrary @Int)) (Proxy @(Pg.PgJSON Int)),
@@ -221,7 +227,7 @@ _genRangeType ::
   ) =>
   Proxy n ->
   Proxy a ->
-  Gen (ColumnType, ColumnConstraint)
+  Gen Column
 _genRangeType Proxy Proxy = do
   let colType = defaultColumnType (Proxy @(Pg.PgRange n a))
   lowerBoundRange <- elements [Pg.Inclusive, Pg.Exclusive]
@@ -234,7 +240,7 @@ _genRangeType Proxy Proxy = do
   let dVal =
         pgDefaultConstraint $
           Pg.range_ @n @a lowerBoundRange upperBoundRange (val_ mbLower) (val_ (fmap getPositive mbUpper))
-  pure $ (colType, dVal)
+  pure $ Column colType (asDefault dVal)
 
 --
 --
@@ -263,8 +269,8 @@ _defVal Proxy = T.pack . show <$> (arbitrary :: Gen a)
 _genFloatType :: Gen (AST.DataType, Text)
 _genFloatType = do
   floatPrec <- elements [Nothing, Just 4, Just 8]
-  def <- _defVal @Float Proxy
-  pure (AST.DataTypeFloat floatPrec, def)
+  defValue <- _defVal @Float Proxy
+  pure (AST.DataTypeFloat floatPrec, defValue)
 
 -- real == float(8), i.e. 4 bytes.
 _genRealType :: Gen (AST.DataType, Text)
@@ -332,15 +338,15 @@ _pgSimplify :: (AST.DataType, Text) -> (AST.DataType, Text)
 _pgSimplify = \case
   -- From the Postgres' documentation:
   -- \"character without length specifier is equivalent to character(1).\"
-  (AST.DataTypeChar varying Nothing c, def) -> (AST.DataTypeChar varying (Just 1) c, def)
+  (AST.DataTypeChar varying Nothing c, defValue) -> (AST.DataTypeChar varying (Just 1) c, defValue)
   -- Postgres doesn't distinguish between \"national character varying\" and \"character varying\".
   -- See <here https://stackoverflow.com/questions/57649798/postgresql-support-for-national-character-data-types>.
-  (AST.DataTypeNationalChar varying Nothing, def) -> (AST.DataTypeChar varying (Just 1) Nothing, def)
-  (AST.DataTypeNationalChar varying precision, def) -> (AST.DataTypeChar varying precision Nothing, def)
+  (AST.DataTypeNationalChar varying Nothing, defValue) -> (AST.DataTypeChar varying (Just 1) Nothing, defValue)
+  (AST.DataTypeNationalChar varying precision, defValue) -> (AST.DataTypeChar varying precision Nothing, defValue)
   -- In Postgres decimal and numeric are isomorphic.
-  (AST.DataTypeDecimal v, def) -> (AST.DataTypeNumeric v, def)
-  (AST.DataTypeFloat (Just 4), def) -> (AST.DataTypeReal, def)
-  (AST.DataTypeFloat (Just 8), def) -> (AST.DataTypeDoublePrecision, def)
+  (AST.DataTypeDecimal v, defValue) -> (AST.DataTypeNumeric v, defValue)
+  (AST.DataTypeFloat (Just 4), defValue) -> (AST.DataTypeReal, defValue)
+  (AST.DataTypeFloat (Just 8), defValue) -> (AST.DataTypeDoublePrecision, defValue)
   x -> x
 
 -- From the Postgres' documentation:
@@ -357,9 +363,13 @@ _genCharType f = do
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
   constNum <- choose (0, 2)
-  (cType, dVal) <- genColumnType
-  constrs <- vectorOf constNum (elements [NotNull, dVal])
-  pure $ Column cType (S.fromList constrs)
+  Column cType dVal <- genColumnType
+  constrs <- vectorOf constNum (elements [Left NotNull, Right $ columnDefault dVal])
+
+  let mkConstr x = \case
+        Left y -> x { columnNullable = y }
+        Right y -> x { columnDefault = y }
+  pure $ Column cType (foldl' mkConstr noColumnConstraints constrs)
 
 genColumns :: Gen Columns
 genColumns = do
@@ -466,14 +476,11 @@ similarTable tbl = flip execStateT tbl $
           )
       LeaveColumnAlone -> pure ()
 
-deleteConstraintReferencing :: ColumnName -> Set TableConstraint -> Set TableConstraint
-deleteConstraintReferencing cName conss = S.filter (not . doesReference) conss
-  where
-    doesReference :: TableConstraint -> Bool
-    doesReference = \case
-      PrimaryKey _ refs -> S.member cName refs
-      ForeignKey _ _ refs _ _ -> let ours = S.map snd refs in S.member cName ours
-      Unique _ refs -> S.member cName refs
+deleteConstraintReferencing :: ColumnName -> TableConstraints -> TableConstraints
+deleteConstraintReferencing cName
+  = over _primaryKeyConstraint (>>= \c@(PrimaryKey refs, _) -> c <$ guard (not $ S.member cName refs))
+  . over _foreignKeyConstraints (M.filterWithKey $ \(ForeignKey _ refs) _ -> let ours = S.map snd refs in not $ S.member cName ours)
+  . over _uniqueConstraints (M.filterWithKey $ \(Unique refs) _ -> not $ S.member cName refs)
 
 similarColumn :: Column -> Gen Column
 similarColumn col = do
@@ -485,21 +492,21 @@ similarColumn col = do
       ]
   case editAction' of
     ChangeType -> do
-      (newType, newDef) <- genColumnType
-      let oldConstraints = S.filter (\c -> case c of Default _ -> False; _ -> True) (columnConstraints col)
+      Column newType newDef <- genColumnType
+      let oldConstraints = columnConstraints col
       pure $
         col
           { columnType = newType,
-            columnConstraints = S.insert newDef oldConstraints
+            columnConstraints = ColumnConstraints (columnNullable oldConstraints) (columnDefault newDef)
           }
     ChangeConstraints -> do
       -- At the moment we cannot add a new default value as we don't have a meanigful way of
       -- generating it.
       let oldConstraints = columnConstraints col
-      let newConstraints = case S.toList oldConstraints of
-            [] -> S.singleton NotNull
-            [NotNull] -> mempty
-            _ -> oldConstraints
+      let newConstraints = case oldConstraints of
+            ColumnConstraints Null Nothing -> noColumnConstraints {columnNullable = NotNull}
+            ColumnConstraints NotNull Nothing -> noColumnConstraints
+            ColumnConstraints _ (Just _) -> oldConstraints
       pure $ col {columnConstraints = newConstraints}
     NoChange -> pure col
 

@@ -6,6 +6,9 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{-# OPTIONS_GHC -Wall -Werror #-}
+{-# OPTIONS_GHC -Wno-duplicate-exports #-}
+
 -- | This module provides an 'AnnotatedDatabaseSettings' type to be used as a drop-in replacement for the
 -- standard 'DatabaseSettings'. Is it possible to \"downcast\" an 'AnnotatedDatabaseSettings' to a standard
 -- 'DatabaseSettings' simply by calling 'deAnnotateDatabase'.
@@ -49,6 +52,7 @@ module Database.Beam.AutoMigrate.Annotated
     ForeignKeyConstraint (..),
     foreignKeyOnPk,
     foreignKeyOn,
+    foreignKeyOnNullable,
 
     -- * Other types and functions
     TableKind,
@@ -60,18 +64,22 @@ module Database.Beam.AutoMigrate.Annotated
 
     -- * Internals
     pgDefaultConstraint,
+
+    -- * whatever, everthing.
+    module Database.Beam.AutoMigrate.Annotated,
   )
 where
 
 import Data.Kind
 import Data.Monoid (Endo (..))
 import Data.Proxy
-import Data.Set (Set)
 import qualified Data.Set as S
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Database.Beam as Beam
 import Database.Beam.AutoMigrate.Compat
 import Database.Beam.AutoMigrate.Types
+import Data.Default.Class (def)
 import Database.Beam.AutoMigrate.Util
 import Database.Beam.Backend.SQL (HasSqlValueSyntax (..), displaySyntax)
 import Database.Beam.Postgres (Postgres)
@@ -85,6 +93,7 @@ import Database.Beam.Schema.Tables
     EntityModification (..),
     FieldModification (..),
     IsDatabaseEntity,
+    Nullable,
     PrimaryKey,
     TableEntity,
     dbEntityDescriptor,
@@ -92,8 +101,9 @@ import Database.Beam.Schema.Tables
     dbTableSettings,
   )
 import GHC.Generics as Generic
-import Lens.Micro (SimpleGetter, (^.))
-import qualified Lens.Micro as Lens
+import Control.Lens (Getter, (^.))
+import qualified Control.Lens as Lens
+import Unsafe.Coerce (unsafeCoerce)
 
 --
 -- Annotating a 'DatabaseSettings' with meta information.
@@ -238,7 +248,7 @@ instance
     AnnotatedDatabaseTable ::
       Beam.Table tbl =>
       { dbAnnotatedSchema :: TableSchema tbl,
-        dbAnnotatedConstraints :: Set TableConstraint
+        dbAnnotatedConstraints :: TableConstraints
       } ->
       AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)
   type
@@ -252,16 +262,29 @@ instance
         Generic (Beam.TableSettings tbl)
       )
 
-  dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) mempty
+  dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) noTableConstraints
 
--- | A 'SimpleGetter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
-lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
+
+
+_dbAnnotatedSchema :: Lens.Lens' (AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)) (TableSchema tbl)
+_dbAnnotatedSchema = \a2fb s -> (\b -> s {dbAnnotatedSchema = b}) <$> a2fb (dbAnnotatedSchema s)
+{-# INLINE _dbAnnotatedSchema #-}
+
+_dbAnnotatedConstraints :: Lens.Lens' (AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)) TableConstraints
+_dbAnnotatedConstraints = \a2fb s -> (\b -> s {dbAnnotatedConstraints = b}) <$> a2fb (dbAnnotatedConstraints s)
+{-# INLINE _dbAnnotatedConstraints #-}
+
+
+-- _dbAnnotatedConstraints :: Lens' (AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)) TableConstraints
+
+-- | A 'Getter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
+lowerEntityDescriptor :: Getter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
 lowerEntityDescriptor = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e ^. dbEntityDescriptor)
 
-annotatedDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (AnnotatedDatabaseEntityDescriptor be entityType)
+annotatedDescriptor :: Getter (AnnotatedDatabaseEntity be db entityType) (AnnotatedDatabaseEntityDescriptor be entityType)
 annotatedDescriptor = Lens.to (\(AnnotatedDatabaseEntity e _) -> e)
 
-deannotate :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntity be db entityType)
+deannotate :: Getter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntity be db entityType)
 deannotate = Lens.to (\(AnnotatedDatabaseEntity _ e) -> e)
 
 -- | A table schema.
@@ -279,7 +302,7 @@ data TableFieldSchema (tbl :: (* -> *) -> *) ty where
 data FieldSchema ty where
   FieldSchema ::
     ColumnType ->
-    Set ColumnConstraint ->
+    ColumnConstraints ->
     FieldSchema ty
 
 deriving instance Show (FieldSchema ty)
@@ -308,7 +331,7 @@ instance
       :*: gDefTblSchema (Proxy :: Proxy (b p)) d
 
 instance
-  ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraint,
+  ( SchemaConstraint (Beam.TableField tbl ty) ~ ColumnConstraints,
     HasSchemaConstraints (Beam.TableField tbl ty),
     HasColumnType ty
   ) =>
@@ -437,7 +460,7 @@ defaultsTo tyVal = FieldModification $ \old ->
     FieldSchema ty c ->
       old
         { tableFieldSchema =
-            FieldSchema ty $ S.singleton (pgDefaultConstraint tyVal) <> c
+            FieldSchema ty $ c {columnDefault = Just (pgDefaultConstraint tyVal) }
         }
 
 -- | Postgres-specific function to convert any 'QGenExpr' into a meaningful 'PgExpressionSyntax', so
@@ -446,7 +469,7 @@ pgDefaultConstraint ::
   forall ty.
   (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty) =>
   (forall ctx s. Beam.QGenExpr ctx Postgres s ty) ->
-  ColumnConstraint
+  DefaultConstraint
 pgDefaultConstraint tyVal =
   let syntaxFragment = T.pack . displaySyntax . Pg.fromPgExpression $ defaultTo_ tyVal
       dVal = case defaultTypeCast (Proxy @ty) of
@@ -455,7 +478,7 @@ pgDefaultConstraint tyVal =
         -- NOTE(and) Special-case handling for CURRENT_TIMESTAMP. See issue #31.
         Just tc | syntaxFragment == "CURRENT_TIMESTAMP" -> "(" <> syntaxFragment <> ")::" <> tc
         Just tc -> "'" <> syntaxFragment <> "'::" <> tc
-   in Default dVal
+   in DefaultExpr dVal
   where
     -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
     -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,
@@ -488,22 +511,33 @@ data UniqueConstraint (tbl :: ((* -> *) -> *)) where
 uniqueConstraintOn ::
   [UniqueConstraint tbl] ->
   EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-uniqueConstraintOn us =
+uniqueConstraintOn us = uniqueConstraintOnWithOptions us def
+
+-- | Given a list of 'TableField' selectors wrapped in a 'UniqueConstraint' type constructor, it adds
+-- to the relevant 'AnnotatedDatabaseEntity' a new @UNIQUE@ 'TableConstraint' composed by /all/ the
+-- fields specified. To put it differently, every call to 'uniqueConstraintOn' generates a /separate/
+-- @UNIQUE@ constraint composed by the listed fields.
+-- If a 'PrimaryKey' is passed as input, it will desugar under the hood into as many columns as
+-- the primary key refers to.
+uniqueConstraintOnWithOptions ::
+  [UniqueConstraint tbl] ->
+  UniqueConstraintOptions ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+uniqueConstraintOnWithOptions us opts =
   EntityModification
     ( Endo
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
             AnnotatedDatabaseEntity
-              ( tbl
-                  { dbAnnotatedConstraints =
-                      let cols = concatMap (\case (U f) -> colNames (tableSettings e) f) us
-                          tName = e ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
-                       in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
-                  }
+              ( tbl Lens.& Lens.over (_dbAnnotatedConstraints . _uniqueConstraints) (<> M.singleton (mkUniqueConstraint e us) opts)
               )
               e
         )
     )
+
+mkUniqueConstraint :: DatabaseEntity be db (TableEntity tbl) -> [UniqueConstraint tbl] -> Unique
+mkUniqueConstraint e us =
+  let cols = concatMap (\case (U f) -> colNames (tableSettings e) f) us
+  in Unique (S.fromList cols)
 
 --
 -- Specifying FK constrainst
@@ -515,6 +549,8 @@ data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) whe
     (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) ->
     (tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty)) ->
     ForeignKeyConstraint tbl tbl'
+
+
 
 -- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
 -- target table.
@@ -530,66 +566,124 @@ foreignKeyOnPk ::
   -- you want to define the FK /for/, and it must have /PrimaryKey externalTable f/ as
   -- its column-tag.
   (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) ->
-  -- | What do to \"on delete\"
-  ReferenceAction ->
-  -- | What do to \"on update\"
-  ReferenceAction ->
   EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
+foreignKeyOnPk externalEntity ourColumn = foreignKeyOnWithOptions externalEntity ourColumn Beam.primaryKey def
+
+
+foreignKeyOn ::
+  ( Beam.Beamable tbl'
+  , Beam.Beamable key
+  ) =>
+  DatabaseEntity be db (TableEntity tbl') ->
+  (tbl (Beam.TableField tbl) -> key (Beam.TableField tbl)) ->
+  (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl')) ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOn externalEntity ourColumn theirColumn =
+  foreignKeyOnWithOptions externalEntity ourColumn theirColumn def
+
+-- mkForeignKeyConstraint :: 
+mkForeignKeyConstraint
+  :: (Beam.Beamable key, Beam.Beamable tbl')
+  => DatabaseEntity be db (TableEntity tbl)
+  -> (tbl (Beam.TableField tbl) -> key (Beam.TableField tbl))
+  -> DatabaseEntity be db (TableEntity tbl')
+  -> (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl'))
+  -> ForeignKey
+mkForeignKeyConstraint e ourColumn externalEntity theirColumn =
+  let colPairs =
+        zipWith
+          (,)
+          (fieldAsColumnNames (ourColumn (tableSettings e)))
+          (fieldAsColumnNames (theirColumn (tableSettings externalEntity)))
+      tName = externalEntity ^. dbEntityDescriptor . dbEntityName
+  in ForeignKey (TableName tName) (S.fromList colPairs)
+
+
+        -- ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+        --     AnnotatedDatabaseEntity
+        --       ( tbl
+        --           { dbAnnotatedConstraints =
+        --                   conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+
+        --                in S.insert
+        --                     (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
+        --                     (dbAnnotatedConstraints tbl)
+        --           }
+        --       )
+        --       e
+
+foreignKeyOnWithOptions ::
+  ( Beam.Beamable tbl'
+  , Beam.Beamable key
+  ) =>
+  DatabaseEntity be db (TableEntity tbl') ->
+  (tbl (Beam.TableField tbl) -> key (Beam.TableField tbl)) ->
+  (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl')) ->
+  -- | Foreign Key Constraitn Options
+  ForeignKeyConstraintOptions ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnWithOptions externalEntity ourColumn theirColumn options =
   EntityModification
     ( Endo
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
             AnnotatedDatabaseEntity
-              ( tbl
-                  { dbAnnotatedConstraints =
-                      let colPairs =
-                            zipWith
-                              (,)
-                              (fieldAsColumnNames (ourColumn (tableSettings e)))
-                              (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
-                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
-                       in S.insert
-                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                            (dbAnnotatedConstraints tbl)
-                  }
+              ( tbl Lens.& Lens.over (_dbAnnotatedConstraints . _foreignKeyConstraints) (<> M.singleton (mkForeignKeyConstraint e ourColumn externalEntity theirColumn) options)
               )
               e
         )
     )
 
-foreignKeyOn ::
-  Beam.Beamable tbl' =>
+mkNullableForeignKeyConstraint
+  :: (Beam.Beamable key, Beam.Beamable tbl')
+  => DatabaseEntity be db (TableEntity tbl)
+  -> (tbl (Beam.TableField tbl) -> key (Nullable (Beam.TableField tbl)))
+  -> DatabaseEntity be db (TableEntity tbl')
+  -> (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl'))
+  -> ForeignKey
+mkNullableForeignKeyConstraint e ourColumn externalEntity theirColumn =
+  let colPairs =
+        zipWith
+          (,)
+          (fieldAsColumnNames (coerceTheNullableAway $ ourColumn (tableSettings e)))
+          (fieldAsColumnNames (theirColumn (tableSettings externalEntity)))
+      coerceTheNullableAway :: key (Nullable (Beam.TableField tbl)) -> key (Beam.TableField tbl)
+      coerceTheNullableAway = (unsafeCoerce :: key (Nullable (Beam.TableField tbl)) -> key (Beam.TableField tbl))
+      tName = externalEntity ^. dbEntityDescriptor . dbEntityName
+  in ForeignKey (TableName tName) (S.fromList colPairs)
+
+
+foreignKeyOnNullable ::
+  forall key tbl tbl' be db.
+  ( Beam.Beamable tbl'
+  , Beam.Beamable key
+  ) =>
   DatabaseEntity be db (TableEntity tbl') ->
-  [ForeignKeyConstraint tbl tbl'] ->
-  -- | On Delete
-  ReferenceAction ->
-  -- | On Update
-  ReferenceAction ->
+  -- | fields on local table
+  (tbl (Beam.TableField tbl) -> key (Nullable (Beam.TableField tbl))) ->
+  -- | fields on referenced table
+  (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl')) ->
   EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
-foreignKeyOn externalEntity us onDelete onUpdate =
+foreignKeyOnNullable externalEntity ourColumn theirColumn =
+  foreignKeyOnNullableWithOptions externalEntity ourColumn theirColumn def
+
+foreignKeyOnNullableWithOptions ::
+  forall key tbl tbl' be db.
+  ( Beam.Beamable tbl'
+  , Beam.Beamable key
+  ) =>
+  DatabaseEntity be db (TableEntity tbl') ->
+  -- | fields on local table
+  (tbl (Beam.TableField tbl) -> key (Nullable (Beam.TableField tbl))) ->
+  -- | fields on referenced table
+  (tbl' (Beam.TableField tbl') -> key (Beam.TableField tbl')) ->
+  ForeignKeyConstraintOptions ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnNullableWithOptions externalEntity ourColumn theirColumn options =
   EntityModification
     ( Endo
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
             AnnotatedDatabaseEntity
-              ( tbl
-                  { dbAnnotatedConstraints =
-                      let colPairs =
-                            concatMap
-                              ( \case
-                                  (References ours theirs) ->
-                                    zipWith
-                                      (,)
-                                      (fieldAsColumnNames (ours (tableSettings e)))
-                                      [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
-                              )
-                              us
-                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
-                       in S.insert
-                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                            (dbAnnotatedConstraints tbl)
-                  }
+              ( tbl Lens.& Lens.over (_dbAnnotatedConstraints . _foreignKeyConstraints) (<> M.singleton (mkNullableForeignKeyConstraint e ourColumn externalEntity theirColumn) options)
               )
               e
         )

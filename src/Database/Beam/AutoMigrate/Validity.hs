@@ -1,5 +1,6 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Database.Beam.AutoMigrate.Validity
   ( -- * Types
@@ -19,6 +20,9 @@ module Database.Beam.AutoMigrate.Validity
   )
 where
 
+import Control.Lens (Lens', (^.), lens, at, (<<.=), (.=), ix, preuse, preview, _Nothing, set, _Unwrapped)
+import Control.Monad.State.Strict (execStateT)
+import Data.Maybe (catMaybes)
 import Control.Monad
 import Control.Monad.Except
 import Data.Bifunctor
@@ -30,7 +34,37 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
-import Lens.Micro ((&))
+import Control.Lens ((&))
+
+data SomeTableConstraint
+  = SomePrimaryKey PrimaryKeyConstraint UniqueConstraintOptions
+  | SomeForeignKey ForeignKey ForeignKeyConstraintOptions
+  | SomeUnique Unique UniqueConstraintOptions
+  deriving (Eq, Ord, Show)
+
+someTableConstraintName :: SomeTableConstraint -> Maybe ConstraintName
+someTableConstraintName = (^. _someTableConstraintName)
+
+_someTableConstraintName :: Lens' SomeTableConstraint (Maybe ConstraintName)
+_someTableConstraintName = lens
+  (\case
+    SomePrimaryKey _ u -> uniqueConstraintName u
+    SomeUnique _ u -> uniqueConstraintName u
+    SomeForeignKey _ fkOpts -> foreignKeyConstraintName fkOpts)
+  (\case
+    SomePrimaryKey s u -> \b -> SomePrimaryKey s $ u {uniqueConstraintName = b}
+    SomeUnique s u -> \b -> SomeUnique s $ u {uniqueConstraintName = b}
+    SomeForeignKey s fkOpts -> \b -> SomeForeignKey s $ fkOpts {foreignKeyConstraintName = b})
+
+
+tableConstraintsToList :: TableConstraints -> [SomeTableConstraint]
+tableConstraintsToList c = concat
+  [ uncurry SomePrimaryKey <$> toList (primaryKeyConstraint c)
+  , uncurry SomeForeignKey <$> M.toList (foreignKeyConstraints c)
+  , uncurry SomeUnique <$> M.toList (uniqueConstraints c)
+  ]
+
+
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).
@@ -42,19 +76,17 @@ data Reason
   | -- | The 'Table' we were trying to create already existed.
     TableAlreadyExist TableName Table
   | -- | The 'TableConstraint' we were trying to add already existed.
-    TableConstraintAlreadyExist TableName TableConstraint
+    TableConstraintAlreadyExist TableName (S.Set SomeTableConstraint)
   | -- | The 'TableConstraint' we were trying to delete didn't exist.
-    TableConstraintDoesntExist TableName TableConstraint
+    TableConstraintDoesntExist TableName ConstraintName
   | -- | The 'Column' we were trying to edit didn't exist.
-    ColumnDoesntExist ColumnName
+    ColumnDoesntExist (Qualified ColumnName)
   | -- | The 'Column' we were trying to add already existed.
     ColumnAlreadyExist ColumnName Column
   | -- | The old type for the input 'Column' didn't match the type contained in the 'Edit' step.
     ColumnTypeMismatch ColumnName Column ColumnType
-  | -- | The 'ColumnConstraint' we were trying to add already existed.
-    ColumnConstraintAlreadyExist (Qualified ColumnName) ColumnConstraint
-  | -- | The 'ColumnConstraint' we were trying to delete didn't exist.
-    ColumnConstraintDoesntExist (Qualified ColumnName) ColumnConstraint
+  | -- | The 'Default' we were trying to delete didn't exist.
+    NoDefaultExists (Qualified ColumnName)
   | -- | The 'Enum' we were trying to edit didn't exist.
     EnumDoesntExist EnumerationName
   | -- | The 'Enum' we were trying to add already existed.
@@ -62,11 +94,11 @@ data Reason
   | -- | The value in this 'Enum' to be used to insert a new one before/after it didn't exist.
     EnumInsertionPointDoesntExist EnumerationName Enumeration Text
   | -- | The 'Sequence' we were trying to add already existed.
-    SequenceAlreadyExist SequenceName Sequence
+    SequenceAlreadyExist SequenceName (Maybe Sequence)
   | -- | The 'Sequence' we were trying to edit didn't exist.
     SequenceDoesntExist SequenceName
   | -- | This 'Table' references a deleted 'Column' in one of its 'TableConstraint's.
-    TableReferencesDeletedColumnInConstraint TableName (Qualified ColumnName) TableConstraint
+    TableReferencesDeletedColumnInConstraint TableName (Qualified ColumnName) SomeTableConstraint
   | -- | This 'Column' references an 'Enum' which doesn't exist.
     ColumnReferencesNonExistingEnum (Qualified ColumnName) EnumerationName
   | -- | This 'Column' allows NULL values but it has been selected as a PRIMARY key.
@@ -79,8 +111,9 @@ data Reason
     NotAllColumnsExist TableName (S.Set ColumnName) (S.Set ColumnName)
   | -- | Deleting this 'TableConstraint' would affect the selected external 'Column's and some external
     -- 'TableConstraint's.
-    DeletedConstraintAffectsExternalTables (TableName, TableConstraint) (Qualified ColumnName, TableConstraint)
+    DeletedConstraintAffectsExternalTables (TableName, SomeTableConstraint) (Qualified ColumnName, SomeTableConstraint)
   | EnumContainsDuplicateValues EnumerationName [Text]
+  | ColumnDoesNotDefaultToOwnedSequence TableName ColumnName SequenceName
   deriving (Show, Eq)
 
 data ApplyFailed
@@ -88,7 +121,7 @@ data ApplyFailed
   deriving (Show, Eq)
 
 data ValidationFailed
-  = InvalidTableConstraint TableConstraint Reason
+  = InvalidTableConstraint SomeTableConstraint Reason
   | InvalidRemoveTable TableName Reason
   | InvalidRemoveColumn (Qualified ColumnName) Reason
   | InvalidRemoveEnum EnumerationName Reason
@@ -119,7 +152,7 @@ validateSchemaTables s = forM_ (M.toList $ schemaTables s) validateTable
   where
     validateTable :: (TableName, Table) -> Either [ValidationFailed] ()
     validateTable (tName, tbl) = do
-      forM_ (tableConstraints tbl) (first (: []) . validateTableConstraint s tName tbl)
+      forM_ (tableConstraintsToList $ tableConstraints tbl) (first (: []) . validateTableConstraint s tName tbl)
       forM_ (M.toList $ tableColumns tbl) (validateColumn s tName)
 
 -- | Validate a 'TableConstraint', making sure referential integrity is not violated.
@@ -128,14 +161,15 @@ validateSchemaTables s = forM_ (M.toList $ schemaTables s) validateTable
 -- 2. For a 'Unique', all the referenced columns must exist in the 'Table';
 -- 3. For a 'ForeignKey', all the columns (both local and referenced) must exist;
 -- 4. For a 'ForeignKey', the referenced columns must all be UNIQUE or PRIMARY keys.
-validateTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
+-- TODO: validate constraint name length is shorter than 64 characters (in postgres)
+validateTableConstraint :: Schema -> TableName -> Table -> SomeTableConstraint -> Either ValidationFailed ()
 validateTableConstraint s tName tbl c = case c of
-  PrimaryKey _ cols | cols `S.isSubsetOf` allTblColumns -> Right ()
-  PrimaryKey _ cols ->
+  SomePrimaryKey (PrimaryKey cols) _ | cols `S.isSubsetOf` allTblColumns -> Right ()
+  SomePrimaryKey (PrimaryKey cols) _ ->
     Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
-  ForeignKey _ referencedTable columnPairs _ _ -> checkFkIntegrity referencedTable columnPairs
-  Unique _ cols | cols `S.isSubsetOf` allTblColumns -> Right ()
-  Unique _ cols ->
+  SomeForeignKey (ForeignKey referencedTable columnPairs) _ -> checkFkIntegrity referencedTable columnPairs
+  SomeUnique (Unique cols) _ | cols `S.isSubsetOf` allTblColumns -> Right ()
+  SomeUnique (Unique cols) _ ->
     Left $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference cols allTblColumns) allTblColumns)
   where
     allTblColumns :: S.Set ColumnName
@@ -160,12 +194,12 @@ validateTableConstraint s tName tbl c = case c of
     checkColumnsIntegrity :: TableName -> Table -> S.Set ColumnName -> Either ValidationFailed ()
     checkColumnsIntegrity extName extTbl referencedCols =
       let checkConstraint extCon = case extCon of
-            ForeignKey {} -> Nothing
-            PrimaryKey _ cols | referencedCols `S.isSubsetOf` cols -> Just ()
-            PrimaryKey {} -> Nothing
-            Unique _ cols | referencedCols `S.isSubsetOf` cols -> Just ()
-            Unique {} -> Nothing
-       in case asum (map checkConstraint (S.toList $ tableConstraints extTbl)) of
+            SomeForeignKey (ForeignKey {}) _ -> Nothing
+            SomePrimaryKey (PrimaryKey cols) _ | referencedCols `S.isSubsetOf` cols -> Just ()
+            SomePrimaryKey (PrimaryKey {}) _-> Nothing
+            SomeUnique (Unique cols) _ | referencedCols `S.isSubsetOf` cols -> Just ()
+            SomeUnique (Unique {}) _ -> Nothing
+       in case asum (map checkConstraint (tableConstraintsToList $ tableConstraints extTbl)) of
             Nothing ->
               let reason = ColumnsInFkAreNotUniqueOrPrimaryKeyFields tName (map (Qualified extName) (S.toList referencedCols))
                in Left $ InvalidTableConstraint c reason
@@ -215,26 +249,26 @@ lookupColumnRef ::
   TableName ->
   Table ->
   Qualified ColumnName ->
-  Alt Maybe (Qualified ColumnName, TableConstraint)
-lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName) =
-  asum (map lookupReference (S.toList constr))
+  Alt Maybe (Qualified ColumnName, SomeTableConstraint)
+lookupColumnRef thisTable (tableConstraintsToList . tableConstraints -> constr) (Qualified extTbl colName) =
+  asum (map lookupReference constr)
   where
-    lookupReference :: TableConstraint -> Alt Maybe (Qualified ColumnName, TableConstraint)
+    lookupReference :: SomeTableConstraint -> Alt Maybe (Qualified ColumnName, SomeTableConstraint)
     lookupReference con = Alt $ case con of
-      PrimaryKey _ cols
+      SomePrimaryKey (PrimaryKey cols) _
         | thisTable == extTbl ->
           if S.member colName cols then Just (Qualified thisTable colName, con) else Nothing
-      PrimaryKey _ _ -> Nothing
-      ForeignKey _ extTbl' columnPairs _ _ ->
+      SomePrimaryKey (PrimaryKey _) _ -> Nothing
+      SomeForeignKey (ForeignKey extTbl' columnPairs) _ ->
         let (localCols, referencedCols) = (S.map fst columnPairs, S.map snd columnPairs)
          in if
                 | S.member colName localCols && thisTable == extTbl -> Just (Qualified extTbl colName, con)
                 | S.member colName referencedCols && extTbl == extTbl' -> Just (Qualified extTbl colName, con)
                 | otherwise -> Nothing
-      Unique _ cols
+      SomeUnique (Unique cols) _
         | thisTable == extTbl ->
           if S.member colName cols then Just (Qualified thisTable colName, con) else Nothing
-      Unique _ _ -> Nothing
+      SomeUnique (Unique _) _ -> Nothing
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
@@ -264,29 +298,27 @@ validateRemoveEnum s eName =
           let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
            in Left $ InvalidRemoveEnum eName reason
 
--- | Checking that the removal of a 'Sequence' is valid requires us to store the 'TableName'
--- and the 'ColumnName' inside the 'Sequence' type, so that we can check in logarithmic time if this sequence
+-- | Checking that the removal of a 'Sequence' is valid if this sequence
 -- is still referenced by the target column.
-validateRemoveSequence :: Schema -> SequenceName -> Sequence -> Either ValidationFailed ()
-validateRemoveSequence s sName (Sequence targetTable targetColumn) =
+validateRemoveSequence :: Schema -> SequenceName -> Maybe Sequence -> Either ValidationFailed ()
+validateRemoveSequence _ _ Nothing = pure () -- unowned sequences can (probably) be removes all the time
+validateRemoveSequence s sName (Just (Sequence targetTable targetColumn)) =
   let mbCol = do
         tbl <- M.lookup targetTable (schemaTables s)
         col <- M.lookup targetColumn (tableColumns tbl)
-        pure $ any hasNextValConstraint (S.toList (columnConstraints col))
+        pure $ any hasNextValConstraint (columnDefault (columnConstraints col))
    in case mbCol of
         Just True ->
           let reason = ColumnStillReferencesSequence sName (Qualified targetTable targetColumn)
            in Left $ InvalidRemoveSequence sName reason
         _ -> Right ()
   where
-    hasNextValConstraint :: ColumnConstraint -> Bool
-    hasNextValConstraint (Default defTxt) = case parseSequenceName (SequenceName defTxt) of
-      Just (tName, cName) | tName == targetTable && cName == targetColumn -> True
-      _ -> False
+    hasNextValConstraint :: DefaultConstraint -> Bool
+    hasNextValConstraint (Autoincrement {}) = True
     hasNextValConstraint _ = False
 
 -- | Validate that adding a new 'TableConstraint' doesn't violate referential integrity.
-validateAddTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
+validateAddTableConstraint :: Schema -> TableName -> Table -> SomeTableConstraint -> Either ValidationFailed ()
 validateAddTableConstraint = validateTableConstraint
 
 -- | Removing a Table constraint is valid IFF:
@@ -295,13 +327,13 @@ validateAddTableConstraint = validateTableConstraint
 -- 2. For a 'Unique', we must check that none of the columns appear in any 'ForeignKey' of of the other
 --    tables.
 -- 3. For a 'ForeignKey', no check is necessary.
-validateRemoveTableConstraint :: Schema -> TableName -> TableConstraint -> Either ValidationFailed ()
+validateRemoveTableConstraint :: Schema -> TableName -> SomeTableConstraint -> Either ValidationFailed ()
 validateRemoveTableConstraint s tName c = case c of
-  PrimaryKey _ cols ->
+  SomePrimaryKey (PrimaryKey cols) _ ->
     forM_ (M.toList allOtherTables) (checkIntegrity (map (Qualified tName) . S.toList $ cols))
-  Unique _ cols ->
+  SomeUnique (Unique cols) _ ->
     forM_ (M.toList allOtherTables) (checkIntegrity (map (Qualified tName) . S.toList $ cols))
-  ForeignKey {} -> Right ()
+  SomeForeignKey (ForeignKey {}) _ -> Right ()
   where
     allOtherTables :: Tables
     allOtherTables = M.delete tName (schemaTables s)
@@ -326,26 +358,26 @@ validateRemoveColumn s tName colName = mapM_ checkIntegrity (M.toList (schemaTab
           let reason = TableReferencesDeletedColumnInConstraint otherTblName (Qualified tName colName) constr
            in Left $ InvalidRemoveColumn (Qualified tName colName) reason
 
--- | Removing a column constraint will violate referential integrity if the constraint is 'NotNull' and
--- this column appears in the primary key.
-validateRemoveColumnConstraint ::
-  Table ->
-  Qualified ColumnName ->
-  ColumnConstraint ->
-  Either ValidationFailed ()
-validateRemoveColumnConstraint tbl (Qualified tName colName) = \case
-  NotNull -> mapM_ checkIntegrity (tableConstraints tbl)
-  Default _ -> pure ()
-  where
-    checkIntegrity :: TableConstraint -> Either ValidationFailed ()
-    checkIntegrity constr = case constr of
-      PrimaryKey _ cols ->
-        let reason = ColumnInPrimaryKeyCantBeNull (Qualified tName colName)
-         in if S.member colName cols
-              then Left $ InvalidRemoveColumnConstraint (Qualified tName colName) reason
-              else Right ()
-      ForeignKey {} -> Right ()
-      Unique {} -> Right ()
+-- -- | Removing a column constraint will violate referential integrity if the constraint is 'NotNull' and
+-- -- this column appears in the primary key.
+-- validateRemoveColumnConstraint ::
+--   Table ->
+--   Qualified ColumnName ->
+--   -- ColumnConstraint ->
+--   Either ValidationFailed ()
+-- validateRemoveColumnConstraint tbl (Qualified tName colName) = \case
+--   NotNull -> mapM_ checkIntegrity (tableConstraintsToList $ tableConstraints tbl)
+--   Default _ -> pure ()
+--   where
+--     checkIntegrity :: SomeTableConstraint -> Either ValidationFailed ()
+--     checkIntegrity constr = case constr of
+--       SomePrimaryKey (PrimaryKey cols) _ ->
+--         let reason = ColumnInPrimaryKeyCantBeNull (Qualified tName colName)
+--          in if S.member colName cols
+--               then Left $ InvalidRemoveColumnConstraint (Qualified tName colName) reason
+--               else Right ()
+--       SomeForeignKey {} -> Right ()
+--       SomeUnique {} -> Right ()
 
 -- | Convert a 'ValidationFailed' into an 'ApplyFailed'.
 toApplyFailed :: Edit -> ValidationFailed -> ApplyFailed
@@ -366,13 +398,15 @@ applyEdits (sortEdits -> edits) s = foldM applyEdit s (map (fst . unPriority) ed
 
 applyEdit :: Schema -> Edit -> Either ApplyFailed Schema
 applyEdit s edit@(Edit e _safety) = runExcept $ case e of
-  EditAction_Automatic ea -> case ea of
+  EditAction_Manual eam -> case eam of
+    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName tName)
+  EditAction_Automatic eaa -> case eaa of
     TableAdded tName tbl -> liftEither $ do
       tables' <-
         M.alterF
           ( \case
               -- Constaints are added as a separate edit step.
-              Nothing -> Right (Just tbl {tableConstraints = mempty})
+              Nothing -> Right (Just tbl {tableConstraints = noTableConstraints})
               Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
           )
           tName
@@ -380,20 +414,31 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       pure $ s {schemaTables = tables'}
     TableRemoved tName ->
       withExistingTable tName edit s (removeTable edit s tName)
-    TableConstraintAdded tName con ->
-      withExistingTable tName edit s (addTableConstraint edit s con tName)
+    PrimaryKeyAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomePrimaryKey con conOpt) tName)
+    UniqueConstraintAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomeUnique con conOpt) tName)
+    ForeignKeyAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomeForeignKey con conOpt) tName)
+
     TableConstraintRemoved tName con ->
       withExistingTable tName edit s (removeTableConstraint edit s con tName)
+    RenameConstraint tName oldName newName ->
+      withExistingTable tName edit s (renameTableConstraint edit s oldName newName tName)
     ColumnAdded tName colName col ->
       withExistingTable tName edit s (addColumn edit colName col)
     ColumnRemoved tName colName ->
       withExistingTable tName edit s (removeColumn edit s colName tName)
     ColumnTypeChanged tName colName oldType newType ->
       withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
-    ColumnConstraintAdded tName colName con ->
-      withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
-    ColumnConstraintRemoved tName colName con ->
-      withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
+    ColumnNullableChanged tName colName cCon ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnNullable cCon)
+    ColumnDefaultChanged _ tName colName cCon ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnDefault cCon)
+    -- ColumnConstraintAdded tName colName con ->
+    --   withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
+    -- ColumnConstraintRemoved tName colName con ->
+    --   withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
     EnumTypeAdded eName enum -> liftEither $ do
       enums' <-
         M.alterF
@@ -420,8 +465,43 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       pure $ s {schemaSequences = seqs'}
     SequenceRemoved sName ->
       withExistingSequence sName edit s (removeSequence edit s sName)
-  EditAction_Manual ea -> case ea of
-    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName)
+
+    SequenceRenamed oldName newName -> flip execStateT s $ do
+      -- delete the old sequence, returning its owner
+      oldSeq <- _schemaSequences . at oldName <<.= Nothing
+      -- verify the sequence actually existed.
+      oldOwner <- case oldSeq of
+        Nothing -> throwError (InvalidEdit edit (SequenceDoesntExist oldName))
+        Just o -> pure o
+      -- create the new sequence.
+      _schemaSequences . at newName .= oldSeq
+      -- update the default on the owning column
+      forM_ oldOwner $ \(Sequence tName cName) -> do
+        -- overwrite the old constraint with the new name or have a bad time.
+        First oldDflt <- _schemaTables . ix tName . _tableColumns . ix cName . _columnConstraints . _columnDefault . _Unwrapped
+          <<.= First (Just $ Autoincrement $ Just newName)
+
+        case oldDflt of
+          Just (Autoincrement (Just oldName'))
+            | oldName == oldName' -> pure () -- everything's fine.
+          _ -> throwError $ InvalidEdit edit $ ColumnDoesNotDefaultToOwnedSequence tName cName oldName
+
+
+    SequenceSetOwner sName newOwner -> flip execStateT s $ do
+      -- verify that the new owner exists.
+      -- we don't want to actually *create* the default constraint; that's a different edit.
+      case newOwner of
+        Nothing -> pure ()
+        Just (Sequence tName cName) -> do
+          existingCol <- preuse (_schemaTables . ix tName . _tableColumns . ix cName)
+          forM_ (preview _Nothing existingCol) $ \() ->
+            throwError (InvalidEdit edit $ ColumnDoesntExist $ Qualified tName cName)
+      -- update the sequence with a new owner
+      oldSeq <- _schemaSequences . at sName <<.= Just newOwner
+      case oldSeq of
+        Nothing -> throwError (InvalidEdit edit (SequenceDoesntExist sName))
+        Just _ -> pure ()
+
 --
 -- Various combinators for specific parts of a Schema
 --
@@ -436,8 +516,7 @@ addColumn e colName col tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-          -- Constraints are added as a separate edit step.
-          Nothing -> Right (Just col {columnConstraints = mempty})
+          Nothing -> Right (Just col)
           Just existing -> Left (InvalidEdit e (ColumnAlreadyExist colName existing))
       )
       colName
@@ -449,7 +528,7 @@ removeColumn e s colName tName tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-          Nothing -> Left (InvalidEdit e (ColumnDoesntExist colName))
+          Nothing -> Left (InvalidEdit e (ColumnDoesntExist $ Qualified tName colName))
           Just _ -> first (toApplyFailed e) (validateRemoveColumn s tName colName) >> pure Nothing
       )
       colName
@@ -462,9 +541,10 @@ renameColumn ::
   -- | old name
   ColumnName ->
   -- | new name
+  TableName ->
   Table ->
   Either ApplyFailed (Maybe Table)
-renameColumn e oldName newName tbl = do
+renameColumn e oldName newName tName tbl = do
   let oldColumns = tableColumns tbl
 
   case M.lookup newName oldColumns of
@@ -472,7 +552,7 @@ renameColumn e oldName newName tbl = do
     Just c -> throwError $ InvalidEdit e $ ColumnAlreadyExist newName c
 
   c <- case M.lookup oldName oldColumns of
-    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist oldName
+    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist (Qualified tName oldName)
     Just c -> pure c
 
   let
@@ -496,39 +576,19 @@ changeColumnType e colName oldType newType col =
     then Left $ InvalidEdit e (ColumnTypeMismatch colName col oldType)
     else pure . Just $ col {columnType = newType}
 
-addColumnConstraint ::
-  Edit ->
-  TableName ->
-  ColumnConstraint ->
-  ColumnName ->
+changeColumnNullable ::
+  NullableConstraint ->
   Column ->
   Either ApplyFailed (Maybe Column)
-addColumnConstraint e tName constr colName col =
-  let constraints = columnConstraints col
-   in if S.member constr constraints
-        then Left (InvalidEdit e (ColumnConstraintAlreadyExist (Qualified tName colName) constr))
-        else pure . Just $ col {columnConstraints = S.insert constr constraints}
+changeColumnNullable newNullable col = pure . Just $
+  set (_columnConstraints . _columnNullable) newNullable col
 
-removeColumnConstraint ::
-  Edit ->
-  Table ->
-  TableName ->
-  ColumnName ->
-  ColumnConstraint ->
+changeColumnDefault ::
+  Maybe DefaultConstraint ->
   Column ->
   Either ApplyFailed (Maybe Column)
-removeColumnConstraint e tbl tName colName constr col = do
-  let constraints = columnConstraints col
-  constraints' <-
-    if S.member constr constraints
-      then removeConstraint constraints
-      else Left (InvalidEdit e (ColumnConstraintDoesntExist (Qualified tName colName) constr))
-  pure . Just $ col {columnConstraints = constraints'}
-  where
-    removeConstraint :: S.Set ColumnConstraint -> Either ApplyFailed (S.Set ColumnConstraint)
-    removeConstraint constraints = runExcept . withExcept (toApplyFailed e) . liftEither $ do
-      validateRemoveColumnConstraint tbl (Qualified tName colName) constr
-      pure (S.delete constr constraints)
+changeColumnDefault newDflt col = pure . Just $
+  set (_columnConstraints . _columnDefault) newDflt col
 
 -- | Performs an action over an existing 'Table', failing if the 'Table' doesn't exist.
 withExistingTable ::
@@ -565,7 +625,7 @@ withExistingColumn tName colName e s action =
         columns' <-
           M.alterF
             ( \case
-                Nothing -> Left (InvalidEdit e (ColumnDoesntExist colName))
+                Nothing -> Left (InvalidEdit e (ColumnDoesntExist $ Qualified tName colName))
                 Just existing -> action tbl existing
             )
             colName
@@ -596,7 +656,7 @@ withExistingSequence ::
   SequenceName ->
   Edit ->
   Schema ->
-  (Sequence -> Either ApplyFailed (Maybe Sequence)) ->
+  (Maybe Sequence -> Either ApplyFailed (Maybe (Maybe Sequence))) ->
   Except ApplyFailed Schema
 withExistingSequence sName e s action = liftEither $ do
   seqs' <-
@@ -612,42 +672,111 @@ withExistingSequence sName e s action = liftEither $ do
 addTableConstraint ::
   Edit ->
   Schema ->
-  TableConstraint ->
+  SomeTableConstraint ->
   TableName ->
   Table ->
   Either ApplyFailed (Maybe Table)
 addTableConstraint e s con tName tbl = liftEither $ do
-  let constraints = tableConstraints tbl
-  constraints' <-
-    if S.member con constraints
-      then Left (InvalidEdit e (TableConstraintAlreadyExist tName con))
-      else addConstraint constraints
-  pure $ Just tbl {tableConstraints = constraints'}
+  case someTableConstraintName con of
+    Nothing -> pure ()
+    Just conName -> do
+      let (removedCons, _) = removeTableConstraintNamed conName (tableConstraints tbl)
+      if not $ S.null removedCons
+        then Left (InvalidEdit e (TableConstraintAlreadyExist tName removedCons))
+        else pure ()
+
+  let (conflicts, constraints') = replaceSomeTableConstraint con (tableConstraints tbl)
+
+  case conflicts of
+    Just con' -> Left (InvalidEdit e (TableConstraintAlreadyExist tName $ S.singleton con'))
+    Nothing -> do
+      addConstraint
+      pure $ Just $ tbl {tableConstraints = constraints'}
+
   where
-    addConstraint :: S.Set TableConstraint -> Either ApplyFailed (S.Set TableConstraint)
-    addConstraint cons = runExcept . withExcept (toApplyFailed e) . liftEither $ do
+    addConstraint :: Either ApplyFailed ()
+    addConstraint = runExcept . withExcept (toApplyFailed e) . liftEither $ do
       validateAddTableConstraint s tName tbl con
-      pure $ S.insert con cons
+
+-- | remove a constraint by name, and return all constraints with the name that were removed
+removeTableConstraintNamed :: ConstraintName -> TableConstraints -> (S.Set SomeTableConstraint, TableConstraints)
+removeTableConstraintNamed cName (TableConstraints pk fk uq) = do
+  pk' <- case pk of
+    Nothing -> pure Nothing
+    Just (pkCon, pkOpts) -> if uniqueConstraintName pkOpts == Just cName
+      then (S.singleton $ SomePrimaryKey pkCon pkOpts, Nothing)
+      else pure $ Just (pkCon, pkOpts)
+  fk' <- forM (M.toList fk) $ \c@(fkCon, fkOpts) ->
+    if foreignKeyConstraintName fkOpts == Just cName
+      then (S.singleton $ SomeForeignKey fkCon fkOpts, Nothing)
+      else pure $ Just c
+  uq' <- forM (M.toList uq) $ \c@(uqCon, uqOpts) ->
+    if uniqueConstraintName uqOpts == Just cName
+      then (S.singleton $ SomeUnique uqCon uqOpts, Nothing)
+      else pure $ Just c
+  pure $ TableConstraints pk' (M.fromList $ catMaybes fk') (M.fromList $ catMaybes uq')
+
+-- | overwrite a table constraint and return the semantically equivalent one, if it exists
+replaceSomeTableConstraint :: SomeTableConstraint -> TableConstraints -> (Maybe SomeTableConstraint, TableConstraints)
+replaceSomeTableConstraint constr constraints = case constr of
+  SomePrimaryKey c co ->
+    ( uncurry SomePrimaryKey <$> primaryKeyConstraint constraints
+    , constraints {primaryKeyConstraint = Just (c, co)}
+    )
+  SomeUnique c co ->
+    ( SomeUnique c <$> constraints ^. _uniqueConstraints . at c
+    , set (_uniqueConstraints . at c) (Just co) constraints
+    )
+  SomeForeignKey c co ->
+    ( SomeForeignKey c <$> constraints ^. _foreignKeyConstraints . at c
+    , set (_foreignKeyConstraints . at c) (Just co) constraints
+    )
+
+renameTableConstraint ::
+  Edit ->
+  Schema ->
+  ConstraintName ->
+  ConstraintName ->
+  TableName ->
+  Table ->
+  Either ApplyFailed (Maybe Table)
+renameTableConstraint e s conName newConName tName tbl = liftEither $ do
+  let constraints = tableConstraints tbl
+  let (removedConstraints, constraints') = removeTableConstraintNamed conName constraints
+  if not $ S.null removedConstraints --  con constraints
+    then removeConstraint removedConstraints
+    else Left (InvalidEdit e (TableConstraintDoesntExist tName conName))
+
+  tbl' <- foldlM
+    (\t c -> fmap join $ forM t $ addTableConstraint e s (set _someTableConstraintName (Just newConName) c) tName ) -- (addTableConstraint e s)
+    (Just tbl {tableConstraints = constraints'})
+    removedConstraints
+
+  pure $ tbl'
+  where
+    removeConstraint :: S.Set SomeTableConstraint -> Either ApplyFailed ()
+    removeConstraint cons = runExcept . withExcept (toApplyFailed e) . liftEither $ do
+      forM_ cons $ validateRemoveTableConstraint s tName
 
 removeTableConstraint ::
   Edit ->
   Schema ->
-  TableConstraint ->
+  ConstraintName ->
   TableName ->
   Table ->
   Either ApplyFailed (Maybe Table)
-removeTableConstraint e s con tName tbl = liftEither $ do
+removeTableConstraint e s conName tName tbl = liftEither $ do
   let constraints = tableConstraints tbl
-  constraints' <-
-    if S.member con constraints
-      then removeConstraint constraints
-      else Left (InvalidEdit e (TableConstraintDoesntExist tName con))
+  let (removedConstraints, constraints') = removeTableConstraintNamed conName constraints
+  if not $ S.null removedConstraints --  con constraints
+    then removeConstraint removedConstraints
+    else Left (InvalidEdit e (TableConstraintDoesntExist tName conName))
+
   pure $ Just tbl {tableConstraints = constraints'}
   where
-    removeConstraint :: S.Set TableConstraint -> Either ApplyFailed (S.Set TableConstraint)
+    removeConstraint :: S.Set SomeTableConstraint -> Either ApplyFailed ()
     removeConstraint cons = runExcept . withExcept (toApplyFailed e) . liftEither $ do
-      validateRemoveTableConstraint s tName con
-      pure $ S.delete con cons
+      forM_ cons $ validateRemoveTableConstraint s tName
 
 removeEnum ::
   Edit ->
@@ -674,9 +803,9 @@ addValueToEnum e eName addedValue insOrder insPoint (Enumeration vals) =
     Before ->
       case L.elemIndex insPoint vals of
         Nothing -> Left (InvalidEdit e (EnumInsertionPointDoesntExist eName (Enumeration vals) insPoint))
-        Just ix | ix == 0 -> pure . Just $ Enumeration (addedValue : vals)
-        Just ix ->
-          let (hd, tl) = L.splitAt (ix - 1) vals
+        Just i | i == 0 -> pure . Just $ Enumeration (addedValue : vals)
+        Just i ->
+          let (hd, tl) = L.splitAt (i - 1) vals
            in pure . Just $ Enumeration (hd <> (addedValue : tl))
     After ->
       let (hd, tl) = L.break (insPoint ==) vals
@@ -686,8 +815,8 @@ removeSequence ::
   Edit ->
   Schema ->
   SequenceName ->
-  Sequence ->
-  Either ApplyFailed (Maybe Sequence)
+  Maybe Sequence ->
+  Either ApplyFailed (Maybe (Maybe Sequence))
 removeSequence e s sName sqss = runExcept . withExcept (toApplyFailed e) . liftEither $ do
   validateRemoveSequence s sName sqss
   pure Nothing
