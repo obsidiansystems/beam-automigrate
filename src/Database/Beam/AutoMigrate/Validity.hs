@@ -30,6 +30,7 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
+import Lens.Micro ((&))
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
 -- unique globally (for which we need the 'TableName' to disambiguate things).
@@ -175,17 +176,12 @@ validateTableConstraint s tName tbl c = case c of
 -- 'Enum' type which doesn't exist.
 validateColumn :: Schema -> TableName -> (ColumnName, Column) -> Either [ValidationFailed] ()
 validateColumn s tName (colName, col) =
-  when (isPgEnum $ columnType col) $
-    forM_ (M.keys $ schemaEnumerations s) $ \eName ->
-      case getAlt $ lookupEnumRef eName (colName, col) of
-        Nothing ->
-          let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
-           in Left [InvalidColumn (Qualified tName colName) reason]
-        Just _ -> Right ()
-  where
-    isPgEnum :: ColumnType -> Bool
-    isPgEnum (PgSpecificType (PgEnumeration _)) = True
-    isPgEnum _ = False
+  case lookupEnum (colName, col) of
+    Nothing -> Right ()
+    Just eName | eName `elem` M.keys (schemaEnumerations s) -> Right ()
+    Just eName ->
+      let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
+       in Left [InvalidColumn (Qualified tName colName) reason]
 
 -- | A 'Schema' enum is considered always valid in this context /except/ if it contains duplicate values.
 validateSchemaEnums :: Schema -> Either [ValidationFailed] ()
@@ -241,11 +237,17 @@ lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName
       Unique _ _ -> Nothing
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
+lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
+lookupEnum (colName, col) =
+  case columnType col of
+    PgSpecificType (PgEnumeration eName) -> Just eName
+    _ -> Nothing
+
+-- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnumRef :: EnumerationName -> (ColumnName, Column) -> Alt Maybe ColumnName
 lookupEnumRef eName (colName, col) = Alt $
   case columnType col of
-    PgSpecificType (PgEnumeration eName') ->
-      if eName' == eName then Just colName else Nothing
+    PgSpecificType (PgEnumeration eName') | eName == eName' -> Just colName
     _ -> Nothing
 
 -- | Removing an 'Enum' is valid if none of the 'Schema's tables have columns of this type.
@@ -364,60 +366,62 @@ applyEdits (sortEdits -> edits) s = foldM applyEdit s (map (fst . unPriority) ed
 
 applyEdit :: Schema -> Edit -> Either ApplyFailed Schema
 applyEdit s edit@(Edit e _safety) = runExcept $ case e of
-  TableAdded tName tbl -> liftEither $ do
-    tables' <-
-      M.alterF
-        ( \case
-            -- Constaints are added as a separate edit step.
-            Nothing -> Right (Just tbl {tableConstraints = mempty})
-            Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
-        )
-        tName
-        (schemaTables s)
-    pure $ s {schemaTables = tables'}
-  TableRemoved tName ->
-    withExistingTable tName edit s (removeTable edit s tName)
-  TableConstraintAdded tName con ->
-    withExistingTable tName edit s (addTableConstraint edit s con tName)
-  TableConstraintRemoved tName con ->
-    withExistingTable tName edit s (removeTableConstraint edit s con tName)
-  ColumnAdded tName colName col ->
-    withExistingTable tName edit s (addColumn edit colName col)
-  ColumnRemoved tName colName ->
-    withExistingTable tName edit s (removeColumn edit s colName tName)
-  ColumnTypeChanged tName colName oldType newType ->
-    withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
-  ColumnConstraintAdded tName colName con ->
-    withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
-  ColumnConstraintRemoved tName colName con ->
-    withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
-  EnumTypeAdded eName enum -> liftEither $ do
-    enums' <-
-      M.alterF
-        ( \case
-            Nothing -> Right (Just enum)
-            Just existing -> Left (InvalidEdit edit (EnumAlreadyExist eName existing))
-        )
-        eName
-        (schemaEnumerations s)
-    pure $ s {schemaEnumerations = enums'}
-  EnumTypeRemoved eName ->
-    withExistingEnum eName edit s (removeEnum edit s eName)
-  EnumTypeValueAdded eName addedValue insOrder insPoint ->
-    withExistingEnum eName edit s (addValueToEnum edit eName addedValue insOrder insPoint)
-  SequenceAdded sName seqq -> liftEither $ do
-    seqs' <-
-      M.alterF
-        ( \case
-            Nothing -> Right (Just seqq)
-            Just existing -> Left (InvalidEdit edit (SequenceAlreadyExist sName existing))
-        )
-        sName
-        (schemaSequences s)
-    pure $ s {schemaSequences = seqs'}
-  SequenceRemoved sName ->
-    withExistingSequence sName edit s (removeSequence edit s sName)
-
+  EditAction_Automatic ea -> case ea of
+    TableAdded tName tbl -> liftEither $ do
+      tables' <-
+        M.alterF
+          ( \case
+              -- Constaints are added as a separate edit step.
+              Nothing -> Right (Just tbl {tableConstraints = mempty})
+              Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
+          )
+          tName
+          (schemaTables s)
+      pure $ s {schemaTables = tables'}
+    TableRemoved tName ->
+      withExistingTable tName edit s (removeTable edit s tName)
+    TableConstraintAdded tName con ->
+      withExistingTable tName edit s (addTableConstraint edit s con tName)
+    TableConstraintRemoved tName con ->
+      withExistingTable tName edit s (removeTableConstraint edit s con tName)
+    ColumnAdded tName colName col ->
+      withExistingTable tName edit s (addColumn edit colName col)
+    ColumnRemoved tName colName ->
+      withExistingTable tName edit s (removeColumn edit s colName tName)
+    ColumnTypeChanged tName colName oldType newType ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
+    ColumnConstraintAdded tName colName con ->
+      withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
+    ColumnConstraintRemoved tName colName con ->
+      withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
+    EnumTypeAdded eName enum -> liftEither $ do
+      enums' <-
+        M.alterF
+          ( \case
+              Nothing -> Right (Just enum)
+              Just existing -> Left (InvalidEdit edit (EnumAlreadyExist eName existing))
+          )
+          eName
+          (schemaEnumerations s)
+      pure $ s {schemaEnumerations = enums'}
+    EnumTypeRemoved eName ->
+      withExistingEnum eName edit s (removeEnum edit s eName)
+    EnumTypeValueAdded eName addedValue insOrder insPoint ->
+      withExistingEnum eName edit s (addValueToEnum edit eName addedValue insOrder insPoint)
+    SequenceAdded sName seqq -> liftEither $ do
+      seqs' <-
+        M.alterF
+          ( \case
+              Nothing -> Right (Just seqq)
+              Just existing -> Left (InvalidEdit edit (SequenceAlreadyExist sName existing))
+          )
+          sName
+          (schemaSequences s)
+      pure $ s {schemaSequences = seqs'}
+    SequenceRemoved sName ->
+      withExistingSequence sName edit s (removeSequence edit s sName)
+  EditAction_Manual ea -> case ea of
+    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName)
 --
 -- Various combinators for specific parts of a Schema
 --
@@ -432,7 +436,7 @@ addColumn e colName col tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-          -- Constaints are added as a separate edit step.
+          -- Constraints are added as a separate edit step.
           Nothing -> Right (Just col {columnConstraints = mempty})
           Just existing -> Left (InvalidEdit e (ColumnAlreadyExist colName existing))
       )
@@ -451,6 +455,32 @@ removeColumn e s colName tName tbl = liftEither $ do
       colName
       (tableColumns tbl)
   pure $ Just tbl {tableColumns = columns'}
+
+renameColumn ::
+  Edit ->
+  ColumnName ->
+  -- | old name
+  ColumnName ->
+  -- | new name
+  Table ->
+  Either ApplyFailed (Maybe Table)
+renameColumn e oldName newName tbl = do
+  let oldColumns = tableColumns tbl
+
+  case M.lookup newName oldColumns of
+    Nothing -> pure ()
+    Just c -> throwError $ InvalidEdit e $ ColumnAlreadyExist newName c
+
+  c <- case M.lookup oldName oldColumns of
+    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist oldName
+    Just c -> pure c
+
+  let
+    newColumns = oldColumns
+      & M.delete oldName
+      & M.insert newName c
+
+  pure $ Just $ tbl {tableColumns = newColumns}
 
 changeColumnType ::
   Edit ->
