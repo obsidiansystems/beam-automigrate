@@ -334,8 +334,8 @@ data AlterTableAction
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax e =
-  safetyPrefix $
-    _editAction e & \case
+  safetyPrefix $ _editAction e & \case
+    EditAction_Automatic ea -> case ea of
       TableAdded tblName tbl ->
         ddlSyntax
           ( "CREATE TABLE " <> sqlEscaped (tableName tblName)
@@ -395,6 +395,14 @@ toSqlSyntax e =
               <> sqlEscaped (columnName colName)
               <> " DROP "
               <> renderColumnConstraint DropConstraint cstr
+          )
+    EditAction_Manual ea -> case ea of
+      ColumnRenamed tblName oldName newName ->
+        updateSyntax
+          ( alterTable tblName <> "RENAME COLUMN "
+            <> sqlEscaped (columnName oldName)
+            <> " TO "
+            <> sqlEscaped (columnName newName)
           )
   where
     safetyPrefix query =
@@ -595,8 +603,8 @@ prettyEditSQL :: Edit -> Text
 prettyEditSQL = T.pack . displaySyntax . Pg.fromPgCommand . editToSqlCommand
 
 prettyEditActionDescription :: EditAction -> Text
-prettyEditActionDescription =
-  T.unwords . \case
+prettyEditActionDescription = T.unwords . \case
+  EditAction_Automatic ea -> case ea of
     TableAdded tblName table ->
       ["create table:", qt tblName, "\n", pshow' table]
     TableRemoved tblName ->
@@ -653,6 +661,15 @@ prettyEditActionDescription =
       ["add sequence:", qs sequenceName, pshow' sequence0]
     SequenceRemoved sequenceName ->
       ["remove sequence:", qs sequenceName]
+  EditAction_Manual ea -> case ea of
+    ColumnRenamed tblName oldName newName ->
+      [ "rename column in table:",
+        qt tblName,
+        "\nfrom:",
+        qc oldName,
+        "\nto:",
+        qc newName
+      ]
   where
     q t = "'" <> t <> "'"
     qt = q . tableName
@@ -692,7 +709,7 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
-        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) (sortEdits edits)
 
         try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
