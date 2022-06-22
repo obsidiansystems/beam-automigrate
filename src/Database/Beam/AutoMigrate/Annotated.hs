@@ -24,6 +24,7 @@ module Database.Beam.AutoMigrate.Annotated
     dbAnnotatedConstraints,
     annotatedDescriptor,
     defaultTableSchema,
+    GDefaultTableSchema(..),
 
     -- * Downcasting annotated types
     lowerEntityDescriptor,
