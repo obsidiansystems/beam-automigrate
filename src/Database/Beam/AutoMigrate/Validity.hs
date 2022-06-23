@@ -1,6 +1,5 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# OPTIONS_GHC -Wall -Werror #-}
 
 module Database.Beam.AutoMigrate.Validity
   ( -- * Types
@@ -358,6 +357,14 @@ validateRemoveColumn s tName colName = mapM_ checkIntegrity (M.toList (schemaTab
           let reason = TableReferencesDeletedColumnInConstraint otherTblName (Qualified tName colName) constr
            in Left $ InvalidRemoveColumn (Qualified tName colName) reason
 
+changeColumnNullable ::
+  NullableConstraint ->
+  Column ->
+  Either ApplyFailed (Maybe Column)
+changeColumnNullable newNullable col = pure . Just $
+  -- TODO: validateRemoveColumnConstraint!!!
+  set (_columnConstraints . _columnNullable) newNullable col
+
 -- -- | Removing a column constraint will violate referential integrity if the constraint is 'NotNull' and
 -- -- this column appears in the primary key.
 -- validateRemoveColumnConstraint ::
@@ -433,7 +440,7 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
     ColumnNullableChanged tName colName cCon ->
       withExistingColumn tName colName edit s (\_ -> changeColumnNullable cCon)
-    ColumnDefaultChanged _ tName colName cCon ->
+    ColumnDefaultChanged tName colName cCon ->
       withExistingColumn tName colName edit s (\_ -> changeColumnDefault cCon)
     -- ColumnConstraintAdded tName colName con ->
     --   withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
@@ -575,13 +582,6 @@ changeColumnType e colName oldType newType col =
   if columnType col /= oldType
     then Left $ InvalidEdit e (ColumnTypeMismatch colName col oldType)
     else pure . Just $ col {columnType = newType}
-
-changeColumnNullable ::
-  NullableConstraint ->
-  Column ->
-  Either ApplyFailed (Maybe Column)
-changeColumnNullable newNullable col = pure . Just $
-  set (_columnConstraints . _columnNullable) newNullable col
 
 changeColumnDefault ::
   Maybe DefaultConstraint ->

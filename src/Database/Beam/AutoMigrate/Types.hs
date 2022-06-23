@@ -6,8 +6,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 module Database.Beam.AutoMigrate.Types where
 
 import Control.DeepSeq
@@ -273,13 +271,6 @@ data DefaultConstraint
 
 instance NFData DefaultConstraint
 
--- data ColumnConstraint
---   = NotNull
---   | Default DefaultConstraint {- the actual default -}
---   deriving (Show, Eq, Ord, Generic)
---
--- instance NFData ColumnConstraint
-
 data ReferenceAction
   = NoAction
   | Restrict
@@ -322,7 +313,7 @@ data AutomaticEditAction
   | ColumnRemoved TableName ColumnName
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
   | ColumnNullableChanged TableName ColumnName NullableConstraint {- is nullable -}
-  | ColumnDefaultChanged String TableName ColumnName (Maybe DefaultConstraint)
+  | ColumnDefaultChanged TableName ColumnName (Maybe DefaultConstraint)
   | EnumTypeAdded EnumerationName Enumeration
   | EnumTypeRemoved EnumerationName
   | EnumTypeValueAdded EnumerationName Text {- added value -} InsertionOrder Text {- insertion point -}
@@ -436,7 +427,7 @@ instance NFData AutomaticEditAction where
   rnf (ColumnRemoved tName colName) = tName `deepseq` colName `deepseq` ()
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
   rnf (ColumnNullableChanged tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
-  rnf (ColumnDefaultChanged _ tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
+  rnf (ColumnDefaultChanged tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
   rnf (EnumTypeAdded eName enum) = eName `deepseq` enum `deepseq` ()
   rnf (EnumTypeRemoved eName) = eName `deepseq` ()
   rnf (EnumTypeValueAdded eName inserted order insertionPoint) =

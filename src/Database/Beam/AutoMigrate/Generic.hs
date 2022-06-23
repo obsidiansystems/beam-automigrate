@@ -9,7 +9,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module Database.Beam.AutoMigrate.Generic where

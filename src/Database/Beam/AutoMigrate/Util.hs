@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 module Database.Beam.AutoMigrate.Util where
 
 import Control.Applicative.Lift

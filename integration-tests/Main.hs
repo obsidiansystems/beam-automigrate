@@ -23,7 +23,6 @@ import Data.Generics.Aliases (mkT)
 import Data.Generics.Schemes (everywhere)
 import Data.Int
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import PostgresqlSyntax.Ast

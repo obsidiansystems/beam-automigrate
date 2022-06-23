@@ -3,8 +3,6 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 -- | This is a module which adapts and simplifies certain things normally provided by "beam-migrate", but
 --     without the extra complication of importing and using the library itself.
 module Database.Beam.AutoMigrate.Compat where
@@ -23,7 +21,6 @@ import Data.UUID
 import Data.Word
 import qualified Database.Beam as Beam
 import Database.Beam.AutoMigrate.Types
--- import qualified Database.Beam.AutoMigrate.Util as Util
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.Beam.Postgres as Pg
