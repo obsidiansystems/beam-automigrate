@@ -28,6 +28,7 @@ module Database.Beam.AutoMigrate
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
     tryRunMigrationsWithEditUpdate,
+    calcMigrationSteps,
 
     -- * Creating a migration from a Diff
     createMigration,
@@ -267,8 +268,14 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
   -- intervene in the event of unsafe edits.
   let newEdits = sortEdits $ editUpdate $ sortEdits edits
   -- If the new list of edits still contains any unsafe edits then fail out.
+
+  when (newEdits /= sortEdits edits) $ do
+    putStrLn "Changes requested to diff induced migration. Attempting..."
+    prettyPrintEdits newEdits
+
   when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
     throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
     Pg.runBeamPostgres conn $
@@ -333,8 +340,8 @@ data AlterTableAction
 -- | Converts a single 'Edit' into the relevant 'PgSyntax' necessary to generate the final SQL.
 toSqlSyntax :: Edit -> Pg.PgSyntax
 toSqlSyntax e =
-  safetyPrefix $
-    _editAction e & \case
+  safetyPrefix $ _editAction e & \case
+    EditAction_Automatic ea -> case ea of
       TableAdded tblName tbl ->
         ddlSyntax
           ( "CREATE TABLE " <> sqlEscaped (tableName tblName)
@@ -394,6 +401,14 @@ toSqlSyntax e =
               <> sqlEscaped (columnName colName)
               <> " DROP "
               <> renderColumnConstraint DropConstraint cstr
+          )
+    EditAction_Manual ea -> case ea of
+      ColumnRenamed tblName oldName newName ->
+        updateSyntax
+          ( alterTable tblName <> "RENAME COLUMN "
+            <> sqlEscaped (columnName oldName)
+            <> " TO "
+            <> sqlEscaped (columnName newName)
           )
   where
     safetyPrefix query =
@@ -594,8 +609,8 @@ prettyEditSQL :: Edit -> Text
 prettyEditSQL = T.pack . displaySyntax . Pg.fromPgCommand . editToSqlCommand
 
 prettyEditActionDescription :: EditAction -> Text
-prettyEditActionDescription =
-  T.unwords . \case
+prettyEditActionDescription = T.unwords . \case
+  EditAction_Automatic ea -> case ea of
     TableAdded tblName table ->
       ["create table:", qt tblName, "\n", pshow' table]
     TableRemoved tblName ->
@@ -652,6 +667,15 @@ prettyEditActionDescription =
       ["add sequence:", qs sequenceName, pshow' sequence0]
     SequenceRemoved sequenceName ->
       ["remove sequence:", qs sequenceName]
+  EditAction_Manual ea -> case ea of
+    ColumnRenamed tblName oldName newName ->
+      [ "rename column in table:",
+        qt tblName,
+        "\nfrom:",
+        qc oldName,
+        "\nto:",
+        qc newName
+      ]
   where
     q t = "'" <> t <> "'"
     qt = q . tableName
@@ -660,6 +684,9 @@ prettyEditActionDescription =
 
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
+
+prettyPrintEdits :: [WithPriority Edit] -> IO ()
+prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) (sortEdits edits)
 
 -- | Compare the existing schema in the database with the expected
 -- schema in Haskell and try to edit the existing schema as necessary
@@ -692,10 +719,34 @@ tryRunMigrationsWithEditUpdate annotatedDb editUpdate conn = do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
-        putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) edits
+        prettyPrintEdits edits
 
         try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
             error $ "Database migration error: " <> displayException e
           Right _ ->
             pure ()
+
+-- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
+-- database schema to the given one, without actually performing the migration.
+calcMigrationSteps
+  :: ( Generic (db (DatabaseEntity be db))
+     , (Generic (db (AnnotatedDatabaseEntity be db)))
+     , Database be db
+     , (GZipDatabase be
+         (AnnotatedDatabaseEntity be db)
+         (AnnotatedDatabaseEntity be db)
+         (DatabaseEntity be db)
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (AnnotatedDatabaseEntity be db)))
+         (Rep (db (DatabaseEntity be db)))
+       )
+     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+     )
+  => AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO Diff
+calcMigrationSteps annotatedDb conn = do
+    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    actualDatabaseSchema <- getSchema conn
+    pure $ diff expectedHaskellSchema actualDatabaseSchema
