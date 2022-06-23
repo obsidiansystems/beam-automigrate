@@ -4,6 +4,7 @@ in
     name = "beam-automigrate";
     buildInputs = [
       pkgs.cabal-install
+      pkgs.ghcid
     ];
     inputsFrom = [
       (import ./release.nix).ghc865.env
