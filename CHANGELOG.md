@@ -10,6 +10,10 @@
   * Foreign keys can now be configured to reference columns that are different from the table's primary key.  in general this feature is much easier to use; passing a function that projects out the desired columns from both tables.
   * foreign keys can now be partially nullable. (see foreignKeyOnNullable)
   * Many instances of database entities being dropped and recreated instead of altered are now supported.
+* Add `showMigration`
+* Extend allowable version bounds for aeson and splitmix
+* Add support for postgres' oid column type
+* Add `calcMigrationSteps` function to compute the `Diff` that will be performed by a migration without altering the database.
 
 ## 0.1.2.0
 

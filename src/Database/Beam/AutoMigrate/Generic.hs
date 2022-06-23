@@ -162,7 +162,10 @@ mkTableEntryNoFkDiscovery ::
 mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
-      pks = noTableConstraints {primaryKeyConstraint = Just (PrimaryKey $ S.fromList $ pkFieldNames entity, def)} -- TODO: expose default?
+      pkColSet = S.fromList $ pkFieldNames entity
+      pks = if S.null pkColSet
+        then noTableConstraints
+        else noTableConstraints {primaryKeyConstraint = Just (PrimaryKey pkColSet, def)} -- TODO: expose default?
       (columns, seqs) = gColumns (Proxy @ 'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)

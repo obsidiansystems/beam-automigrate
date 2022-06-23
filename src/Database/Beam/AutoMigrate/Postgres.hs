@@ -179,7 +179,6 @@ foreignKeysQ =
   fromString $
     unlines
       [ "SELECT c.conname                                 AS constraint_name,",
-        -- "   c.contype                                     AS constraint_type,",
         "   sch.nspname                                   AS self_schema,",
         "   tbl.relname                                   AS self_table,",
         "   ARRAY_AGG(col.attname ORDER BY u.attposition) AS self_columns,",
@@ -302,7 +301,7 @@ getSchema conn = do
             M.lookup columnName x
 
       case asum
-        [ -- pgSerialTyColumnType atttypid mbDefault,
+        [ pgSerialTyColumnType atttypid mbDefault, -- TODO Is this necessary
           pgTypeToColumnType atttypid mbPrecision,
           pgEnumTypeToColumnType enumData atttypid
         ] of
@@ -405,6 +404,8 @@ pgTypeToColumnType oid width
     Just (PgSpecificType PgRangeDate)
   | Pg.typoid Pg.uuid == oid =
     Just (PgSpecificType PgUuid)
+  | Pg.typoid Pg.oid == oid =
+    Just (PgSpecificType PgOid)
   | otherwise =
     Nothing
 
@@ -500,7 +501,7 @@ getAllConstraints conn = do
       let columnSet = S.fromList . V.toList $ sqlCon_fk_colums
       case sqlCon_constraint_type of
         SQL_raw_unique -> addUniqConstraint currentTable (Unique columnSet) (UniqueConstraintOptions (Just sqlCon_name))
-        SQL_raw_pk -> addPKConstraint currentTable (PrimaryKey columnSet) (UniqueConstraintOptions (Just sqlCon_name))
+        SQL_raw_pk -> if S.null columnSet then return () else addPKConstraint currentTable (PrimaryKey columnSet) (UniqueConstraintOptions (Just sqlCon_name))
 
 newtype ReferenceActions = ReferenceActions {getActions :: Map ConstraintName Actions}
 

@@ -49,7 +49,7 @@ newtype Priority = Priority Word8 deriving (Show, Eq, Ord)
 
 newtype WithPriority a = WithPriority {unPriority :: (a, Priority)} deriving (Show, Eq, Ord)
 
-editPriority :: EditAction -> Priority
+editPriority :: AutomaticEditAction -> Priority
 editPriority = \case
   -- Operations that create tables, sequences or enums have top priority
   EnumTypeAdded {} -> Priority 0
@@ -77,7 +77,7 @@ editPriority = \case
   SequenceRenamed {} -> Priority 17
 
 -- TODO: This needs to support adding conditional queries.
-mkEdit :: EditAction -> WithPriority Edit
+mkEdit :: AutomaticEditAction -> WithPriority Edit
 mkEdit e = WithPriority (defMkEdit e, editPriority e)
 
 -- | Sort edits according to their execution order, to make sure they don't reference
@@ -225,8 +225,8 @@ diffTablesReferenceImplementation hsTables dbTables = do
       pure $ e <> d
 
 addEdit
-  :: (k -> v -> EditAction)
-  -> (k -> v -> [EditAction])
+  :: (k -> v -> AutomaticEditAction)
+  -> (k -> v -> [AutomaticEditAction])
   -> (k, v)
   -> [WithPriority Edit]
 addEdit onValue onConstr (k, v) =

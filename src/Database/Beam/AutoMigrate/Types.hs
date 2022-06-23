@@ -116,6 +116,9 @@ instance Semigroup TableConstraints where
 
 instance NFData TableConstraints
 
+instance IsString TableName where
+  fromString = TableName . T.pack
+
 data Table = Table
   { tableConstraints :: TableConstraints,
     tableColumns :: Columns
@@ -178,6 +181,7 @@ data PgDataType
   | PgRangeDate
   | PgUuid
   | PgEnumeration EnumerationName
+  | PgOid
 
 deriving instance Show PgDataType
 
@@ -283,6 +287,15 @@ instance NFData ReferenceAction
 
 -- | A possible list of edits on a 'Schema'.
 data EditAction
+  = EditAction_Manual ManualEditAction
+  | EditAction_Automatic AutomaticEditAction
+  deriving (Show, Eq)
+
+data ManualEditAction
+  = ColumnRenamed TableName ColumnName {- old name -} ColumnName {- new name -}
+  deriving (Show, Eq)
+
+data AutomaticEditAction
   = TableAdded TableName Table
   | TableRemoved TableName
 
@@ -321,7 +334,7 @@ data EditSafety
   | Unsafe
   deriving (Show, Eq, Ord)
 
-defaultEditSafety :: EditAction -> EditSafety
+defaultEditSafety :: AutomaticEditAction -> EditSafety
 defaultEditSafety = \case
   SequenceRenamed {} -> Safe
   SequenceSetOwner {} -> Safe
@@ -383,10 +396,10 @@ editCondition = lens _editCondition (\(Edit ea _) ec -> Edit ea ec)
 editSafetyIs :: EditSafety -> Edit -> Bool
 editSafetyIs s = fromMaybe False . preview (editCondition . _Right . to (== s))
 
-mkEditWith :: (EditAction -> EditSafety) -> EditAction -> Edit
-mkEditWith isSafe e = Edit e (Right $ isSafe e)
+mkEditWith :: (AutomaticEditAction -> EditSafety) -> AutomaticEditAction -> Edit
+mkEditWith isSafe e = Edit (EditAction_Automatic e) (Right $ isSafe e)
 
-defMkEdit :: EditAction -> Edit
+defMkEdit :: AutomaticEditAction -> Edit
 defMkEdit = mkEditWith defaultEditSafety
 
 data InsertionOrder
@@ -396,8 +409,15 @@ data InsertionOrder
 
 instance NFData InsertionOrder
 
--- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData EditAction where
+  rnf (EditAction_Automatic ea) = rnf ea
+  rnf (EditAction_Manual ea) = rnf ea
+
+instance NFData ManualEditAction where
+  rnf (ColumnRenamed tName oldName newName) = tName `deepseq` oldName `deepseq` newName `deepseq` ()
+
+-- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
+instance NFData AutomaticEditAction where
   rnf (TableAdded tName tbl) = tName `deepseq` tbl `deepseq` ()
   rnf (TableRemoved tName) = rnf tName
   rnf (UniqueConstraintAdded tName tCon tOpts) = tName `deepseq` tCon `deepseq` tOpts `deepseq` ()
