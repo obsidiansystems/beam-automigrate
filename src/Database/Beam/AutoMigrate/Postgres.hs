@@ -301,8 +301,7 @@ getSchema conn = do
             M.lookup columnName x
 
       case asum
-        [ pgSerialTyColumnType atttypid mbDefault, -- TODO Is this necessary
-          pgTypeToColumnType atttypid mbPrecision,
+        [ pgTypeToColumnType atttypid mbPrecision,
           pgEnumTypeToColumnType enumData atttypid
         ] of
         Just cType -> do
@@ -327,16 +326,6 @@ pgEnumTypeToColumnType ::
   Maybe ColumnType
 pgEnumTypeToColumnType enumData oid =
   (\(n, _) -> PgSpecificType (PgEnumeration n)) <$> M.lookup oid enumData
-
--- XXX: I don't understand how this comes to a different answer to pgTypeToColumnType
--- pgSerialTyColumnType ::
---   Pg.Oid ->
---   Maybe ColumnConstraint ->
---   Maybe ColumnType
--- pgSerialTyColumnType oid (Just (Default d)) = do
---   guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
---   pure $ SqlStdType intType
--- pgSerialTyColumnType _ _ = Nothing
 
 -- | Tries to convert from a Postgres' 'Oid' into 'ColumnType'.
 -- Mostly taken from [beam-migrate](Database.Beam.Postgres.Migrate).
@@ -536,8 +525,6 @@ mkAction c = case c of
 --
 -- Useful combinators to add constraints for a column or table if already there.
 --
-
-
 
 addFKConstraint :: TableName -> ForeignKey -> ForeignKeyConstraintOptions -> State AllTableConstraints ()
 addFKConstraint tName cns cnso = addTableConstraint tName $ noTableConstraints
