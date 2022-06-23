@@ -6,8 +6,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 
-
-{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Database.Beam.AutoMigrate.Postgres

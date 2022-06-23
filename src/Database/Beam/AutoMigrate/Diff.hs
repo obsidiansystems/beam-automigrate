@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 module Database.Beam.AutoMigrate.Diff
   ( Diffable (..),
     Diff,
@@ -99,23 +97,14 @@ class Diffable a where
 -- or returning the list of 'Edit's necessary to turn the first into the second.
 instance Diffable Schema where
   diff hsSchema dbSchema = do
-    -- traceM "Diffable Schema"
     tableDiffs <- diff (schemaTables hsSchema) (schemaTables dbSchema)
-    -- traceM "Diffable Schema tableDiffs"
     enumDiffs <- diff (schemaEnumerations hsSchema) (schemaEnumerations dbSchema)
-    -- traceM "Diffable Schema tableDiffs enumDiffs"
 
     let hsSequences = diffableSequences hsSchema
-    -- traceM $ "Diffable Schema hsSequences: " <> show hsSequences
 
-    -- traceM $ "Diffable Schema dbSchema.schemaSequences: " <> show (schemaSequences dbSchema)
-    -- traceM $ "Diffable Schema dbSchema.schemaTables: " <> show (schemaTables dbSchema)
     let dbSequences = diffableSequences dbSchema
-    -- traceM $ "Diffable Schema dbSequences: " <> show dbSequences
 
     sequenceDiffs <- diff hsSequences dbSequences
-    -- traceM "Diffable Schema tableDiffs sequenceDiffs"
-    -- traceM "Diffable Schema OK"
     pure $ tableDiffs <> enumDiffs <> sequenceDiffs
 
 instance Diffable Tables where
@@ -126,8 +115,6 @@ instance Diffable Enumerations where
 
 instance Diffable DiffableSequences where
   diff s1 = fmap D.toList . diffSequences s1
-
-
 
 --
 -- Reference implementation
@@ -226,23 +213,23 @@ diffTablesReferenceImplementation hsTables dbTables = do
   pure $ whenAdded tablesAdded <> whenRemoved tablesRemoved <> whenBoth
   where
     whenAdded :: Tables -> [WithPriority Edit]
-    whenAdded = concatMap (addEdit' TableAdded (\k -> addTableConstraints k . tableConstraints)) . M.toList
+    whenAdded = concatMap (addEdit TableAdded (\k -> addTableConstraints k . tableConstraints)) . M.toList
 
     whenRemoved :: Tables -> [WithPriority Edit]
     whenRemoved =
-      concatMap (addEdit' (\k _ -> TableRemoved k) (\k -> dropTableConstraints k . tableConstraints)) . M.toList
+      concatMap (addEdit (\k _ -> TableRemoved k) (\k -> dropTableConstraints k . tableConstraints)) . M.toList
 
     go :: [WithPriority Edit] -> ((TableName, Table), (TableName, Table)) -> Diff
     go e ((hsName, hsTable), (dbName, dbTable)) = assert (hsName == dbName) $ do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
 
-addEdit'
+addEdit
   :: (k -> v -> EditAction)
   -> (k -> v -> [EditAction])
   -> (k, v)
   -> [WithPriority Edit]
-addEdit' onValue onConstr (k, v) =
+addEdit onValue onConstr (k, v) =
   mkEdit (onValue k v) : fmap mkEdit (onConstr k v)
 
 diffTableReferenceImplementation :: TableName -> Table -> Table -> Diff
@@ -284,7 +271,7 @@ diffColumnReferenceImplementation tName colName hsColumn dbColumn = execWriterT 
     -- as a special case, filter out the places where we "learned" the sequence name.
     case on (,) (columnDefault . columnConstraints) hsColumn dbColumn of
       (Just (Autoincrement Nothing), Just (Autoincrement _)) -> pure ()
-      _ -> tell $ pure $ mkEdit $ ColumnDefaultChanged "diffColRI" tName colName $ columnDefault $ columnConstraints hsColumn
+      _ -> tell $ pure $ mkEdit $ ColumnDefaultChanged tName colName $ columnDefault $ columnConstraints hsColumn
 --
 -- Actual implementation
 --
@@ -364,7 +351,6 @@ diffSequences :: DiffableSequences -> DiffableSequences -> DiffA DList
 diffSequences
   (DiffableSequences hsSeqs hsCols _)
   (DiffableSequences dbSeqs dbCols dbColNames) = execWriterT $ do
-    -- traceM "diffSequences START"
     let -- organise the dbSeqs by their owner.
         dbSeqsInv = ifoldMap (\k v -> maybe M.empty (flip M.singleton k) v) dbSeqs
         (hsSeqs', hsCols') = ifor hsCols $ \s@(Sequence tName cName) sName ->
@@ -376,12 +362,11 @@ diffSequences
     -- we only keep the sequences we want to rename.
     renames <- mergeA
       (traverseMaybeMissing $ \(Sequence tName cName) sName -> do -- new autoincrement columns
-        -- traceM "diffSequences rename hsMissing"
-        forM_ sName $ tell . pure . mkEdit . ColumnDefaultChanged "diffSeq hscol" tName cName . Just . Autoincrement . Just
+        forM_ sName $ tell . pure . mkEdit . ColumnDefaultChanged tName cName . Just . Autoincrement . Just
         pure Nothing
         )
       (traverseMaybeMissing $ \(Sequence tName cName) sName -> do -- old autoincrement columns
-        forM_ sName $ \_ -> tell . pure . mkEdit $ ColumnDefaultChanged "diffSeq dbCol" tName cName Nothing
+        forM_ sName $ \_ -> tell . pure . mkEdit $ ColumnDefaultChanged tName cName Nothing
         pure Nothing
         )
       (zipWithMaybeAMatched $ \_ ->
@@ -401,7 +386,6 @@ diffSequences
           oldOwner <- at oldName <<.= Nothing
           at newName .= oldOwner
 
-    -- traceM "diffSequences renames"
     _ <- mergeA
       (traverseMaybeMissing $ \sName seqOwner -> do
         tell $ pure $ mkEdit $ SequenceAdded sName seqOwner
@@ -419,7 +403,6 @@ diffSequences
       (M.union hsSeqs hsSeqs')
       dbSeqs'
 
-    -- traceM "diffSequences OK"
     pure ()
 
 --

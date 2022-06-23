@@ -1,5 +1,3 @@
-
-{-# OPTIONS_GHC -Wall -Werror #-}
 -- | a fragment of a parser that can parse some of the sql that appears in postgres schema catalogs.
 --
 -- see "postgres/src/backend/parser/gram.y"

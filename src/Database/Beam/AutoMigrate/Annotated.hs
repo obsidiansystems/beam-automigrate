@@ -6,7 +6,6 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
 {-# OPTIONS_GHC -Wno-duplicate-exports #-}
 
 -- | This module provides an 'AnnotatedDatabaseSettings' type to be used as a drop-in replacement for the
@@ -272,9 +271,6 @@ _dbAnnotatedSchema = \a2fb s -> (\b -> s {dbAnnotatedSchema = b}) <$> a2fb (dbAn
 _dbAnnotatedConstraints :: Lens.Lens' (AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)) TableConstraints
 _dbAnnotatedConstraints = \a2fb s -> (\b -> s {dbAnnotatedConstraints = b}) <$> a2fb (dbAnnotatedConstraints s)
 {-# INLINE _dbAnnotatedConstraints #-}
-
-
--- _dbAnnotatedConstraints :: Lens' (AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)) TableConstraints
 
 -- | A 'Getter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
 lowerEntityDescriptor :: Getter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
@@ -596,20 +592,6 @@ mkForeignKeyConstraint e ourColumn externalEntity theirColumn =
           (fieldAsColumnNames (theirColumn (tableSettings externalEntity)))
       tName = externalEntity ^. dbEntityDescriptor . dbEntityName
   in ForeignKey (TableName tName) (S.fromList colPairs)
-
-
-        -- ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
-        --     AnnotatedDatabaseEntity
-        --       ( tbl
-        --           { dbAnnotatedConstraints =
-        --                   conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
-
-        --                in S.insert
-        --                     (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-        --                     (dbAnnotatedConstraints tbl)
-        --           }
-        --       )
-        --       e
 
 foreignKeyOnWithOptions ::
   ( Beam.Beamable tbl'

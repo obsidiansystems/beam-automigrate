@@ -1,7 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 module Database.Beam.AutoMigrate.BenchUtil
   ( SpineStrict (..),
     predictableSchemas,

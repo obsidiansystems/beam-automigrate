@@ -9,8 +9,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
 
-{-# OPTIONS_GHC -Wall -Werror #-}
-
 -- | This module provides the high-level API to migrate a database.
 module Database.Beam.AutoMigrate
   ( -- * Annotating a database
@@ -381,9 +379,6 @@ toSqlSyntax e =
               <> sqlEscaped (columnName colName)
               <> " "
               <> renderDataTypeAdd col
-              -- <> " "
-              -- <> renderAddColumnConstraint col
-              -- <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
           )
       ColumnRemoved tblName colName ->
         updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
@@ -402,7 +397,7 @@ toSqlSyntax e =
               Null -> " DROP NOT NULL"
               NotNull -> " SET NOT NULL"
           )
-      ColumnDefaultChanged _ tblName colName dfltConst -> 
+      ColumnDefaultChanged tblName colName dfltConst -> 
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
             <> sqlEscaped (columnName colName)
@@ -426,8 +421,6 @@ toSqlSyntax e =
     renderTableAddedColumn (colName, col) =
       sqlEscaped (columnName colName) <> " "
         <> renderDataTypeAdd col
-        -- <> " "
-        -- <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
 
     renderInsertionOrder :: InsertionOrder -> Text
     renderInsertionOrder Before = "BEFORE"
@@ -466,9 +459,6 @@ toSqlSyntax e =
       Nothing -> ""
       Just (ConstraintName fname) -> "CONSTRAINT " <> sqlEscaped fname
 
-    -- renderAddConstraint :: TableConstraint -> Text
-    -- renderAddConstraint = mappend "ADD " . renderCreateTableConstraint
-
     renderDropConstraint :: ConstraintName -> Text
     renderDropConstraint = mappend "DROP CONSTRAINT " . sqlEscaped . unConsraintName
 
@@ -478,16 +468,6 @@ toSqlSyntax e =
       Restrict -> " " <> actionPrefix <> " " <> "RESTRICT "
       SetNull -> " " <> actionPrefix <> " " <> "SET NULL "
       SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
-
-    -- renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
-    -- renderColumnConstraint act = \case
-    --   NotNull -> "NOT NULL"
-    --   Default (Autoincrement Nothing) -> "" -- Don't render the default, use "serial/bigserial" as tye type instead
-    --   Default defValue | act == SetConstraint -> "DEFAULT " <> case defValue of
-    --     DefaultExpr defValueExpr -> defValueExpr
-    --     Autoincrement x -> flip foldMap x $ \(SequenceName sName) ->
-    --       "nextval(" <> sqlSingleQuoted sName <> "::regclass)"
-    --   Default _ -> "DEFAULT"
 
     createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
     createTypeSyntax (EnumerationName ty) (Enumeration vals) =
@@ -692,24 +672,8 @@ prettyEditActionDescription =
       ]
     ColumnNullableChanged tblName colName nullConstr ->
       ["column:", qq tblName colName, " chanted to ", pshow' nullConstr]
-    ColumnDefaultChanged _ tblName colName dfltConstr ->
+    ColumnDefaultChanged tblName colName dfltConstr ->
       ["column:", qq tblName colName, " default changed to ", pshow' dfltConstr]
-    -- ColumnConstraintAdded tblName colName columnConstraint ->
-    --   [ "add column constraint to:",
-    --     qc colName,
-    --     "in table:",
-    --     qt tblName,
-    --     "\n",
-    --     pshow' columnConstraint
-    --   ]
-    -- ColumnConstraintRemoved tblName colName columnConstraint ->
-    --   [ "remove column constraint from:",
-    --     qc colName,
-    --     "in table:",
-    --     qt tblName,
-    --     "\n",
-    --     pshow' columnConstraint
-    --   ]
     EnumTypeAdded eName enumeration ->
       ["add enum type:", enumName eName, pshow' enumeration]
     EnumTypeRemoved eName ->
@@ -762,15 +726,10 @@ tryRunMigrationsWithEditUpdate
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate annotatedDb conn = do
-    -- putStrLn "tryRunMigrationsWithEditUpdate START"
 
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
-    -- putStrLn "tryRunMigrationsWithEditUpdate expectedHaskellSchema"
-    -- putStrLn $ show expectedHaskellSchema
 
     actualDatabaseSchema <- getSchema conn
-    -- putStrLn "tryRunMigrationsWithEditUpdate actualDatabaseSchema"
-    -- putStrLn $ show actualDatabaseSchema
 
     case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
       Left err -> do
