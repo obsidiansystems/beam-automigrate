@@ -33,7 +33,7 @@ let
     ghc884 = nixos2003.haskell.packages.ghc884.override {
       overrides = beam-overrides;
     };
-    ghc8102 = unstable.haskell.packages.ghc8102.override {
+    ghc8107 = unstable.haskell.packages.ghc8107.override {
       overrides = beam-overrides;
     };
   };
