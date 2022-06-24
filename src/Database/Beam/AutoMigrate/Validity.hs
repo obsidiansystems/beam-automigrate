@@ -33,7 +33,6 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
-import Control.Lens ((&))
 
 data SomeTableConstraint
   = SomePrimaryKey PrimaryKeyConstraint UniqueConstraintOptions
@@ -271,7 +270,7 @@ lookupColumnRef thisTable (tableConstraintsToList . tableConstraints -> constr) 
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
-lookupEnum (_colName, col) =
+lookupEnum (_, col) =
   case columnType col of
     PgSpecificType (PgEnumeration eName) -> Just eName
     _ -> Nothing
@@ -427,7 +426,6 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       withExistingTable tName edit s (addTableConstraint edit s (SomeUnique con conOpt) tName)
     ForeignKeyAdded tName con conOpt ->
       withExistingTable tName edit s (addTableConstraint edit s (SomeForeignKey con conOpt) tName)
-
     TableConstraintRemoved tName con ->
       withExistingTable tName edit s (removeTableConstraint edit s con tName)
     RenameConstraint tName oldName newName ->
@@ -442,10 +440,6 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       withExistingColumn tName colName edit s (\_ -> changeColumnNullable cCon)
     ColumnDefaultChanged tName colName cCon ->
       withExistingColumn tName colName edit s (\_ -> changeColumnDefault cCon)
-    -- ColumnConstraintAdded tName colName con ->
-    --   withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
-    -- ColumnConstraintRemoved tName colName con ->
-    --   withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
     EnumTypeAdded eName enum -> liftEither $ do
       enums' <-
         M.alterF
@@ -563,9 +557,7 @@ renameColumn e oldName newName tName tbl = do
     Just c -> pure c
 
   let
-    newColumns = oldColumns
-      & M.delete oldName
-      & M.insert newName c
+    newColumns = M.insert newName c (M.delete oldName oldColumns)
 
   pure $ Just $ tbl {tableColumns = newColumns}
 

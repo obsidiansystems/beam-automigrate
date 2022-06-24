@@ -202,9 +202,7 @@ newtype DbEnum a
 newtype ConstraintName = ConstraintName { unConsraintName :: Text }
   deriving (IsString, Eq, Ord, Show, NFData)
 
-data PrimaryKeyConstraint = PrimaryKey
-      -- | This set of 'Column's identifies the Table's 'PrimaryKey'.
-      (Set ColumnName)
+data PrimaryKeyConstraint = PrimaryKey (Set ColumnName) -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
   deriving (Eq, Ord, Show, Generic)
 
 
@@ -213,9 +211,9 @@ instance Semigroup PrimaryKeyConstraint where
 
 instance NFData PrimaryKeyConstraint
 
-  -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
-    -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
-    -- The set stores a (fk_column, pk_column) correspondence.
+-- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
+-- of the table where the foreign key is actually defined (in terms of references).
+-- The set stores a (fk_column, pk_column) correspondence.
 data ForeignKey = ForeignKey
   TableName
   (Set (ColumnName, ColumnName))

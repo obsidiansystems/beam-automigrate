@@ -577,7 +577,6 @@ foreignKeyOn ::
 foreignKeyOn externalEntity ourColumn theirColumn =
   foreignKeyOnWithOptions externalEntity ourColumn theirColumn def
 
--- mkForeignKeyConstraint :: 
 mkForeignKeyConstraint
   :: (Beam.Beamable key, Beam.Beamable tbl')
   => DatabaseEntity be db (TableEntity tbl)
@@ -609,7 +608,10 @@ foreignKeyOnWithOptions externalEntity ourColumn theirColumn options =
     ( Endo
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
             AnnotatedDatabaseEntity
-              ( tbl Lens.& Lens.over (_dbAnnotatedConstraints . _foreignKeyConstraints) (<> M.singleton (mkForeignKeyConstraint e ourColumn externalEntity theirColumn) options)
+              ( Lens.over
+                  (_dbAnnotatedConstraints . _foreignKeyConstraints)
+                  (<> M.singleton (mkForeignKeyConstraint e ourColumn externalEntity theirColumn) options)
+                  tbl
               )
               e
         )
