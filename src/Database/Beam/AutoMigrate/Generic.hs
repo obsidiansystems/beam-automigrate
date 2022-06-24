@@ -143,7 +143,7 @@ instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (g (TableFieldSchema tbl2))))
 
 instance GTableEntry be db anns 'False (S1 f x) => GTables be db anns (S1 f x) where
   gTables db p x =
-    let (tbls, sqs) = gTableEntries db p (Proxy @ 'False) x
+    let (tbls, sqs) = gTableEntries db p (Proxy @'False) x
      in (M.fromList tbls, sqs)
 
 instance GTableEntry be db anns tableFound x => GTableEntry be db anns tableFound (S1 f x) where
@@ -166,7 +166,7 @@ mkTableEntryNoFkDiscovery annEntity =
       pks = if S.null pkColSet
         then noTableConstraints
         else noTableConstraints {primaryKeyConstraint = Just (PrimaryKey pkColSet, def)} -- TODO: expose default?
-      (columns, seqs) = gColumns (Proxy @ 'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
+      (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
 
