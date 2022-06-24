@@ -143,6 +143,7 @@ executable beam-automigrate-examples
     , beam-core
     , beam-postgres
     , bytestring
+    , data-default-class
     , postgresql-simple
     , text
     , time

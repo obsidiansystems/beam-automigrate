@@ -33,7 +33,6 @@ import qualified Data.Set as S
 import Data.Text (Text)
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
-import Lens.Micro ((&))
 
 data SomeTableConstraint
   = SomePrimaryKey PrimaryKeyConstraint UniqueConstraintOptions
@@ -271,7 +270,7 @@ lookupColumnRef thisTable (tableConstraintsToList . tableConstraints -> constr) 
 
 -- | Check that the input 'Column's type matches the input 'EnumerationName'.
 lookupEnum :: (ColumnName, Column) -> Maybe EnumerationName
-lookupEnum (colName, col) =
+lookupEnum (_, col) =
   case columnType col of
     PgSpecificType (PgEnumeration eName) -> Just eName
     _ -> Nothing
@@ -411,7 +410,7 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
         M.alterF
           ( \case
               -- Constaints are added as a separate edit step.
-              Nothing -> Right (Just tbl {tableConstraints = mempty})
+              Nothing -> Right (Just tbl {tableConstraints = noTableConstraints})
               Just existing -> Left (InvalidEdit edit (TableAlreadyExist tName existing))
           )
           tName
@@ -419,20 +418,26 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       pure $ s {schemaTables = tables'}
     TableRemoved tName ->
       withExistingTable tName edit s (removeTable edit s tName)
-    TableConstraintAdded tName con ->
-      withExistingTable tName edit s (addTableConstraint edit s con tName)
+    PrimaryKeyAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomePrimaryKey con conOpt) tName)
+    UniqueConstraintAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomeUnique con conOpt) tName)
+    ForeignKeyAdded tName con conOpt ->
+      withExistingTable tName edit s (addTableConstraint edit s (SomeForeignKey con conOpt) tName)
     TableConstraintRemoved tName con ->
       withExistingTable tName edit s (removeTableConstraint edit s con tName)
+    RenameConstraint tName oldName newName ->
+      withExistingTable tName edit s (renameTableConstraint edit s oldName newName tName)
     ColumnAdded tName colName col ->
       withExistingTable tName edit s (addColumn edit colName col)
     ColumnRemoved tName colName ->
       withExistingTable tName edit s (removeColumn edit s colName tName)
     ColumnTypeChanged tName colName oldType newType ->
       withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
-    ColumnConstraintAdded tName colName con ->
-      withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
-    ColumnConstraintRemoved tName colName con ->
-      withExistingColumn tName colName edit s (\tbl -> removeColumnConstraint edit tbl tName colName con)
+    ColumnNullableChanged tName colName cCon ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnNullable cCon)
+    ColumnDefaultChanged tName colName cCon ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnDefault cCon)
     EnumTypeAdded eName enum -> liftEither $ do
       enums' <-
         M.alterF
@@ -496,7 +501,7 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
         Nothing -> throwError (InvalidEdit edit (SequenceDoesntExist sName))
         Just _ -> pure ()
   EditAction_Manual ea -> case ea of
-    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName)
+    ColumnRenamed tName oldName newName -> withExistingTable tName edit s (renameColumn edit oldName newName tName)
 
 --
 -- Various combinators for specific parts of a Schema
@@ -512,15 +517,7 @@ addColumn e colName col tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-<<<<<<< HEAD
           Nothing -> Right (Just col)
-||||||| e57d339
-          -- Constaints are added as a separate edit step.
-          Nothing -> Right (Just col {columnConstraints = mempty})
-=======
-          -- Constraints are added as a separate edit step.
-          Nothing -> Right (Just col {columnConstraints = mempty})
->>>>>>> develop
           Just existing -> Left (InvalidEdit e (ColumnAlreadyExist colName existing))
       )
       colName
@@ -545,9 +542,10 @@ renameColumn ::
   -- | old name
   ColumnName ->
   -- | new name
+  TableName ->
   Table ->
   Either ApplyFailed (Maybe Table)
-renameColumn e oldName newName tbl = do
+renameColumn e oldName newName tblName tbl = do
   let oldColumns = tableColumns tbl
 
   case M.lookup newName oldColumns of
@@ -555,13 +553,11 @@ renameColumn e oldName newName tbl = do
     Just c -> throwError $ InvalidEdit e $ ColumnAlreadyExist newName c
 
   c <- case M.lookup oldName oldColumns of
-    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist oldName
+    Nothing -> throwError $ InvalidEdit e $ ColumnDoesntExist (Qualified tblName oldName)
     Just c -> pure c
 
   let
-    newColumns = oldColumns
-      & M.delete oldName
-      & M.insert newName c
+    newColumns = M.insert newName c (M.delete oldName oldColumns)
 
   pure $ Just $ tbl {tableColumns = newColumns}
 

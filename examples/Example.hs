@@ -14,6 +14,7 @@ module Example where
 import Control.Exception
 import Data.Aeson.TH
 import Data.ByteString (ByteString)
+import Data.Default.Class
 import Data.Int (Int32, Int64)
 import Data.Proxy
 import Data.Text (Text)
@@ -32,6 +33,8 @@ import Database.Beam.AutoMigrate
     migrate,
     printMigration,
     unsafeRunMigration,
+    onUpdate,
+    onDelete
   )
 import Database.Beam.AutoMigrate.Annotated
 import Database.Beam.AutoMigrate.Postgres (getSchema)
@@ -208,7 +211,7 @@ annotatedDB =
               { orderTime = defaultsTo currentTimestamp_,
                 orderValidity = defaultsTo (range_ Inclusive Inclusive (val_ $ Just 10) (val_ $ Just 20))
               }
-            <> foreignKeyOnPk (dbFlowers flowerDB) orderFlowerIdRef Cascade Restrict
+            <> foreignKeyOnWithOptions (dbFlowers flowerDB) orderFlowerIdRef primaryKey (def { onUpdate = Cascade, onDelete = Restrict })
             <> uniqueConstraintOn [U (addressPostalCode . addressRegion . orderAddress)]
             --, dbLineItemsTwo = foreignKeyOn (dbLineItems flowerDB) [
             --                          lineItemTwoFk `References` LineItemID

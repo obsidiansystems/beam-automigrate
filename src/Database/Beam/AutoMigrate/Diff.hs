@@ -121,7 +121,7 @@ instance Diffable DiffableSequences where
 --
 
 -- | create all of the constraints in a TableConstraints
-addTableConstraints :: TableName -> TableConstraints -> [EditAction]
+addTableConstraints :: TableName -> TableConstraints -> [AutomaticEditAction]
 addTableConstraints tName hsConstraints = concat
   [ toList $ fmap (uncurry $ PrimaryKeyAdded tName) (primaryKeyConstraint hsConstraints)
   , fmap (uncurry $ UniqueConstraintAdded tName) (M.toList $ uniqueConstraints hsConstraints)
@@ -129,7 +129,7 @@ addTableConstraints tName hsConstraints = concat
   ]
 
 -- | drop all of the constraints in a TableConstraints
-dropTableConstraints :: TableName -> TableConstraints -> [EditAction]
+dropTableConstraints :: TableName -> TableConstraints -> [AutomaticEditAction]
 dropTableConstraints tName dbConstraints = concat
   [ toList $ do
     (_, co) <- primaryKeyConstraint dbConstraints --
@@ -146,7 +146,7 @@ dropTableConstraints tName dbConstraints = concat
   ]
 
 -- | alter constraints on a table (including add/remove)
-alterTableConstraints :: TableName -> TableConstraints -> TableConstraints -> [EditAction]
+alterTableConstraints :: TableName -> TableConstraints -> TableConstraints -> [AutomaticEditAction]
 alterTableConstraints tName hsConstraints dbConstraints =
   let
     tableConstraintsDifference l r = TableConstraints
@@ -168,7 +168,7 @@ alterTableConstraints tName hsConstraints dbConstraints =
       (foreignKeyConstraints hsConstraints)
       (foreignKeyConstraints dbConstraints))
 
-renameConstraint :: TableName -> Maybe ConstraintName -> Maybe ConstraintName -> Maybe EditAction
+renameConstraint :: TableName -> Maybe ConstraintName -> Maybe ConstraintName -> Maybe AutomaticEditAction
 renameConstraint tName hsNames dbNames = do
   hsName <- hsNames
   dbName <- dbNames
@@ -176,12 +176,12 @@ renameConstraint tName hsNames dbNames = do
   pure $ RenameConstraint tName dbName hsName
 
 
-alterUniqueConstraint :: TableName -> UniqueConstraintOptions -> UniqueConstraintOptions -> [EditAction]
+alterUniqueConstraint :: TableName -> UniqueConstraintOptions -> UniqueConstraintOptions -> [AutomaticEditAction]
 alterUniqueConstraint tName hsOpts dbOpts = concat
   [ toList $ renameConstraint tName (uniqueConstraintName hsOpts) (uniqueConstraintName dbOpts)
   ]
 
-alterForeignKeyConstraint :: TableName -> ForeignKey -> ForeignKeyConstraintOptions -> ForeignKeyConstraintOptions -> [EditAction]
+alterForeignKeyConstraint :: TableName -> ForeignKey -> ForeignKeyConstraintOptions -> ForeignKeyConstraintOptions -> [AutomaticEditAction]
 alterForeignKeyConstraint tName fkCon hsOpts dbOpts =
   let
     recreate = do

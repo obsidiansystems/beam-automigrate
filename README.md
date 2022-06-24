@@ -61,14 +61,14 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Prelude hiding ((.))
 > import Control.Category ((.))
 > import Data.Proxy (Proxy(..))
-> import Data.Default.Class (def)
 > import Database.Beam.Postgres
 > import Database.Beam.Schema
-> import Database.Beam (val_)
+> import Database.Beam (val_, primaryKey)
 > import qualified Database.Beam.AutoMigrate as BA
 > import Database.PostgreSQL.Simple as Pg
 > import Gargoyle.PostgreSQL.Connect
 > import GHC.Generics
+> import Data.Default.Class
 > import Data.Pool (withResource)
 > import Data.Text
 >
@@ -132,7 +132,7 @@ ambiguity). To do this, we can piggyback on the familiar API from `beam-core`. F
 >       BA.annotateTableFields tableModification { ctCapital = BA.defaultsTo $ val_ False }
 >         <> BA.uniqueConstraintOn [BA.U ctCity, BA.U ctLocation]
 >   , dbWeathers = BA.annotateTableFields tableModification <>
->       BA.foreignKeyOnPkWithOptions (dbCities defaultDbSettings) wtCity def { onDelete = BA.Cascade, onUpdate = BA.Restrict}
+>       BA.foreignKeyOnWithOptions (dbCities defaultDbSettings) wtCity primaryKey def { BA.onDelete = BA.Cascade, BA.onUpdate = BA.Restrict}
 >   }
 
 ```
