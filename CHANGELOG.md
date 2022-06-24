@@ -3,9 +3,10 @@
 ## Unreleased
 
 * Add `showMigration`
-* Extend allowable version bounds for aeson and splitmix
+* Extend allowable version bounds for aeson, base, dlist, pretty-simple, and splitmix
 * Add support for postgres' oid column type
 * Add `calcMigrationSteps` function to compute the `Diff` that will be performed by a migration without altering the database.
+* Support GHC 9.0.2
 
 ## 0.1.2.0
 
