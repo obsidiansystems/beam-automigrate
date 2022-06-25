@@ -160,7 +160,7 @@ executable beam-automigrate-examples
     TypeApplications
     TypeFamilies
 
-  ghc-options:        -Wall -O2 -rtsopts
+  ghc-options:        -Wall -O2 -rtsopts -threaded
 
   if flag(werror)
     ghc-options: -Werror
@@ -181,7 +181,7 @@ executable beam-automigrate-large-migration-test
 
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
-  ghc-options:        -Wall -O2 -rtsopts
+  ghc-options:        -Wall -O2 -rtsopts -threaded
 
 benchmark beam-automigrate-bench
   type:             exitcode-stdio-1.0
@@ -200,7 +200,7 @@ benchmark beam-automigrate-bench
     , splitmix
 
   default-language: Haskell2010
-  ghc-options:      -Wall -O2 -rtsopts
+  ghc-options:      -Wall -O2 -rtsopts -threaded
 
 executable readme
   build-depends:
@@ -215,7 +215,7 @@ executable readme
     , text
   default-language: Haskell2010
   main-is: README.lhs
-  ghc-options: -Wall -optL -q
+  ghc-options: -Wall -optL -q -threaded
 
 flag werror
   description: Enable -Werror during development

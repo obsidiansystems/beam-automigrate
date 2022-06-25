@@ -51,5 +51,28 @@ let
       };
     };
   };
+  nix-filter = import ./nix-filter;
+ filteredSource = nix-filter {
+    root = ../.;
+    # TODO use mapSubdirectories
+    include = [
+      "src/Database/Beam"
+      "src/Database/Beam/AutoMigrate"
+      "src/Database/Beam/AutoMigrate/Schema"
+      "examples"
+      "integration-tests"
+      "large-migration-test"
+      "bench"
+      "tests"
+      "tests/Test/Database/Beam/AutoMigrate"
+      (nix-filter.matchExt "hs")
+      "./beam-automigrate.cabal"
+      "./Setup.hs"
+      "./cabal.project"
+      "./README.md"
+      "./README.lhs"
+      "./LICENSE"
+    ];
+  };
 in
-  lib.mapAttrs (_: ghc: ghc.callCabal2nix "beam-automigrate" ../. {}) ghcs
+  lib.mapAttrs (_: ghc: ghc.callCabal2nix "beam-automigrate" filteredSource {}) ghcs

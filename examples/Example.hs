@@ -226,7 +226,7 @@ hsSchema =
 
 getDbSchema :: String -> IO Schema
 getDbSchema dbName =
-  bracket (connect defaultConnectInfo {connectUser = "adinapoli", connectDatabase = dbName}) close getSchema
+  bracket (connect defaultConnectInfo {connectDatabase = dbName}) close getSchema
 
 getFlowerDbSchema :: IO Schema
 getFlowerDbSchema = getDbSchema "beam-test-db"
