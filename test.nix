@@ -1,6 +1,6 @@
 let pkgs = (import ./.ci/nixpkgs.nix).unstable;
-    dburl = db: pkgs.writeText "${db}-dburl" "postgres:${db}";
-    readmeDb = "readme";
+    # dburl = db: pkgs.writeText "${db}-dburl" "postgres:${db}";
+    # readmeDb = "readme";
     testUser = "test";
 in pkgs.nixosTest ({
   skipLint = true;
@@ -14,8 +14,8 @@ in pkgs.nixosTest ({
       ensureDatabases = [
         "beam-test-db"
         "groundhog-test-db"
-        readmeDb
-        # "beam-migrate-prototype-bench"
+        "readme"
+        "beam-migrate-prototype-bench"
       ];
     };
     services.xserver.enable = false;
@@ -35,16 +35,13 @@ in pkgs.nixosTest ({
     machine.wait_for_open_port(5432)
     machine.execute('logger -t TEST "PostgreSQL has started."')
     
-    machine.execute('logger -t TEST "Running beam-automigrate-examples"')
+    machine.execute('logger -t TEST "Running beam-automigrate-examples..."')
     machine.succeed("beam-automigrate-examples")
 
-    machine.execute('cd /home/${testUser}')
-    machine.copy_from_host("${dburl readmeDb}", "/home/${testUser}/readme-db")
+    machine.execute('logger -t TEST "Running readme..."')
+    machine.succeed('readme ci')
 
-    machine.execute('logger -t TEST "Running readme"')
-    machine.succeed("sudo -u ${testUser} readme headless")
-
-    # machine.execute('logger -t TEST "Running beam-automigrate-large-migration-test"')
+    # machine.execute('logger -t TEST "Running beam-automigrate-large-migration-test..."')
     # machine.succeed("beam-automigrate-large-migration-test")
   '';
 })
