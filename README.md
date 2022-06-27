@@ -70,6 +70,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import GHC.Generics
 > import Data.Pool (withResource)
 > import Data.Text
+> import System.Environment (getArgs)
 >
 > data CitiesT f = City
 >   { ctCity     :: Columnar f Text
@@ -278,6 +279,10 @@ something like this:
 >
 > main :: IO ()
 > main = do
+>   args <- getArgs
+>   let getLine' = case args of
+>         ["headless"] -> return "y"
+>         _ -> getLine
 >   putStrLn "----------------------------------------------------"
 >   putStrLn "MIGRATION PLAN (if migration needed):"
 >   putStrLn "----------------------------------------------------"
@@ -286,7 +291,7 @@ something like this:
 >   putStrLn "MIGRATE?"
 >   putStrLn "----------------------------------------------------"
 >   putStrLn "Would you like to run the migration on the database in the folder \"readme-db\" (will be created if it doesn't exist)? (y/n)"
->   response <- getLine
+>   response <- getLine'
 >   case response of
 >     "y" -> exampleAutoMigration
 >     "Y" -> exampleAutoMigration
