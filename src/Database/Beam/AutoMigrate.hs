@@ -410,7 +410,7 @@ toSqlSyntax e =
           ( alterTable tblName <> "ALTER COLUMN "
             <> sqlEscaped (columnName colName)
             <> case dfltConst of
-              Nothing -> " DROP DEFAULT"
+              Nothing -> " DROP DEFAULT "
               Just d -> " SET " <> renderColumnDefault d
           )
     EditAction_Manual ea -> case ea of
@@ -582,7 +582,7 @@ renderDataTypeAdd col =
   in mconcat
     [ dataType
     , case columnNullable $ columnConstraints col of
-      NotNull -> " NOT NULL"
+      NotNull -> " NOT NULL "
       Null -> " "
     , foldMap renderColumnDefault $ columnDefault $ columnConstraints col
 
@@ -595,7 +595,7 @@ renderDataTypeAdd col =
 renderColumnDefault :: DefaultConstraint -> Text
 renderColumnDefault = \case
   Autoincrement Nothing -> "" -- Don't render the default, use "serial/bigserial" as tye type instead
-  defValue -> "DEFAULT " <> case defValue of
+  defValue -> " DEFAULT " <> case defValue of
     DefaultExpr defValueExpr -> defValueExpr
     Autoincrement x -> flip foldMap x $ \(SequenceName sName) ->
       "nextval(" <> sqlSingleQuoted sName <> "::regclass)"
