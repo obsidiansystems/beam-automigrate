@@ -23,10 +23,10 @@ pgMigrate conn hsSchema =
 main :: IO ()
 main = do
   putStrLn $ "Generating schema with 10_000 tables ..."
-  (hsSchema, dbSchema) <- predictableSchemas 10000
-  --printMigration $ createMigration (diff dbSchema noSchema)
+  (hsSchema, dbSchema) <- predictableSchemas 200
+  -- printMigration $ createMigration (diff dbSchema noSchema)
   putStrLn $ "Generated schema with " ++ show (M.size . schemaTables $ hsSchema) ++ " tables."
-  bracket (setupDatabase dbSchema) tearDownDatabase $ \conn -> do
+  bracket (setupDatabase "beam-migrate-prototype-bench" dbSchema) tearDownDatabase $ \conn -> do
     putStrLn "Starting the migration.."
     startTime <- getCurrentTime
     pgMigrate conn hsSchema

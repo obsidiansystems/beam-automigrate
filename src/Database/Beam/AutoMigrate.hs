@@ -425,7 +425,8 @@ toSqlSyntax e =
     safetyPrefix query =
       if editSafetyIs Safe e
         then Pg.emit "        " <> query
-        else Pg.emit "<UNSAFE>" <> query
+        -- TODO: This used to be "<UNSAFE>", but the tests can't run with that. Consider throwing an exception here.
+        else Pg.emit "/* UNSAFE */ " <> query
 
     ddlSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
     updateSyntax query = Pg.emit . TE.encodeUtf8 $ query <> ";\n"
@@ -582,10 +583,9 @@ renderDataTypeAdd col =
   in mconcat
     [ dataType
     , case columnNullable $ columnConstraints col of
-      NotNull -> " NOT NULL"
+      NotNull -> " NOT NULL "
       Null -> " "
     , foldMap renderColumnDefault $ columnDefault $ columnConstraints col
-
     ]
 
 -- | render the part of a columnconstraint that sets its' default.  This

@@ -3,7 +3,6 @@
 module Database.Beam.AutoMigrate.BenchUtil
   ( SpineStrict (..),
     predictableSchemas,
-    connInfo,
     setupDatabase,
     cleanDatabase,
     tearDownDatabase,
@@ -33,12 +32,12 @@ predictableSchemas tableNum = do
   let r = QCGen (mkSMGen 42)
   return (g r tableNum)
 
-connInfo :: ByteString
-connInfo = "host=localhost port=5432 dbname=beam-migrate-prototype-bench"
+-- connInfo :: ByteString
+-- connInfo = "host=localhost port=5432 dbname=beam-migrate-prototype-bench user=postgres"
 
-setupDatabase :: Schema -> IO Pg.Connection
-setupDatabase dbSchema = do
-  conn <- Pg.connectPostgreSQL connInfo
+setupDatabase :: String -> Schema -> IO Pg.Connection
+setupDatabase dbName dbSchema = do
+  conn <- Pg.connect  Pg.defaultConnectInfo {Pg.connectDatabase = dbName} 
   let mig = createMigration (diff dbSchema noSchema)
   runMigrationUnsafe conn mig -- At this point the DB contains the full schema.
   pure conn
