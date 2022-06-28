@@ -47,9 +47,23 @@ Make sure the project builds and that the tests pass! This will generally also b
 
 To run the same build as our CI server, you can execute `nix-build release.nix`.
 
+##### Running the tests in a VM
+
 To run the integration tests, you can execute `nix-build test.nix`. This will build and run a [NixOS virtual machine](https://nixos.org/guides/integration-testing-using-virtual-machines.html) with postgres and a few beam-automigrate executables (e.g., `readme` and the other executables defined in the [beam-automigrate.cabal](beam-automigrate.cabal)). Those executables will be run inside the VM to verify that they successfully produce the expected database migrations.
 
 To learn more about the NixOS virtual machine testing framework, including how to debug tests interactively, check out the [NixOS manual section on integration testing](https://nixos.org/manual/nixos/stable/index.html#sec-nixos-tests).
+
+##### Running the tests outside a VM
+
+The integration tests can be run outside of the VM by running the following commands:
+
+```bash
+nix-shell
+cabal repl exe:beam-automigrate-integration-tests
+:main --with-gargoyle test-db
+```
+
+This will spin up a local postgresql database using gargoyle in the folder "test-db" (the name of this folder isn't important - you can replace it with whatever you like).
 
 ##### Adding New Tests
 
