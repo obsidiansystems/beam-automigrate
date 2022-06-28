@@ -65,6 +65,7 @@ let
       "bench"
       "tests"
       "tests/Test/Database/Beam/AutoMigrate"
+      "util/Database/Beam/AutoMigrate"
       (nix-filter.matchExt "hs")
       "./beam-automigrate.cabal"
       "./Setup.hs"
