@@ -25,6 +25,11 @@ let
       ver = "0.2";
       sha256 = "1g795yq36n7c6ycs7c0799c3cw78ad0cya6lj4x08m0xnfx98znn";
     } {});
+    postgresql-syntax = dontCheck (self.callHackageDirect {
+      pkg = "postgresql-syntax";
+      ver = "0.4.1";
+      sha256 = "0nwqiq7ffxmmklrcjm2szz5kn9yfdm57i47sq5wny86gnn3z54sz";
+    } {});
   };
   ghcs = rec {
     ghc865 = nixos2003.haskell.packages.ghc865.override {

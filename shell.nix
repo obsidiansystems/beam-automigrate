@@ -7,6 +7,6 @@ in
       pkgs.ghcid
     ];
     inputsFrom = [
-      (import ./release.nix).compilers.ghc865.env
+      (import ./release.nix).compilers.ghc8107.env
     ];
   }
