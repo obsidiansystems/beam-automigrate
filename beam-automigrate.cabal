@@ -81,6 +81,17 @@ library
   if flag(werror)
     ghc-options: -Werror
 
+library beam-automigrate-test-utils
+  hs-source-dirs: util
+  build-depends:
+      base
+    , gargoyle-postgresql-connect
+    , postgresql-simple
+    , resource-pool
+    , tasty
+  exposed-modules:
+    Database.Beam.AutoMigrate.TestUtils
+
 test-suite beam-automigrate-tests
   type:               exitcode-stdio-1.0
   hs-source-dirs:     tests
@@ -99,14 +110,14 @@ test-suite beam-automigrate-tests
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
 
-test-suite beam-automigrate-integration-tests
-  type:               exitcode-stdio-1.0
+executable beam-automigrate-integration-tests
   hs-source-dirs:     integration-tests tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
   build-depends:
       base
     , beam-automigrate
+    , beam-automigrate-test-utils
     , containers
     , postgresql-simple
     , pretty-simple
@@ -114,15 +125,11 @@ test-suite beam-automigrate-integration-tests
     , tasty
     , tasty-quickcheck
     , text
-    , tmp-postgres       >=1.31.0.1 && <1.35.0.0
 
   default-language:   Haskell2010
   default-extensions:
     OverloadedStrings
     ScopedTypeVariables
-
-  if !flag(integration-tests)
-    buildable: False
 
 executable beam-automigrate-examples
   hs-source-dirs:     examples
@@ -201,11 +208,10 @@ executable readme
   build-depends:
       base
     , beam-automigrate
+    , beam-automigrate-test-utils
     , beam-core
     , beam-postgres
-    , gargoyle-postgresql-connect
     , postgresql-simple
-    , resource-pool
     , text
   default-language: Haskell2010
   main-is: README.lhs
@@ -218,11 +224,6 @@ flag werror
 
 flag ghcipretty
   description: Enable pretty-show for pretty-printing purposes
-  default:     False
-  manual:      True
-
-flag integration-tests
-  description: Enable integration tests that talks to a Postgres DB.
   default:     False
   manual:      True
 

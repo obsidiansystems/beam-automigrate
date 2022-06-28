@@ -61,16 +61,14 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > {-# LANGUAGE TypeFamilies #-}
 > import Prelude hiding ((.))
 > import Control.Category ((.))
-> import Control.Exception (bracket)
 > import Data.Proxy (Proxy(..))
 > import Database.Beam.Postgres
 > import Database.Beam.Schema
 > import Database.Beam (val_)
 > import qualified Database.Beam.AutoMigrate as BA
+> import Database.Beam.AutoMigrate.TestUtils
 > import Database.PostgreSQL.Simple as Pg
-> import Gargoyle.PostgreSQL.Connect
 > import GHC.Generics
-> import Data.Pool (withResource)
 > import Data.Text
 > import System.Environment (getArgs)
 >
@@ -272,21 +270,14 @@ something like this:
 > exampleAutoMigration conn =
 >   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
 >
-> -- | Connect to a database using gargoyle or connect directly to an already-running
-> -- postgresql instance
-> withConnection :: Either String ConnectInfo -> (Connection -> IO a) -> IO a
-> withConnection c f = case c of
->   Left db -> withDb db $ \pool -> withResource pool $ f
->   Right connInfo -> bracket (Pg.connect connInfo) Pg.close f
->
 > main :: IO ()
 > main = do
 >   args <- getArgs
 >   let (getLine', connMethod) = case args of
 >         -- The "ci" argument allows the readme to be run and tested in a headless
 >         -- environment (e.g., by a continuous integration server)
->         ["ci"] -> (return "y", Right $ defaultConnectInfo { connectDatabase = "readme" })
->         _ -> (getLine, Left "readme-db")
+>         ["ci"] -> (return "y", ConnMethod_Direct $ defaultConnectInfo { connectDatabase = "readme" })
+>         _ -> (getLine, ConnMethod_Gargoyle "readme-db")
 >   withConnection connMethod $ \conn -> Pg.withTransaction conn$ do
 >     putStrLn "----------------------------------------------------"
 >     putStrLn "MIGRATION PLAN (if migration needed):"

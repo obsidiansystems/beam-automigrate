@@ -12,10 +12,11 @@ in pkgs.nixosTest ({
         host all all 0.0.0.0/0 trust
       '';
       ensureDatabases = [
-        "beam-test-db"
-        "groundhog-test-db"
+        "beam-test-db" # beam-automigrate-examples
+        "groundhog-test-db" # beam-automigrate-examples
         "readme"
-        "beam-migrate-prototype-bench"
+        "public" # beam-automigrate-integration-tests
+        "beam-migrate-prototype-bench" # beam-automigrate-large-migration-test
       ];
     };
     services.xserver.enable = false;
@@ -40,6 +41,9 @@ in pkgs.nixosTest ({
 
     machine.execute('logger -t TEST "Running readme..."')
     machine.succeed('readme ci')
+
+    # machine.execute('logger -t TEST "Running beam-automigrate-integration-tests..."')
+    # machine.succeed('beam-automigrate-integration-tests')
 
     # machine.execute('logger -t TEST "Running beam-automigrate-large-migration-test..."')
     # machine.succeed("beam-automigrate-large-migration-test")

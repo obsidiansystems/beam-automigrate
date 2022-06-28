@@ -1,12 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Database.Beam.AutoMigrate.BenchUtil
-  ( SpineStrict (..),
-    predictableSchemas,
-    connInfo,
-    setupDatabase,
-    cleanDatabase,
-    tearDownDatabase,
+  ( SpineStrict (..)
+  , predictableSchemas
+  , connInfo
+  , setupDatabase
+  , cleanDatabase
+  , tearDownDatabase
   )
 where
 
