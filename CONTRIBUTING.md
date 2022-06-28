@@ -53,7 +53,7 @@ To learn more about the NixOS virtual machine testing framework, including how t
 
 ##### Adding New Tests
 
-New tests should be added for every breaking change, including bug fixes. Tests can be added by defining an executable that runs a migration that demonstrates the error, and then adding that executable to [test.nix](test.nix) so that it is run by the CI server.
+New tests should be added for every breaking change, including bug fixes. Tests can be added by defining an executable that runs a migration that demonstrates the error, and then adding that executable to [test.nix](test.nix) so that it is run by the CI server. The failing test case should be committed separately from (and, if possible, prior to) the fix that causes the test case to pass.
 
 #### Dependencies
 
