@@ -42,8 +42,8 @@ in pkgs.nixosTest ({
     machine.execute('logger -t TEST "Running readme..."')
     machine.succeed('readme ci')
 
-    # machine.execute('logger -t TEST "Running beam-automigrate-integration-tests..."')
-    # machine.succeed('beam-automigrate-integration-tests')
+    machine.execute('logger -t TEST "Running beam-automigrate-integration-tests..."')
+    machine.succeed('beam-automigrate-integration-tests')
 
     # machine.execute('logger -t TEST "Running beam-automigrate-large-migration-test..."')
     # machine.succeed("beam-automigrate-large-migration-test")
