@@ -122,9 +122,10 @@ sqlValidUnescaped t = case T.uncons t of
   Nothing -> True
   Just (c, rest) -> validUnescapedHead c && validUnescapedTail rest && not (sqlIsReservedKeyword t)
   where
-    validUnescapedHead c = c `elem` ("1234567890_"::String) || isAlpha c
+    lowercase c = isAlpha c && isLower c
+    validUnescapedHead c = c `elem` ("1234567890_"::String) || lowercase c
     validUnescapedTail = all
-      (\r -> (isAlpha r && isLower r) || r `elem` ("1234567890$_"::String)) . T.unpack
+      (\r -> lowercase r || r `elem` ("1234567890$_"::String)) . T.unpack
 
 sqlIsReservedKeyword :: Text -> Bool
 sqlIsReservedKeyword t = T.toCaseFold t `Set.member` postgresKeywordsReserved

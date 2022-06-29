@@ -119,13 +119,17 @@ executable beam-automigrate-integration-tests
       base
     , beam-automigrate
     , beam-automigrate-test-utils
+    , beam-core
+    , beam-postgres
     , containers
     , postgresql-simple
+    , postgresql-syntax
     , pretty-simple
     , QuickCheck
     , tasty
     , tasty-quickcheck
     , text
+    , syb
 
   default-language:   Haskell2010
   default-extensions:

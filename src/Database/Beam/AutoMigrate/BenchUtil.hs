@@ -45,13 +45,12 @@ setupDatabase dbSchema = do
 
 cleanDatabase :: Pg.Connection -> IO ()
 cleanDatabase conn = do
-  Pg.withTransaction conn $ do
-    -- Delete all tables to start from a clean slate
-    _ <- Pg.execute_ conn "DROP SCHEMA public CASCADE"
-    _ <- Pg.execute_ conn "CREATE SCHEMA public"
-    _ <- Pg.execute_ conn "GRANT USAGE ON SCHEMA public TO public"
-    _ <- Pg.execute_ conn "GRANT CREATE ON SCHEMA public TO public"
-    pure ()
+  -- Delete all tables to start from a clean slate
+  _ <- Pg.execute_ conn "DROP SCHEMA public CASCADE"
+  _ <- Pg.execute_ conn "CREATE SCHEMA public"
+  _ <- Pg.execute_ conn "GRANT USAGE ON SCHEMA public TO public"
+  _ <- Pg.execute_ conn "GRANT CREATE ON SCHEMA public TO public"
+  pure ()
 
 tearDownDatabase :: Pg.Connection -> IO ()
 tearDownDatabase conn = cleanDatabase conn `finally` Pg.close conn
