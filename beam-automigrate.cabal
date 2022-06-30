@@ -131,6 +131,7 @@ executable beam-automigrate-integration-tests
     , text
     , syb
 
+  ghc-options: -Wall -threaded
   default-language:   Haskell2010
   default-extensions:
     OverloadedStrings
