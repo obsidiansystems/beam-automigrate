@@ -42,15 +42,6 @@ import Data.Int
 
 import qualified Database.Beam.Backend.SQL.AST as AST
 
-sch = Schema {schemaTables = Map.fromList [(TableName {tableName = "bTwcaUsZZr"},Table {tableConstraints = Set.fromList [], tableColumns = Map.fromList [(ColumnName {columnName = "adpJSmZjWq"},Column {columnType = SqlStdType AST.DataTypeBigInt, columnConstraints = Set.fromList [NotNull,Default "1"]})]})], schemaEnumerations = Map.fromList [], schemaSequences = Map.fromList []}
-
-doit = do
-  withConnection (ConnMethod_Gargoyle "dbx") $ \conn -> do
-    let mig = migrate conn sch
-    printMigrationIO mig
-    runMigrationUnsafe conn mig
-    printMigrationIO mig
-
 main :: IO ()
 main = do
   let opts = includingOptions [Option (Proxy :: Proxy ConnMethod)]
