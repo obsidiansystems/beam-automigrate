@@ -62,7 +62,6 @@ library
     , transformers          >=0.5.6    && <0.7
     , uuid                  >=1.3      && <1.4
     , vector                >=0.12.0.3 && <0.13.0.0
-    , postgresql-syntax     >=0.4      && <0.5
 
   default-language:   Haskell2010
   default-extensions:
@@ -115,6 +114,7 @@ executable beam-automigrate-integration-tests
   hs-source-dirs:     integration-tests tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
+                      PostgresqlSyntax.Data.Orphans
   build-depends:
       base
     , beam-automigrate
@@ -123,7 +123,7 @@ executable beam-automigrate-integration-tests
     , beam-postgres
     , containers
     , postgresql-simple
-    , postgresql-syntax
+    , postgresql-syntax >= 0.4 && <0.5
     , pretty-simple
     , QuickCheck
     , tasty
