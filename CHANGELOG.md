@@ -1,6 +1,6 @@
 # Revision history for beam-automigrate
 
-## Unreleased
+## 0.1.3.0
 
 * Add `showMigration`
 * Extend allowable version bounds for aeson, base, dlist, pretty-simple, and splitmix
