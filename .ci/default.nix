@@ -78,22 +78,18 @@ let
       };
     };
   };
+  nix-thunk = import ./nix-thunk {};
+  ls = import ./listdirs.nix {
+    inherit (nix-thunk) mapSubdirectories;
+    inherit lib;
+  };
   nix-filter = import ./nix-filter;
   filteredSource = nix-filter {
     root = ../.;
-    # TODO use mapSubdirectories
-    include = [
-      "src/Database/Beam"
-      "src/Database/Beam/AutoMigrate"
-      "src/Database/Beam/AutoMigrate/Schema"
-      "examples"
-      "integration-tests"
-      "integration-tests/PostgresqlSyntax/Data"
-      "large-migration-test"
-      "bench"
-      "tests"
-      "tests/Test/Database/Beam/AutoMigrate"
-      "util/Database/Beam/AutoMigrate"
+    include =
+      ls ../. ["src" "examples" "integration-tests" "large-migration-test" "bench" "tests" "util" ]
+      ++
+      [
       (nix-filter.matchExt "hs")
       "./beam-automigrate.cabal"
       "./Setup.hs"
@@ -101,7 +97,7 @@ let
       "./README.md"
       "./README.lhs"
       "./LICENSE"
-    ];
+      ];
   };
 in
   lib.mapAttrs (_: ghc: ghc.callCabal2nix "beam-automigrate" filteredSource {}) ghcs
