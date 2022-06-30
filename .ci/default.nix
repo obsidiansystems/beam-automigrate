@@ -33,7 +33,29 @@ let
   };
   ghcs = rec {
     ghc865 = nixos2003.haskell.packages.ghc865.override {
-      overrides = beam-overrides;
+      overrides = self: super: beam-overrides self super //
+      {
+        headed-megaparsec = self.callHackageDirect {
+          pkg = "headed-megaparsec";
+          ver = "0.2.0.1";
+          sha256 = "0p01cgpad8j9lylkzhhvrgcgvxjnbkfsab6yc6rdc40213289hab";
+        } {};
+        megaparsec = self.callHackageDirect {
+          pkg = "megaparsec";
+          ver = "9.0.1";
+          sha256 = "1279c0snq1w13scikiakdm25ybpnvbpm7khjq4wyy0gj1vvh8r6z";
+        } {};
+        selective = self.callHackageDirect {
+          pkg = "selective";
+          ver = "0.4.2";
+          sha256 = "12ca7npap8p8y9yrmxzsrq9zcmj713wf41g3rnkdymcwl1c20375";
+        } {};
+        postgresql-syntax = dontCheck (self.callHackageDirect {
+          pkg = "postgresql-syntax";
+          ver = "0.4";
+          sha256 = "0p2xg0hnpcn8y2vgqpxlykzkrq19wx478pigi141l5ancglw9x8w";
+        } {});
+      };
     };
     ghc884 = nixos2003.haskell.packages.ghc884.override {
       overrides = beam-overrides;
@@ -57,7 +79,7 @@ let
     };
   };
   nix-filter = import ./nix-filter;
- filteredSource = nix-filter {
+  filteredSource = nix-filter {
     root = ../.;
     # TODO use mapSubdirectories
     include = [
@@ -66,6 +88,7 @@ let
       "src/Database/Beam/AutoMigrate/Schema"
       "examples"
       "integration-tests"
+      "integration-tests/PostgresqlSyntax/Data"
       "large-migration-test"
       "bench"
       "tests"

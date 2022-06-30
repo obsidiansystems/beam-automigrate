@@ -4,6 +4,7 @@ Description:
 
 These instances are being upstreamed <here https://github.com/nikita-volkov/postgresql-syntax/pull/6> and, once they are, this module will be removed.
 -}
+{-# Language CPP #-}
 {-# Language DeriveDataTypeable #-}
 {-# Language StandaloneDeriving #-}
 {-# options_ghc -fno-warn-orphans #-}
@@ -104,7 +105,9 @@ deriving instance Data OnConflict
 deriving instance Data WhereOrCurrentClause
 deriving instance Data SelectBinOp
 deriving instance Data FuncAliasClause
+#if MIN_VERSION_postgresql_syntax(0,4,1)
 deriving instance Data CallStmt
+#endif
 deriving instance Data InsertRest
 deriving instance Data SetClause
 deriving instance Data RelationExprOptAlias
