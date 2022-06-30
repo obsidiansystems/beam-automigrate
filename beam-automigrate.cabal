@@ -91,6 +91,7 @@ library beam-automigrate-test-utils
     , tasty
   exposed-modules:
     Database.Beam.AutoMigrate.TestUtils
+  ghc-options: -Wall
 
 test-suite beam-automigrate-tests
   type:               exitcode-stdio-1.0

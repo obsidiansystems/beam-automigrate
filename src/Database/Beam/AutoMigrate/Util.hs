@@ -13,7 +13,6 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
-import Database.Beam.Schema (Beamable, PrimaryKey, TableEntity, TableSettings)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables
 import Lens.Micro ((^.))

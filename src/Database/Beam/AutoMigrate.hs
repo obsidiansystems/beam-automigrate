@@ -61,7 +61,6 @@ where
 
 import Control.Exception
 import Control.Monad.Except
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
 import Data.Bifunctor (first)
@@ -77,7 +76,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Lazy as LT
-import Database.Beam (MonadBeam)
 import Database.Beam.AutoMigrate.Annotated as Exports
 import Database.Beam.AutoMigrate.Compat as Exports
 import Database.Beam.AutoMigrate.Diff as Exports

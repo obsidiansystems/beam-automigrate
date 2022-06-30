@@ -10,8 +10,6 @@ These instances are being upstreamed <here https://github.com/nikita-volkov/post
 module PostgresqlSyntax.Data.Orphans where
 
 import Data.Data
-import qualified PostgresqlSyntax.Parsing as PgParsing
-import qualified PostgresqlSyntax.Rendering as PgRendering
 import PostgresqlSyntax.Ast
 
 deriving instance Data AExpr

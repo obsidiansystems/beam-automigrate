@@ -2,44 +2,34 @@
 
 module Main where
 
-import Control.Monad
-import Control.Exception (bracket)
 import Control.Monad.IO.Class (liftIO)
-import qualified Data.List as L
 import Data.Proxy
-import qualified Data.Text.Lazy as TL
 import Database.Beam.AutoMigrate
-import Database.Beam.AutoMigrate.BenchUtil (cleanDatabase, tearDownDatabase)
+import Database.Beam.AutoMigrate.BenchUtil (cleanDatabase)
 import Database.Beam.AutoMigrate.Postgres (getSchema)
-import Database.Beam.AutoMigrate.Schema.Gen
 import Database.Beam.AutoMigrate.TestUtils
-import Database.Beam.AutoMigrate.Validity
 import Database.Beam.Postgres
 import qualified Database.PostgreSQL.Simple as Pg
 import qualified Database.PostgreSQL.Simple.Transaction as Pg
-import System.Environment (getArgs)
 import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Test.Tasty
 import Test.Tasty.Options
-import Test.Tasty.Runners
 import Test.Tasty.QuickCheck as QC
+import Test.Tasty.Runners
 
-import qualified PostgresqlSyntax.Parsing as PgParsing
-import qualified PostgresqlSyntax.Rendering as PgRendering
-import PostgresqlSyntax.Ast
-import PostgresqlSyntax.Data.Orphans
-import Data.Generics.Schemes (everywhere)
 import Data.Generics.Aliases (mkT)
+import Data.Generics.Schemes (everywhere)
+import Data.Int
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Data
-import Data.Int
-
-import qualified Database.Beam.Backend.SQL.AST as AST
+import PostgresqlSyntax.Ast
+import PostgresqlSyntax.Data.Orphans ()
+import qualified PostgresqlSyntax.Parsing as PgParsing
+import qualified PostgresqlSyntax.Rendering as PgRendering
 
 main :: IO ()
 main = do
@@ -101,14 +91,14 @@ instance NormalizeDefaultExprs ColumnConstraint where
 
 normalizeDefaultExpr :: Text -> Text
 normalizeDefaultExpr t = case PgParsing.run PgParsing.aExpr t of
-  Left e -> t
+  Left _error -> t
   Right x -> PgRendering.toText . PgRendering.aExpr . everywhere (mkT simplifyAExpr) $ x
 
 simplifyAExpr :: AExpr -> AExpr
 simplifyAExpr e = case e of
-  TypecastAExpr e' t -> e'
+  TypecastAExpr e' _type -> e'
   CExprAExpr (InParensCExpr e' Nothing) -> e'
-  e | Just n <- evaluableAExprInt64 e -> CExprAExpr (AexprConstCExpr (IAexprConst n))
+  e' | Just n <- evaluableAExprInt64 e' -> CExprAExpr (AexprConstCExpr (IAexprConst n))
   _ -> e
 
 evaluableAExprInt64 :: AExpr -> Maybe Int64
@@ -124,5 +114,4 @@ evaluableCExprInt64 e = case e of
     [(n,"")] -> Just n
     _ -> Nothing
   _ -> Nothing
-
 
