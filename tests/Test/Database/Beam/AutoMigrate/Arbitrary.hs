@@ -3,9 +3,6 @@
 module Test.Database.Beam.AutoMigrate.Arbitrary where
 
 import qualified Data.Text.Lazy as TL
-import Database.Beam.AutoMigrate.Schema.Gen
-import Database.Beam.AutoMigrate.Types
-import GHC.Generics
 import Test.QuickCheck
 import Text.Pretty.Simple (pShowNoColor)
 

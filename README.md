@@ -56,6 +56,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > {-# LANGUAGE DataKinds #-}
 > {-# LANGUAGE DeriveGeneric #-}
 > {-# LANGUAGE DeriveAnyClass #-}
+> {-# LANGUAGE OverloadedStrings #-}
 > {-# LANGUAGE TypeApplications #-}
 > {-# LANGUAGE TypeFamilies #-}
 > import Prelude hiding ((.))
@@ -65,11 +66,11 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Database.Beam.Schema
 > import Database.Beam (val_)
 > import qualified Database.Beam.AutoMigrate as BA
+> import Database.Beam.AutoMigrate.TestUtils
 > import Database.PostgreSQL.Simple as Pg
-> import Gargoyle.PostgreSQL.Connect
 > import GHC.Generics
-> import Data.Pool (withResource)
 > import Data.Text
+> import System.Environment (getArgs)
 >
 > data CitiesT f = City
 >   { ctCity     :: Columnar f Text
@@ -261,36 +262,36 @@ something like this:
 ```haskell
 
 >
-> readmeDbTransaction :: (Connection -> IO a) -> IO a
-> readmeDbTransaction f = withDb "readme-db" $ \pool ->
->   withResource pool $ \conn ->
->     Pg.withTransaction conn $ f conn
+> exampleShowMigration :: Connection -> IO ()
+> exampleShowMigration conn = runBeamPostgres conn $
+>   BA.printMigration $ BA.migrate conn hsSchema
 >
-> exampleShowMigration :: IO ()
-> exampleShowMigration = readmeDbTransaction $ \conn ->
->   runBeamPostgres conn $
->     BA.printMigration $ BA.migrate conn hsSchema
->
-> exampleAutoMigration :: IO ()
-> exampleAutoMigration = withDb "readme-db" $ \pool ->
->   withResource pool $ \conn ->
->     BA.tryRunMigrationsWithEditUpdate annotatedDB conn
+> exampleAutoMigration :: Connection -> IO ()
+> exampleAutoMigration conn =
+>   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
 >
 > main :: IO ()
 > main = do
->   putStrLn "----------------------------------------------------"
->   putStrLn "MIGRATION PLAN (if migration needed):"
->   putStrLn "----------------------------------------------------"
->   exampleShowMigration
->   putStrLn "----------------------------------------------------"
->   putStrLn "MIGRATE?"
->   putStrLn "----------------------------------------------------"
->   putStrLn "Would you like to run the migration on the database in the folder \"readme-db\" (will be created if it doesn't exist)? (y/n)"
->   response <- getLine
->   case response of
->     "y" -> exampleAutoMigration
->     "Y" -> exampleAutoMigration
->     _ -> putStrLn "Exiting"
+>   args <- getArgs
+>   let (getLine', connMethod) = case args of
+>         -- The "ci" argument allows the readme to be run and tested in a headless
+>         -- environment (e.g., by a continuous integration server)
+>         ["ci"] -> (return "y", ConnMethod_Direct $ defaultConnectInfo { connectDatabase = "readme" })
+>         _ -> (getLine, ConnMethod_Gargoyle "readme-db")
+>   withConnection connMethod $ \conn -> Pg.withTransaction conn$ do
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "MIGRATION PLAN (if migration needed):"
+>     putStrLn "----------------------------------------------------"
+>     exampleShowMigration conn
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "MIGRATE?"
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "Would you like to run the migration on the database in the folder \"readme-db\" (will be created if it doesn't exist)? (y/n)"
+>     response <- getLine'
+>     case response of
+>       "y" -> exampleAutoMigration conn
+>       "Y" -> exampleAutoMigration conn
+>       _ -> putStrLn "Exiting"
 >
 
 ```

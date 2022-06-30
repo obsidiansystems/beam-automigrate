@@ -1,5 +1,5 @@
 name:               beam-automigrate
-version:            0.1.2.0
+version:            0.1.3.0
 license-file:       LICENSE
 build-type:         Simple
 cabal-version:      >=1.10
@@ -22,7 +22,7 @@ extra-source-files:
   README.md
   CHANGELOG.md
 
-tested-with:        GHC ==8.6.5 || ==8.8.4 || ==8.10.2
+tested-with:        GHC ==8.6.5 || ==8.8.4 || ==8.10.7 || ==9.0.2
 
 library
   exposed-modules:
@@ -40,18 +40,18 @@ library
 
   hs-source-dirs:     src
   build-depends:
-      aeson                 >=1.4.4    && <1.6
+      aeson                 >=1.4.4    && <2.2
     , base                  >=4.9      && <5
     , beam-core             >=0.9      && <0.10
     , beam-postgres         >=0.5      && <0.6
     , bytestring            >=0.10.8.2 && <0.12.0.0
     , containers            >=0.5.9.2  && <0.8.0.0
     , deepseq               >=1.4.4    && <1.6
-    , dlist                 >=0.8.0    && <0.10
+    , dlist                 >=0.8.0    && <1.1
     , microlens             >=0.4.10   && <0.6
     , mtl                   >=2.2.2    && <2.4
     , postgresql-simple     >=0.5.4    && <0.7.0.0
-    , pretty-simple         >=2.2.0    && <3.3
+    , pretty-simple         >=2.2.0    && <4.2
     , QuickCheck            >=2.13     && <2.15
     , quickcheck-instances  >=0.3      && <0.4
     , scientific            >=0.3.6    && <0.5
@@ -81,6 +81,18 @@ library
   if flag(werror)
     ghc-options: -Werror
 
+library beam-automigrate-test-utils
+  hs-source-dirs: util
+  build-depends:
+      base
+    , gargoyle-postgresql-connect
+    , postgresql-simple
+    , resource-pool
+    , tasty
+  exposed-modules:
+    Database.Beam.AutoMigrate.TestUtils
+  ghc-options: -Wall
+
 test-suite beam-automigrate-tests
   type:               exitcode-stdio-1.0
   hs-source-dirs:     tests
@@ -99,30 +111,32 @@ test-suite beam-automigrate-tests
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
 
-test-suite beam-automigrate-integration-tests
-  type:               exitcode-stdio-1.0
+executable beam-automigrate-integration-tests
   hs-source-dirs:     integration-tests tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
+                      PostgresqlSyntax.Data.Orphans
   build-depends:
       base
     , beam-automigrate
+    , beam-automigrate-test-utils
+    , beam-core
+    , beam-postgres
     , containers
     , postgresql-simple
+    , postgresql-syntax >= 0.4 && <0.5
     , pretty-simple
     , QuickCheck
     , tasty
     , tasty-quickcheck
     , text
-    , tmp-postgres       >=1.31.0.1 && <1.35.0.0
+    , syb
 
+  ghc-options: -Wall -threaded
   default-language:   Haskell2010
   default-extensions:
     OverloadedStrings
     ScopedTypeVariables
-
-  if !flag(integration-tests)
-    buildable: False
 
 executable beam-automigrate-examples
   hs-source-dirs:     examples
@@ -155,7 +169,7 @@ executable beam-automigrate-examples
     TypeApplications
     TypeFamilies
 
-  ghc-options:        -Wall -O2 -rtsopts
+  ghc-options:        -Wall -O2 -rtsopts -threaded
 
   if flag(werror)
     ghc-options: -Werror
@@ -176,7 +190,7 @@ executable beam-automigrate-large-migration-test
 
   default-language:   Haskell2010
   default-extensions: OverloadedStrings
-  ghc-options:        -Wall -O2 -rtsopts
+  ghc-options:        -Wall -O2 -rtsopts -threaded
 
 benchmark beam-automigrate-bench
   type:             exitcode-stdio-1.0
@@ -195,21 +209,20 @@ benchmark beam-automigrate-bench
     , splitmix
 
   default-language: Haskell2010
-  ghc-options:      -Wall -O2 -rtsopts
+  ghc-options:      -Wall -O2 -rtsopts -threaded
 
 executable readme
   build-depends:
       base
     , beam-automigrate
+    , beam-automigrate-test-utils
     , beam-core
     , beam-postgres
-    , gargoyle-postgresql-connect
     , postgresql-simple
-    , resource-pool
     , text
   default-language: Haskell2010
   main-is: README.lhs
-  ghc-options: -Wall -optL -q
+  ghc-options: -Wall -optL -q -threaded
 
 flag werror
   description: Enable -Werror during development
@@ -218,11 +231,6 @@ flag werror
 
 flag ghcipretty
   description: Enable pretty-show for pretty-printing purposes
-  default:     False
-  manual:      True
-
-flag integration-tests
-  description: Enable integration tests that talks to a Postgres DB.
   default:     False
   manual:      True
 
