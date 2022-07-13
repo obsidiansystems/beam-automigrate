@@ -132,6 +132,7 @@ instance HasColumnType ty => HasColumnType (Beam.TableField e ty) where
 instance HasColumnType ty => HasColumnType (Maybe ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
   defaultTypeCast _ = defaultTypeCast (Proxy @ty)
+  defaultEnums _ = defaultEnums (Proxy @ty)
 
 instance HasColumnType Int where
   defaultColumnType _ = SqlStdType intType
