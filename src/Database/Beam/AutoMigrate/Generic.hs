@@ -129,6 +129,9 @@ instance
 instance HasColumnType ty => GEnums be db (S1 f (K1 R (TableFieldSchema tbl ty))) where
   gEnums _ (M1 (K1 _)) = defaultEnums (Proxy @ty)
 
+instance HasColumnType ty => GEnums be db (S1 f (K1 R (Maybe (TableFieldSchema tbl ty)))) where
+  gEnums _ (M1 (K1 _)) = defaultEnums (Proxy @ty)
+
 -- primary-key-wrapped types do not yield any enumerations.
 
 instance GEnums be db (S1 f (K1 R (PrimaryKey tbl1 (TableFieldSchema tbl2)))) where
