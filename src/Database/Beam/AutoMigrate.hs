@@ -227,7 +227,7 @@ migrate conn hsSchema = do
   dbSchema <- lift . liftIO $ getSchema conn
   liftEither $ first HaskellSchemaValidationFailed (validateSchema hsSchema)
   liftEither $ first DatabaseSchemaValidationFailed (validateSchema dbSchema)
-  let schemaDiff = diff hsSchema dbSchema
+  let schemaDiff = diffSorted hsSchema dbSchema
   case schemaDiff of
     Left e -> throwError (DiffFailed e)
     Right edits -> lift (put edits)
@@ -244,7 +244,7 @@ unsafeRunMigration m = do
       runNoReturn $ Pg.PgCommandSyntax Pg.PgCommandTypeDdl (mconcat . editsToPgSyntax $ edits)
 
 -- | Runs the input 'Migration' in a concrete 'Postgres' backend.
-runMigrationUnsafe :: MonadBeam Pg.Postgres Pg.Pg => Pg.Connection -> Migration Pg.Pg -> IO ()
+runMigrationUnsafe :: Pg.Connection -> Migration Pg.Pg -> IO ()
 runMigrationUnsafe conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn (unsafeRunMigration mig)
 
 -- | Run the steps of the migration in priority order, providing a hook to allow the user
@@ -255,7 +255,6 @@ runMigrationUnsafe conn mig = Pg.withTransaction conn $ Pg.runBeamPostgres conn 
 -- * Deleting an empty table/column
 -- * Making an empty column non-nullable
 runMigrationWithEditUpdate ::
-  MonadBeam Pg.Postgres Pg.Pg =>
   ([WithPriority Edit] -> [WithPriority Edit]) ->
   Pg.Connection ->
   Schema ->
@@ -638,7 +637,7 @@ evalMigration m = do
 createMigration :: Monad m => Diff -> Migration m
 createMigration (Left e) = throwError (DiffFailed e)
 createMigration (Right edits) = ExceptT $ do
-  put edits
+  put $ sortAutomaticEdits edits
   pure (Right ())
 
 -- | Prints the migration to stdout. Useful for debugging and diagnostic.
@@ -768,7 +767,7 @@ tryRunMigrationsWithEditUpdate editUpdate annotatedDb conn = do
 
     actualDatabaseSchema <- getSchema conn
 
-    case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
+    case diffSorted expectedHaskellSchema actualDatabaseSchema of
       Left err -> do
         putStrLn "Error detecting database migration requirements: "
         print err

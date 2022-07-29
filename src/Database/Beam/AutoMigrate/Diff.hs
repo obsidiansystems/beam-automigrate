@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Database.Beam.AutoMigrate.Diff
@@ -18,6 +19,7 @@ module Database.Beam.AutoMigrate.Diff
     diffTables,
     diffTable,
     sortEdits,
+    sortAutomaticEdits,
 
     module Database.Beam.AutoMigrate.Diff
   )
@@ -49,7 +51,8 @@ import Database.Beam.AutoMigrate.Types
 -- | Some notion of 'Priority'. The lower the value, the higher the priority.
 newtype Priority = Priority Word8 deriving (Show, Eq, Ord)
 
-newtype WithPriority a = WithPriority {unPriority :: (a, Priority)} deriving (Show, Eq, Ord)
+newtype WithPriority a = WithPriority {unPriority :: (a, Priority)}
+  deriving (Show, Eq, Ord, Functor, Foldable, Traversable)
 
 editPriority :: AutomaticEditAction -> Priority
 editPriority = \case
@@ -87,9 +90,15 @@ mkEdit e = WithPriority (defMkEdit e, editPriority e)
 sortEdits :: [WithPriority Edit] -> [WithPriority Edit]
 sortEdits = L.sortOn (snd . unPriority)
 
-type DiffA t = Either DiffError (t (WithPriority Edit))
+sortAutomaticEdits :: [AutomaticEditAction] -> [WithPriority Edit]
+sortAutomaticEdits = sortEdits . fmap mkEdit
+
+type DiffA t = Either DiffError (t AutomaticEditAction)
 
 type Diff = DiffA []
+
+diffSorted :: Diffable a => a -> a -> Either DiffError [WithPriority Edit]
+diffSorted x y = sortAutomaticEdits <$> diff x y
 
 -- NOTE(adn) Accumulate all the errors independently instead of short circuiting?
 class Diffable a where
@@ -214,14 +223,14 @@ diffTablesReferenceImplementation hsTables dbTables = do
   whenBoth <- foldlM go mempty (zip (M.toList diffableTables) (M.toList diffableTables'))
   pure $ whenAdded tablesAdded <> whenRemoved tablesRemoved <> whenBoth
   where
-    whenAdded :: Tables -> [WithPriority Edit]
+    whenAdded :: Tables -> [AutomaticEditAction]
     whenAdded = concatMap (addEdit TableAdded (\k -> addTableConstraints k . tableConstraints)) . M.toList
 
-    whenRemoved :: Tables -> [WithPriority Edit]
+    whenRemoved :: Tables -> [AutomaticEditAction]
     whenRemoved =
       concatMap (addEdit (\k _ -> TableRemoved k) (\k -> dropTableConstraints k . tableConstraints)) . M.toList
 
-    go :: [WithPriority Edit] -> ((TableName, Table), (TableName, Table)) -> Diff
+    go :: [AutomaticEditAction] -> ((TableName, Table), (TableName, Table)) -> Diff
     go e ((hsName, hsTable), (dbName, dbTable)) = assert (hsName == dbName) $ do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
@@ -230,9 +239,8 @@ addEdit
   :: (k -> v -> AutomaticEditAction)
   -> (k -> v -> [AutomaticEditAction])
   -> (k, v)
-  -> [WithPriority Edit]
-addEdit onValue onConstr (k, v) =
-  mkEdit (onValue k v) : fmap mkEdit (onConstr k v)
+  -> [AutomaticEditAction]
+addEdit onValue onConstr (k, v) = onValue k v : onConstr k v
 
 diffTableReferenceImplementation :: TableName -> Table -> Table -> Diff
 diffTableReferenceImplementation tName hsTable dbTable = do
@@ -243,37 +251,37 @@ diffTableReferenceImplementation tName hsTable dbTable = do
   whenBoth <- foldlM go mempty (zip (M.toList diffableColumns) (M.toList diffableColumns'))
   let colsAdded = whenAdded columnsAdded
       colsRemoved = whenRemoved columnsRemoved
-      constraints = mkEdit <$> alterTableConstraints tName (tableConstraints hsTable) (tableConstraints dbTable)
+      constraints = alterTableConstraints tName (tableConstraints hsTable) (tableConstraints dbTable)
   pure $ constraints
       <> colsAdded
       <> colsRemoved
       <> whenBoth
   where
-    go :: [WithPriority Edit] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
+    go :: [AutomaticEditAction] -> ((ColumnName, Column), (ColumnName, Column)) -> Diff
     go e ((hsName, hsCol), (dbName, dbCol)) = assert (hsName == dbName) $ do
       d <- diffColumnReferenceImplementation tName hsName hsCol dbCol
       pure $ e <> d
 
-    whenAdded :: Columns -> [WithPriority Edit]
-    whenAdded = fmap (\(cName, col) -> mkEdit $ ColumnAdded tName cName col) . M.toList
+    whenAdded :: Columns -> [AutomaticEditAction]
+    whenAdded = fmap (\(cName, col) -> ColumnAdded tName cName col) . M.toList
 
-    whenRemoved :: Columns -> [WithPriority Edit]
-    whenRemoved = fmap (mkEdit . ColumnRemoved tName) . M.keys
+    whenRemoved :: Columns -> [AutomaticEditAction]
+    whenRemoved = fmap (ColumnRemoved tName) . M.keys
 
 diffColumnReferenceImplementation
-  :: (Applicative f, Monoid (f (WithPriority Edit))) => TableName -> ColumnName -> Column -> Column -> DiffA f
+  :: (Applicative f, Monoid (f (AutomaticEditAction))) => TableName -> ColumnName -> Column -> Column -> DiffA f
 diffColumnReferenceImplementation tName colName hsColumn dbColumn = execWriterT $ do
   unless (on (==) columnType hsColumn dbColumn) $
-    tell $ pure $ mkEdit $ ColumnTypeChanged tName colName (columnType dbColumn) (columnType hsColumn)
+    tell $ pure $ ColumnTypeChanged tName colName (columnType dbColumn) (columnType hsColumn)
 
   unless (on (==) (columnNullable . columnConstraints) hsColumn dbColumn) $
-    tell $ pure $ mkEdit $ ColumnNullableChanged tName colName $ columnNullable $ columnConstraints hsColumn
+    tell $ pure $ ColumnNullableChanged tName colName $ columnNullable $ columnConstraints hsColumn
 
   unless (on (==) (columnDefault . columnConstraints) hsColumn dbColumn) $
     -- as a special case, filter out the places where we "learned" the sequence name.
     case on (,) (columnDefault . columnConstraints) hsColumn dbColumn of
       (Just (Autoincrement Nothing), Just (Autoincrement _)) -> pure ()
-      _ -> tell $ pure $ mkEdit $ ColumnDefaultChanged tName colName $ columnDefault $ columnConstraints hsColumn
+      _ -> tell $ pure $ ColumnDefaultChanged tName colName $ columnDefault $ columnConstraints hsColumn
 --
 -- Actual implementation
 --
@@ -286,13 +294,13 @@ diffEnums :: Enumerations -> Enumerations -> DiffA DList
 diffEnums hsEnums dbEnums =
   M.foldl' D.append mempty <$> mergeA whenEnumsAdded whenEnumsRemoved whenBoth hsEnums dbEnums
   where
-    whenEnumsAdded :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList (WithPriority Edit))
-    whenEnumsAdded = traverseMissing (\k v -> Right . D.singleton . mkEdit $ EnumTypeAdded k v)
+    whenEnumsAdded :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList (AutomaticEditAction))
+    whenEnumsAdded = traverseMissing (\k v -> Right . D.singleton $ EnumTypeAdded k v)
 
-    whenEnumsRemoved :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList (WithPriority Edit))
-    whenEnumsRemoved = traverseMissing (\k _ -> Right . D.singleton . mkEdit $ EnumTypeRemoved k)
+    whenEnumsRemoved :: WhenMissing (Either DiffError) EnumerationName Enumeration (DList (AutomaticEditAction))
+    whenEnumsRemoved = traverseMissing (\k _ -> Right . D.singleton $ EnumTypeRemoved k)
 
-    whenBoth :: WhenMatched (Either DiffError) EnumerationName Enumeration Enumeration (DList (WithPriority Edit))
+    whenBoth :: WhenMatched (Either DiffError) EnumerationName Enumeration Enumeration (DList (AutomaticEditAction))
     whenBoth = zipWithAMatched diffEnumeration
 
 diffEnumeration :: EnumerationName -> Enumeration -> Enumeration -> DiffA DList
@@ -300,23 +308,23 @@ diffEnumeration eName (Enumeration hsEnum) (Enumeration dbEnum) = do
   let valuesRemoved = dbEnum \\ hsEnum
   if L.null valuesRemoved then Right $ D.fromList (computeEnumEdit eName hsEnum dbEnum) else Left $ ValuesRemovedFromEnum eName valuesRemoved
 
-computeEnumEdit :: EnumerationName -> [Text] -> [Text] -> [WithPriority Edit]
+computeEnumEdit :: EnumerationName -> [Text] -> [Text] -> [AutomaticEditAction]
 computeEnumEdit _ [] [] = mempty
 computeEnumEdit _ [] (_ : _) = mempty
 computeEnumEdit eName (x : xs) [] = appendAfter eName xs x
 computeEnumEdit eName (x : xs) [y] =
   if x == y
     then appendAfter eName xs y
-    else mkEdit (EnumTypeValueAdded eName x Before y) : computeEnumEdit eName xs [y]
+    else EnumTypeValueAdded eName x Before y : computeEnumEdit eName xs [y]
 computeEnumEdit eName (x : xs) (y : ys) =
   if x == y
     then computeEnumEdit eName xs ys
-    else mkEdit (EnumTypeValueAdded eName x Before y) : computeEnumEdit eName xs (y : ys)
+    else EnumTypeValueAdded eName x Before y : computeEnumEdit eName xs (y : ys)
 
-appendAfter :: EnumerationName -> [Text] -> Text -> [WithPriority Edit]
+appendAfter :: EnumerationName -> [Text] -> Text -> [AutomaticEditAction]
 appendAfter _ [] _ = mempty
-appendAfter eName [l] z = [mkEdit $ EnumTypeValueAdded eName l After z]
-appendAfter eName (l : ls) z = mkEdit (EnumTypeValueAdded eName l After z) : appendAfter eName ls l
+appendAfter eName [l] z = [EnumTypeValueAdded eName l After z]
+appendAfter eName (l : ls) z = EnumTypeValueAdded eName l After z : appendAfter eName ls l
 
 data DiffableSequences = DiffableSequences
   Sequences -- ^ explicitly named/optionally owned sequences.
@@ -364,18 +372,18 @@ diffSequences
     -- we only keep the sequences we want to rename.
     renames <- mergeA
       (traverseMaybeMissing $ \(Sequence tName cName) sName -> do -- new autoincrement columns
-        forM_ sName $ tell . pure . mkEdit . ColumnDefaultChanged tName cName . Just . Autoincrement . Just
+        forM_ sName $ tell . pure . ColumnDefaultChanged tName cName . Just . Autoincrement . Just
         pure Nothing
         )
       (traverseMaybeMissing $ \(Sequence tName cName) sName -> do -- old autoincrement columns
-        forM_ sName $ \_ -> tell . pure . mkEdit $ ColumnDefaultChanged tName cName Nothing
+        forM_ sName $ \_ -> tell . pure $ ColumnDefaultChanged tName cName Nothing
         pure Nothing
         )
       (zipWithMaybeAMatched $ \_ ->
         let go hsSName dbSName
               | hsSName == dbSName = pure Nothing
               | otherwise = do
-                tell $ pure $ mkEdit $ SequenceRenamed dbSName hsSName
+                tell $ pure $ SequenceRenamed dbSName hsSName
                 pure (Just (S.singleton (dbSName, hsSName)))
         in \hsSName dbSName -> fmap join $ sequence $ liftM2 go hsSName dbSName)
       hsCols'
@@ -390,16 +398,16 @@ diffSequences
 
     _ <- mergeA
       (traverseMaybeMissing $ \sName seqOwner -> do
-        tell $ pure $ mkEdit $ SequenceAdded sName seqOwner
+        tell $ pure $ SequenceAdded sName seqOwner
         pure Nothing
         ) -- sequence is new
       (traverseMaybeMissing $ \sName _ -> do
-        tell $ pure $ mkEdit $ SequenceRemoved sName
+        tell $ pure $ SequenceRemoved sName
         pure Nothing
       ) -- sequence is old
       (zipWithMaybeAMatched $ \sName newOwner oldOwner -> do
         unless (oldOwner == newOwner) $
-          tell $ pure $ mkEdit $ SequenceSetOwner sName newOwner
+          tell $ pure $ SequenceSetOwner sName newOwner
         pure Nothing
       ) -- sequence preserved
       (M.union hsSeqs hsSeqs')
@@ -415,52 +423,52 @@ diffTables :: Tables -> Tables -> DiffA DList
 diffTables hsTables dbTables =
   M.foldl' D.append mempty <$> mergeA whenTablesAdded whenTablesRemoved whenBoth hsTables dbTables
   where
-    whenTablesAdded :: WhenMissing (Either DiffError) TableName Table (DList (WithPriority Edit))
+    whenTablesAdded :: WhenMissing (Either DiffError) TableName Table (DList AutomaticEditAction)
     whenTablesAdded =
       traverseMissing
         ( \k v -> do
-            let created = mkEdit $ TableAdded k v
-                constraintsAdded = mkEdit <$> addTableConstraints k (tableConstraints v)
+            let created = TableAdded k v
+                constraintsAdded = addTableConstraints k (tableConstraints v)
             pure $ D.fromList (created : constraintsAdded)
         )
 
-    whenTablesRemoved :: WhenMissing (Either DiffError) TableName Table (DList (WithPriority Edit))
+    whenTablesRemoved :: WhenMissing (Either DiffError) TableName Table (DList AutomaticEditAction)
     whenTablesRemoved =
       traverseMissing
         ( \k v -> do
-            let removed = mkEdit $ TableRemoved k
-                constraintsRemoved = mkEdit <$> dropTableConstraints k (tableConstraints v)
+            let removed = TableRemoved k
+                constraintsRemoved = dropTableConstraints k (tableConstraints v)
             pure $ D.fromList (removed : constraintsRemoved)
         )
 
-    whenBoth :: WhenMatched (Either DiffError) TableName Table Table (DList (WithPriority Edit))
+    whenBoth :: WhenMatched (Either DiffError) TableName Table Table (DList AutomaticEditAction)
     whenBoth = zipWithAMatched diffTable
 
 diffTable :: TableName -> Table -> Table -> DiffA DList
 diffTable tName hsTable dbTable = do
-  let tblConstraints = D.fromList $ fmap mkEdit $ alterTableConstraints tName (tableConstraints hsTable) (tableConstraints dbTable)
+  let tblConstraints = D.fromList $ alterTableConstraints tName (tableConstraints hsTable) (tableConstraints dbTable)
   diffs <-
     M.foldl' D.append mempty
       <$> mergeA whenColumnAdded whenColumnRemoved whenBoth (tableColumns hsTable) (tableColumns dbTable)
   pure $ tblConstraints <> diffs
   where
-    whenColumnAdded :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
+    whenColumnAdded :: WhenMissing (Either DiffError) ColumnName Column (DList AutomaticEditAction)
     whenColumnAdded =
       traverseMissing
         ( \k v -> do
-            let added = mkEdit $ ColumnAdded tName k v
+            let added = ColumnAdded tName k v
             pure $ D.fromList (added : [])
         )
 
-    whenColumnRemoved :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
+    whenColumnRemoved :: WhenMissing (Either DiffError) ColumnName Column (DList AutomaticEditAction)
     whenColumnRemoved =
       traverseMissing
         ( \k _ -> do
-            let removed = mkEdit $ ColumnRemoved tName k
+            let removed = ColumnRemoved tName k
             pure $ D.fromList (removed : [])
         )
 
-    whenBoth :: WhenMatched (Either DiffError) ColumnName Column Column (DList (WithPriority Edit))
+    whenBoth :: WhenMatched (Either DiffError) ColumnName Column Column (DList AutomaticEditAction)
     whenBoth = zipWithAMatched (diffColumn tName)
 
 diffColumn :: TableName -> ColumnName -> Column -> Column -> DiffA DList
