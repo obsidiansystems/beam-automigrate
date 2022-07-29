@@ -2,6 +2,7 @@
 
 ## UNRELEASED
 
+* renamed `tryRunMigrationsWithEditUpdate` to `tryRunMigrations`, and implement a version of `tryRunMigrationsWithEditUpdate` that actually allows edit updates like `runMigrationWithEditUpdate`
 * Major overhaul in how constraints and sequences are diffed
   * haskell/database constraints are now diffed based on *what* they constrain; instead of being an exact match.  inconsequential differences (in particular, the names of constraints, in most cases) no longer require any expensive DML.
   * Sequences ownership is now handled with the `OWNED BY table_name.column_name` mechanism instead of parsing the owner out of the sequence name.  unowned sequences (which might be used for purposes other than surrogate keys, for example) are still supported internally.
@@ -9,6 +10,7 @@
   * constraint options are always optional, with `Default` instances for `UniqueConstraintOptions` and `ForeignKeyConstraintOptions`.  As of this writing, the defaults currently mean "let postgres decide" for constraint names and cascade behaviors (the latter being NO ACTION).
   * Foreign keys can now be configured to reference columns that are different from the table's primary key.  in general this feature is much easier to use; passing a function that projects out the desired columns from both tables.
   * foreign keys can now be partially nullable. (see `foreignKeyOnNullable`)
+  * autoincrement ID's can be configured without using `SqlSerial`, see `defaultsToAutoincrement`
   * Many instances of database entities being dropped and recreated instead of altered are now supported.
 * Add `showMigration`
 * Extend allowable version bounds for aeson and splitmix

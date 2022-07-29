@@ -28,6 +28,7 @@ module Database.Beam.AutoMigrate
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
     tryRunMigrationsWithEditUpdate,
+    tryRunMigrations,
     calcMigrationSteps,
 
     -- * Creating a migration from a Diff
@@ -757,10 +758,11 @@ tryRunMigrationsWithEditUpdate
         (Rep (db (DatabaseEntity be db)))
      , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
      )
-  => AnnotatedDatabaseSettings be db
+  => ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdate annotatedDb conn = do
+tryRunMigrationsWithEditUpdate editUpdate annotatedDb conn = do
 
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
 
@@ -776,11 +778,31 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "Database migration required, attempting..."
         prettyPrintEdits edits
 
-        try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
+        try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
             error $ "Database migration error: " <> displayException e
           Right _ ->
             pure ()
+
+-- | Compare the existing schema in the database with the expected
+-- schema in Haskell and try to edit the existing schema as necessary
+tryRunMigrations
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrations = tryRunMigrationsWithEditUpdate Prelude.id
 
 -- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
 -- database schema to the given one, without actually performing the migration.

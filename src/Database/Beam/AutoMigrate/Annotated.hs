@@ -39,6 +39,7 @@ module Database.Beam.AutoMigrate.Annotated
     -- * Specifying Column constraints
     -- $specifyingColumnConstraints
     defaultsTo,
+    defaultsToAutoincrement,
 
     -- * Specifying Table constraints
     -- $specifyingTableConstraints
@@ -458,6 +459,23 @@ defaultsTo tyVal = FieldModification $ \old ->
         { tableFieldSchema =
             FieldSchema ty $ c {columnDefault = Just (pgDefaultConstraint tyVal) }
         }
+
+-- | Specify a default autoincrement value for an entity. The relevant migration will generate an associated SQL
+-- @DEFAULT@. This function accepts an optional sequence name.  when adding a
+-- column for the first time, this may be nothing to allow Postgres to name the
+-- sequence by default.  This can be used instead of `SqlSerial`, which can be
+-- troublesome when using `foreignKeyOnPk` and related functions to define
+-- foreign key constraints between tables instead of `PrimaryKey` on the base
+-- type.
+--
+-- > defaultsToAutoincrement Nothing
+defaultsToAutoincrement :: Maybe SequenceName -> FieldModification (TableFieldSchema tbl) x
+defaultsToAutoincrement sequenceName = FieldModification $ \tfs ->
+  let
+    FieldSchema ct cc = tableFieldSchema tfs
+  in
+    tfs { tableFieldSchema = FieldSchema ct (cc{columnDefault = Just $ Autoincrement sequenceName}) }
+
 
 -- | Postgres-specific function to convert any 'QGenExpr' into a meaningful 'PgExpressionSyntax', so
 -- that it can be rendered inside a 'Default' column constraint.
