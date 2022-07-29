@@ -18,6 +18,8 @@ module Database.Beam.AutoMigrate.Diff
     diffTables,
     diffTable,
     sortEdits,
+
+    module Database.Beam.AutoMigrate.Diff
   )
 where
 
