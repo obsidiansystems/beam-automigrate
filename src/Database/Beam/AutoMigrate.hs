@@ -1,4 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -8,6 +11,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+
+{-# OPTIONS_GHC -Wno-duplicate-exports #-}
 
 -- | This module provides the high-level API to migrate a database.
 module Database.Beam.AutoMigrate
@@ -57,6 +62,9 @@ module Database.Beam.AutoMigrate
     sqlSingleQuoted,
     sqlEscaped,
     editToSqlCommand,
+
+    -- * everything else
+    module Database.Beam.AutoMigrate
   )
 where
 
@@ -64,12 +72,13 @@ import Control.Exception
 import Control.Monad.Except
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
+import Control.Monad.RWS.Strict -- TODO: strict writer not strict enough, use "writer-cps"
 import Data.Bifunctor (first)
 import Data.Function ((&))
 import Data.Int (Int64)
 import Data.List (foldl')
 import qualified Data.Map.Strict as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Proxy
 import qualified Data.Set as S
 import Data.String.Conv (toS)
@@ -93,7 +102,7 @@ import Database.Beam.Schema (Database, DatabaseSettings)
 import Database.Beam.Schema.Tables (DatabaseEntity (..))
 import qualified Database.PostgreSQL.Simple as Pg
 import GHC.Generics hiding (prec)
-import Control.Lens (over, (^.), _1, _2)
+import Control.Lens (over, (^.), _1, _2, preuse, preuses, uses, use, ix, at)
 import qualified Text.Pretty.Simple as PS
 
 -- $annotatingDbSettings
@@ -205,6 +214,8 @@ data MigrationError
   | HaskellSchemaValidationFailed [ValidationFailed]
   | DatabaseSchemaValidationFailed [ValidationFailed]
   | UnsafeEditsDetected [EditAction]
+  | BadEdit ApplyFailed
+  | UserError String
   deriving (Show)
 
 instance Exception MigrationError
@@ -269,15 +280,30 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
 
   when (newEdits /= sortEdits edits) $ do
     putStrLn "Changes requested to diff induced migration. Attempting..."
-    prettyPrintEdits newEdits
+    prettyPrintEdits $ fmap withoutPriority newEdits
 
-  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
-    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+  tryRunEdits conn $ withoutPriority <$> newEdits
 
+tryRunEdits :: Pg.Connection -> [Edit] -> IO ()
+tryRunEdits conn newEdits = do
+  when (any (editSafetyIs Unsafe) newEdits) $
+    throwIO $ UnsafeEditsDetected $ fmap _editAction newEdits
+
+  tryRunEditsUnsafe conn newEdits
+
+
+tryRunEditsUnsafe :: Pg.Connection -> [Edit] -> IO ()
+tryRunEditsUnsafe conn newEdits =
+  try (runEditsUnsafe conn newEdits) >>= \case
+    Left (e :: SomeException) -> error $ "Database migration error: " <> displayException e
+    Right _ -> pure ()
+
+runEditsUnsafe :: Pg.Connection -> [Edit] -> IO ()
+runEditsUnsafe conn newEdits = do
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
     Pg.runBeamPostgres conn $
-      forM_ newEdits $ \(WithPriority (edit, _)) -> do
+      forM_ newEdits $ \edit -> do
         case _editCondition edit of
           Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
           -- Safe or slow, run that edit.
@@ -362,7 +388,7 @@ toSqlSyntax e =
           <> sqlEscaped oldName
           <> " TO "
           <> sqlEscaped newName)
-      TableConstraintRemoved tblName cstr ->
+      TableConstraintRemoved tblName cstr _ ->
         updateSyntax (alterTable tblName <> renderDropConstraint cstr)
       SequenceAdded sName s -> createSequenceSyntax sName s
       SequenceRemoved sName -> dropSequenceSyntax sName
@@ -677,7 +703,7 @@ prettyEditActionDescription = T.unwords . \case
       ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
     ForeignKeyAdded tblName tableConstraint constraintOptions ->
       ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
-    TableConstraintRemoved tblName tableConstraint ->
+    TableConstraintRemoved tblName tableConstraint _ ->
       ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
     ColumnAdded tblName colName column ->
       ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]
@@ -739,8 +765,8 @@ prettyEditActionDescription = T.unwords . \case
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
 
-prettyPrintEdits :: [WithPriority Edit] -> IO ()
-prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL . fst . unPriority) (sortEdits edits)
+prettyPrintEdits :: [Edit] -> IO ()
+prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap prettyEditSQL edits
 
 -- | Compare the existing schema in the database with the expected
 -- schema in Haskell and try to edit the existing schema as necessary
@@ -771,17 +797,14 @@ tryRunMigrationsWithEditUpdate editUpdate annotatedDb conn = do
       Left err -> do
         putStrLn "Error detecting database migration requirements: "
         print err
-      Right [] ->
+      Right [] -> do
         putStrLn "No database migration required, continuing startup."
       Right edits -> do
         putStrLn "Database migration required, attempting..."
-        prettyPrintEdits edits
+        let edits' = withoutPriority <$> editUpdate edits
+        prettyPrintEdits edits'
+        tryRunEdits conn edits'
 
-        try (runMigrationWithEditUpdate editUpdate conn expectedHaskellSchema) >>= \case
-          Left (e :: SomeException) ->
-            error $ "Database migration error: " <> displayException e
-          Right _ ->
-            pure ()
 
 -- | Compare the existing schema in the database with the expected
 -- schema in Haskell and try to edit the existing schema as necessary
@@ -826,3 +849,137 @@ calcMigrationSteps annotatedDb conn = do
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema
+
+newtype MigrateT be db m a = MigrateT { unMigrateT :: ExceptT MigrationError (RWST (AnnotatedDatabaseSettings be db) [Edit] Schema m) a }
+  deriving
+    ( Functor, Applicative, Monad
+    , MonadError MigrationError
+    , MonadReader (AnnotatedDatabaseSettings be db)
+    , MonadWriter [Edit]
+    , MonadState Schema
+    )
+
+runMigrateT :: AnnotatedDatabaseSettings be db -> Schema -> MigrateT be db m a -> m (Either MigrationError a, Schema, [Edit])
+runMigrateT hsSchema dbSchema (MigrateT (ExceptT (RWST x))) = x hsSchema dbSchema
+
+class
+    ( MonadError MigrationError m
+    , MonadReader (AnnotatedDatabaseSettings be db) m
+    , MonadWriter [Edit] m
+    , MonadState Schema m
+    ) => MonadMigrate be db m | m -> be db where
+  -- | perform the given edits unconditionally.
+  editAlways :: [Edit] -> m ()
+  editAlways edits = do
+    s <- get
+    tell edits
+    case applyEdits ((<$ WithPriority ((), Priority 0)) <$> edits) s of
+      Left bad -> throwError $ BadEdit bad
+      Right s' -> do
+        put s'
+
+  -- | compute the remaining edits.  results are not sorted
+  remainingEdits :: m [AutomaticEditAction]
+  remainingEdits = do
+    actualDatabaseSchema <- actualSchema
+    expectedHaskellSchema <- expectedSchema
+    case diff expectedHaskellSchema actualDatabaseSchema of
+      Left bad -> throwError $ DiffFailed bad
+      Right good -> pure good
+
+  -- | partially migrated schema
+  actualSchema :: m Schema
+  actualSchema = get
+
+  -- | the schema we're migrating to
+  expectedSchema :: m Schema
+
+instance
+    ( Monad m
+    , Generic (db (DatabaseEntity be db))
+    , Generic (db (AnnotatedDatabaseEntity be db))
+    , Database be db
+    , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+    , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+    ) => MonadMigrate be db (MigrateT be db m) where
+  expectedSchema = asks $ \annotatedDb -> fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+
+migrateNicely
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => AnnotatedDatabaseSettings be db
+  -> (forall m. MonadMigrate be db m => m a)
+  -> Pg.Connection
+  -> IO a
+migrateNicely annotatedDb editMigration conn = do
+
+  actualDatabaseSchema <- getSchema conn
+
+
+  let (res, _schema, unsafeEdits) = runIdentity $ runMigrateT annotatedDb actualDatabaseSchema $ do
+        x <- editMigration
+        remainingEdits >>= editAlways . fmap withoutPriority . sortAutomaticEdits
+        pure x
+
+  case unsafeEdits of
+    [] -> putStrLn "No database migration required, continuing startup."
+    _ -> do
+      putStrLn "Database migration required, attempting..."
+      prettyPrintEdits unsafeEdits
+
+  case res of
+    Left err -> do
+      putStrLn "Error detecting database migration requirements: "
+      print err
+      throwIO err
+    Right x -> do
+      unless (null unsafeEdits) $ tryRunEdits conn unsafeEdits
+      pure x
+
+doesColumnExist :: MonadMigrate be db m => TableName -> ColumnName -> m Bool
+doesColumnExist tName cName = isJust <$> preuse (_schemaTables . ix tName . _tableColumns . ix cName)
+
+dropColumn, dropColumnIfExists :: MonadMigrate be db m => TableName -> ColumnName -> m ()
+dropColumn tName cName = editAlways [Edit (EditAction_Automatic $ ColumnRemoved tName cName) (Right Safe)]
+
+dropColumnIfExists tName cName = do
+  x <- doesColumnExist tName cName
+  when x $ dropColumn tName cName
+
+renameColumn, renameColumnIfExists :: MonadMigrate be db m => TableName -> ColumnName -> ColumnName -> m ()
+renameColumn tName cName cName' = editAlways [Edit (EditAction_Manual $ ColumnRenamed tName cName cName') (Right Safe)]
+
+renameColumnIfExists tName cName cName' = do
+  x <- doesColumnExist tName cName
+  when x $ renameColumn tName cName cName'
+
+doesForeignKeyExist :: MonadMigrate be db m => TableName -> ForeignKey -> m Bool
+doesForeignKeyExist tName fkey = isJust <$> preuse (_schemaTables . ix tName . _tableConstraints . _foreignKeyConstraints . ix fkey)
+
+dropForeignKey :: MonadMigrate be db m => TableName -> ForeignKey -> m ()
+dropForeignKey tName fkey = do
+  fkeyOpts <- preuse (_schemaTables . ix tName . _tableConstraints . _foreignKeyConstraints . ix fkey)
+  case fkeyOpts >>= foreignKeyConstraintName of
+    Nothing -> throwError (UserError $ "dropForeignKey: constraint not found" <> show tName <> " " <> show fkey)
+    Just fkeyName -> editAlways [Edit (EditAction_Automatic $ TableConstraintRemoved tName fkeyName TableConstraintRemovedType_ForeignKey) (Right Safe)]
+
+dropForeignKeyIfExists :: MonadMigrate be db m => TableName -> ForeignKey -> m ()
+dropForeignKeyIfExists tName fkey = do
+  x <- doesForeignKeyExist tName fkey
+  when x $ dropForeignKey tName fkey

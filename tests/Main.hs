@@ -29,13 +29,13 @@ properties =
         \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
           case diff hsSchema dbSchema of
             Left e -> error (show e)
-            Right edits -> (sortEdits edits, dbSchema) `sameSchema` hsSchema,
+            Right edits -> (sortEdits (fmap mkEdit edits), dbSchema) `sameSchema` hsSchema,
       QC.testProperty "reverse applying the edits of the diff algorithm yields back a valid schema" $
         \(Pretty (SimilarSchemas (hsSchema, dbSchema))) ->
           case diff hsSchema dbSchema of
             Left e -> error (show e)
             Right edits ->
-              case applyEdits edits dbSchema of
+              case applyEdits (fmap mkEdit edits) dbSchema of
                 Left e' -> error (show e')
                 Right s -> validateSchema s === Right ()
     ]

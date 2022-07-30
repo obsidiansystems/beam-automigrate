@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -30,6 +32,8 @@ import GHC.Generics hiding (to)
 import Control.Lens (Lens', lens, to, _Right)
 import Control.Lens (preview, set)
 
+import Quiet (Quiet(..))
+
 import Control.Lens.TH
 
 --
@@ -54,12 +58,14 @@ type Enumerations = Map EnumerationName Enumeration
 newtype EnumerationName = EnumerationName
   { enumName :: Text
   }
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet EnumerationName)
 
 newtype Enumeration = Enumeration
   { enumValues :: [Text]
   }
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet Enumeration)
 
 instance NFData EnumerationName
 
@@ -74,7 +80,8 @@ type Sequences = Map SequenceName (Maybe Sequence)
 newtype SequenceName = SequenceName
   { seqName :: Text
   }
-  deriving (Show, Eq, Ord, Generic)
+  deriving (Eq, Ord, Generic)
+  deriving (Show) via (Quiet SequenceName)
 
 -- For now this type is isomorphic to unit as we don't need to support anything other than plain
 -- sequences.
@@ -100,7 +107,8 @@ type Tables = Map TableName Table
 newtype TableName = TableName
   { tableName :: Text
   }
-  deriving (Show, Eq, Ord, NFData, Generic)
+  deriving (Eq, Ord, NFData, Generic)
+  deriving (Show) via (Quiet TableName)
 
 data TableConstraints = TableConstraints
   { primaryKeyConstraint :: Maybe (PrimaryKeyConstraint, UniqueConstraintOptions)
@@ -132,7 +140,8 @@ type Columns = Map ColumnName Column
 newtype ColumnName = ColumnName
   { columnName :: Text
   }
-  deriving (Show, Eq, Ord, NFData, Generic)
+  deriving (Eq, Ord, NFData, Generic)
+  deriving (Show) via (Quiet ColumnName)
 
 instance IsString ColumnName where
   fromString = ColumnName . T.pack
@@ -192,15 +201,18 @@ deriving instance Generic PgDataType
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
 newtype PgEnum a
   = PgEnum a
-  deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
+  deriving (Eq, Typeable, Enum, Bounded, Generic)
+  deriving (Show) via (Quiet (PgEnum a))
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /textual/ enum types.
 newtype DbEnum a
   = DbEnum a
-  deriving (Show, Eq, Typeable, Enum, Bounded, Generic)
+  deriving (Eq, Typeable, Enum, Bounded, Generic)
+  deriving (Show) via (Quiet (DbEnum a))
 
 newtype ConstraintName = ConstraintName { unConsraintName :: Text }
-  deriving (IsString, Eq, Ord, Show, NFData)
+  deriving (IsString, Eq, Ord, NFData, Generic)
+  deriving (Show) via (Quiet ConstraintName)
 
 data PrimaryKeyConstraint = PrimaryKey (Set ColumnName) -- ^ This set of 'Column's identifies the Table's 'PrimaryKey'.
   deriving (Eq, Ord, Show, Generic)
@@ -293,6 +305,14 @@ data ManualEditAction
   = ColumnRenamed TableName ColumnName {- old name -} ColumnName {- new name -}
   deriving (Show, Eq)
 
+data TableConstraintRemovedType
+  = TableConstraintRemovedType_PrimaryKey
+  | TableConstraintRemovedType_Unique
+  | TableConstraintRemovedType_ForeignKey
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData TableConstraintRemovedType
+
 data AutomaticEditAction
   = TableAdded TableName Table
   | TableRemoved TableName
@@ -302,7 +322,7 @@ data AutomaticEditAction
   | UniqueConstraintAdded TableName Unique UniqueConstraintOptions
   | ForeignKeyAdded TableName ForeignKey ForeignKeyConstraintOptions
 
-  | TableConstraintRemoved TableName ConstraintName
+  | TableConstraintRemoved TableName ConstraintName TableConstraintRemovedType
   | RenameConstraint TableName
     ConstraintName {- old name -}
     ConstraintName {- new name -}
@@ -432,7 +452,7 @@ instance NFData AutomaticEditAction where
     eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
   rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
   rnf (SequenceRemoved sName) = sName `deepseq` ()
-  rnf (TableConstraintRemoved tName cName) = tName `deepseq` cName `deepseq` ()
+  rnf (TableConstraintRemoved tName cName typ) = tName `deepseq` cName `deepseq` typ `deepseq` ()
   rnf (RenameConstraint tName cName cName') = tName `deepseq` cName `deepseq` cName' `deepseq` ()
   rnf (SequenceRenamed sName sName') = sName `deepseq` sName' `deepseq` ()
   rnf (SequenceSetOwner sName sOwner) = sName `deepseq` sOwner `deepseq` ()
