@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* [#48](https://github.com/obsidiansystems/beam-automigrate/pull/48): Wrap main entry points that execute migrations against a database in transactions more correctly. Also renames functions that were clearly unsafe, and exports them from a different module, `Database.Beam.AutoMigrate.Unsafe`. It is highly recommended that the user makes sure that they weren't doing anything unsafe before. Some identifiers have been renamed to be more different.
 * [#47](https://github.com/obsidiansystems/beam-automigrate/pull/47): Generate postgres enum types in schema when using `Nullable PgEnum` values.
 
 ## 0.1.3.0
