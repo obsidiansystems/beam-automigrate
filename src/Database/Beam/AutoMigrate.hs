@@ -259,7 +259,7 @@ runMigrationWithEditUpdate ::
   Pg.Connection ->
   Schema ->
   IO ()
-runMigrationWithEditUpdate editUpdate conn hsSchema = do
+runMigrationWithEditUpdate editUpdate conn hsSchema = Pg.withTransaction conn $ do
   -- Create the migration with all the safeety information
   edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
   -- Apply the user function to possibly update the list of edits to allow the user to
@@ -275,26 +275,25 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
     throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
-  Pg.withTransaction conn $
-    Pg.runBeamPostgres conn $
-      forM_ newEdits $ \(WithPriority (edit, _)) -> do
-        case _editCondition edit of
-          Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
-          -- Safe or slow, run that edit.
-          Right safeMaybeSlow -> safeOrSlow safeMaybeSlow edit
-          Left ec -> do
-            -- Edit is conditional, run the condition to see how safe it is to run this edit.
-            printmsg $ "edit has condition: " <> toS (prettyEditConditionQuery ec)
-            checkedSafety <- _editCondition_check ec
-            case checkedSafety of
-              Unsafe -> do
-                -- Edit determined to be unsafe, don't run it.
-                printmsg "edit unsafe by condition"
-                liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
-              safeMaybeSlow -> do
-                -- Safe or slow, run that edit.
-                printmsg "edit condition satisfied"
-                safeOrSlow safeMaybeSlow edit
+  Pg.runBeamPostgres conn $
+    forM_ newEdits $ \(WithPriority (edit, _)) -> do
+      case _editCondition edit of
+        Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+        -- Safe or slow, run that edit.
+        Right safeMaybeSlow -> safeOrSlow safeMaybeSlow edit
+        Left ec -> do
+          -- Edit is conditional, run the condition to see how safe it is to run this edit.
+          printmsg $ "edit has condition: " <> toS (prettyEditConditionQuery ec)
+          checkedSafety <- _editCondition_check ec
+          case checkedSafety of
+            Unsafe -> do
+              -- Edit determined to be unsafe, don't run it.
+              printmsg "edit unsafe by condition"
+              liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
+            safeMaybeSlow -> do
+              -- Safe or slow, run that edit.
+              printmsg "edit condition satisfied"
+              safeOrSlow safeMaybeSlow edit
   where
     safeOrSlow safety edit = do
       when (safety == PotentiallySlow) $ do
