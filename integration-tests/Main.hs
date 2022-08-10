@@ -8,6 +8,7 @@ import Database.Beam.AutoMigrate
 import Database.Beam.AutoMigrate.BenchUtil (cleanDatabase)
 import Database.Beam.AutoMigrate.Postgres (getSchema)
 import Database.Beam.AutoMigrate.TestUtils
+import Database.Beam.AutoMigrate.Unsafe (unsafeRunMigration, unsafeMigrate)
 import Database.Beam.Postgres
 import qualified Database.PostgreSQL.Simple as Pg
 import qualified Database.PostgreSQL.Simple.Transaction as Pg
@@ -50,7 +51,7 @@ properties conn =
       QC.testProperty "Migration roundtrip (empty DB)" $
         \hsSchema -> hsSchema /= noSchema ==> do
           dbProperty conn $ \_ -> do
-            let mig = migrate conn hsSchema
+            let mig = unsafeMigrate conn hsSchema
             runBeamPostgres conn (unsafeRunMigration mig)
             dbSchema <- getSchema conn
             let hsSchema' = normalizeDefaultExprs hsSchema
@@ -59,7 +60,7 @@ properties conn =
       -- We test that after a successful migration, calling 'diff' should yield no edits.
     , QC.testProperty "Diffing after a migration yields no edits" $
         \hsSchema -> hsSchema /= noSchema ==> dbProperty conn $ \_ -> liftIO $ do
-          let mig = migrate conn hsSchema
+          let mig = unsafeMigrate conn hsSchema
           runBeamPostgres conn (unsafeRunMigration mig)
           dbSchema <- getSchema conn
           pure $ diff (normalizeDefaultExprs hsSchema) (normalizeDefaultExprs dbSchema) === Right []
