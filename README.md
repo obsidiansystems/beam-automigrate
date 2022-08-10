@@ -66,6 +66,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Database.Beam.Schema
 > import Database.Beam (val_)
 > import qualified Database.Beam.AutoMigrate as BA
+> import qualified Database.Beam.AutoMigrate.Unsafe as BA
 > import Database.Beam.AutoMigrate.TestUtils
 > import Database.PostgreSQL.Simple as Pg
 > import GHC.Generics
@@ -264,7 +265,7 @@ something like this:
 >
 > exampleShowMigration :: Connection -> IO ()
 > exampleShowMigration conn = runBeamPostgres conn $
->   BA.printMigration $ BA.migrate conn hsSchema
+>   BA.printMigration $ BA.unsafeMigrate conn hsSchema
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =

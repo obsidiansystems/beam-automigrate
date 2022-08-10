@@ -31,10 +31,12 @@ library
     Database.Beam.AutoMigrate.BenchUtil
     Database.Beam.AutoMigrate.Compat
     Database.Beam.AutoMigrate.Diff
+    Database.Beam.AutoMigrate.Eval
     Database.Beam.AutoMigrate.Generic
     Database.Beam.AutoMigrate.Postgres
     Database.Beam.AutoMigrate.Schema.Gen
     Database.Beam.AutoMigrate.Types
+    Database.Beam.AutoMigrate.Unsafe
     Database.Beam.AutoMigrate.Util
     Database.Beam.AutoMigrate.Validity
 
