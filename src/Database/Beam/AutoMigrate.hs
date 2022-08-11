@@ -362,7 +362,7 @@ toSqlSyntax e =
           <> sqlEscaped oldName
           <> " TO "
           <> sqlEscaped newName)
-      TableConstraintRemoved tblName cstr ->
+      TableConstraintRemoved tblName cstr _ ->
         updateSyntax (alterTable tblName <> renderDropConstraint cstr)
       SequenceAdded sName s -> createSequenceSyntax sName s
       SequenceRemoved sName -> dropSequenceSyntax sName
@@ -677,7 +677,7 @@ prettyEditActionDescription = T.unwords . \case
       ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
     ForeignKeyAdded tblName tableConstraint constraintOptions ->
       ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
-    TableConstraintRemoved tblName tableConstraint ->
+    TableConstraintRemoved tblName tableConstraint _ ->
       ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
     ColumnAdded tblName colName column ->
       ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]

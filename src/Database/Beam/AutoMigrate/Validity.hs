@@ -426,7 +426,7 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       withExistingTable tName edit s (addTableConstraint edit s (SomeUnique con conOpt) tName)
     ForeignKeyAdded tName con conOpt ->
       withExistingTable tName edit s (addTableConstraint edit s (SomeForeignKey con conOpt) tName)
-    TableConstraintRemoved tName con ->
+    TableConstraintRemoved tName con _ ->
       withExistingTable tName edit s (removeTableConstraint edit s con tName)
     RenameConstraint tName oldName newName ->
       withExistingTable tName edit s (renameTableConstraint edit s oldName newName tName)

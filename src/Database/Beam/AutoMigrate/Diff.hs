@@ -24,7 +24,7 @@ where
 import Control.Monad.Writer.Strict
 import Control.Monad.State.Strict
 import Control.Applicative ((<|>))
-import Control.Lens (preview, _Nothing, ifoldMap, ifor, at, (.=), ix, (<<.=))
+import Control.Lens (preview, ifoldMap, ifor, at, (.=), ix, (<<.=))
 import Control.Exception (assert)
 import Data.DList (DList)
 import qualified Data.DList as D
@@ -65,9 +65,11 @@ editPriority = \case
   EnumTypeValueAdded {} -> Priority 6
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
   UniqueConstraintAdded {} -> Priority 7
-  PrimaryKeyAdded {} -> Priority 8
-  ForeignKeyAdded {} -> Priority 9
-  TableConstraintRemoved {} -> Priority 11
+  TableConstraintRemoved _ _ TableConstraintRemovedType_ForeignKey -> Priority 8
+  TableConstraintRemoved _ _ TableConstraintRemovedType_PrimaryKey -> Priority 9 -- we must remove the existing PK before creating a new one.
+  PrimaryKeyAdded {} -> Priority 10
+  ForeignKeyAdded {} -> Priority 11
+  TableConstraintRemoved _ _ TableConstraintRemovedType_Unique -> Priority 12
   -- Destructive operations go last
   ColumnRemoved {} -> Priority 13
   TableRemoved {} -> Priority 14
@@ -134,23 +136,27 @@ dropTableConstraints tName dbConstraints = concat
   [ toList $ do
     (_, co) <- primaryKeyConstraint dbConstraints --
     cName <- uniqueConstraintName co
-    pure $ TableConstraintRemoved tName cName
+    pure $ TableConstraintRemoved tName cName TableConstraintRemovedType_PrimaryKey
   , do
     (_, co) <- M.toList $ uniqueConstraints dbConstraints
     cName <- toList $ uniqueConstraintName co
-    pure $ TableConstraintRemoved tName cName
+    pure $ TableConstraintRemoved tName cName TableConstraintRemovedType_Unique
   , do
     (_, co) <- M.toList $ foreignKeyConstraints dbConstraints
     cName <- toList $ foreignKeyConstraintName co
-    pure $ TableConstraintRemoved tName cName
+    pure $ TableConstraintRemoved tName cName TableConstraintRemovedType_ForeignKey
   ]
 
 -- | alter constraints on a table (including add/remove)
 alterTableConstraints :: TableName -> TableConstraints -> TableConstraints -> [AutomaticEditAction]
 alterTableConstraints tName hsConstraints dbConstraints =
   let
+    primaryKeyDifference l r
+      | fmap fst l == fmap fst r = Nothing
+      | otherwise = l
+
     tableConstraintsDifference l r = TableConstraints
-      { primaryKeyConstraint = preview _Nothing (primaryKeyConstraint r) *> primaryKeyConstraint l
+      { primaryKeyConstraint = primaryKeyDifference (primaryKeyConstraint l) (primaryKeyConstraint r)
       , uniqueConstraints = M.difference (uniqueConstraints l) (uniqueConstraints r)
       , foreignKeyConstraints = M.difference (foreignKeyConstraints l) (foreignKeyConstraints r)
       }
@@ -192,7 +198,7 @@ alterForeignKeyConstraint tName fkCon hsOpts dbOpts =
       -- TODO: this should error out instead of give up if the edit actions disagree but we don't know the constarint name
       cName <- foreignKeyConstraintName hsOpts
       pure
-        [ TableConstraintRemoved tName cName
+        [ TableConstraintRemoved tName cName TableConstraintRemovedType_ForeignKey
         , ForeignKeyAdded tName fkCon hsOpts
         ]
     rename = renameConstraint tName (foreignKeyConstraintName hsOpts) (foreignKeyConstraintName dbOpts)

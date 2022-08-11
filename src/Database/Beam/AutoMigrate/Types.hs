@@ -293,6 +293,14 @@ data ManualEditAction
   = ColumnRenamed TableName ColumnName {- old name -} ColumnName {- new name -}
   deriving (Show, Eq)
 
+data TableConstraintRemovedType
+  = TableConstraintRemovedType_PrimaryKey
+  | TableConstraintRemovedType_Unique
+  | TableConstraintRemovedType_ForeignKey
+  deriving (Eq, Ord, Show, Generic)
+
+instance NFData TableConstraintRemovedType
+
 data AutomaticEditAction
   = TableAdded TableName Table
   | TableRemoved TableName
@@ -302,7 +310,7 @@ data AutomaticEditAction
   | UniqueConstraintAdded TableName Unique UniqueConstraintOptions
   | ForeignKeyAdded TableName ForeignKey ForeignKeyConstraintOptions
 
-  | TableConstraintRemoved TableName ConstraintName
+  | TableConstraintRemoved TableName ConstraintName TableConstraintRemovedType
   | RenameConstraint TableName
     ConstraintName {- old name -}
     ConstraintName {- new name -}
@@ -432,7 +440,7 @@ instance NFData AutomaticEditAction where
     eName `deepseq` inserted `deepseq` order `deepseq` insertionPoint `deepseq` ()
   rnf (SequenceAdded sName s) = sName `deepseq` s `deepseq` ()
   rnf (SequenceRemoved sName) = sName `deepseq` ()
-  rnf (TableConstraintRemoved tName cName) = tName `deepseq` cName `deepseq` ()
+  rnf (TableConstraintRemoved tName cName typ) = tName `deepseq` cName `deepseq` typ `deepseq` ()
   rnf (RenameConstraint tName cName cName') = tName `deepseq` cName `deepseq` cName' `deepseq` ()
   rnf (SequenceRenamed sName sName') = sName `deepseq` sName' `deepseq` ()
   rnf (SequenceSetOwner sName sOwner) = sName `deepseq` sOwner `deepseq` ()
