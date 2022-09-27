@@ -501,7 +501,7 @@ toSqlSyntax e =
     renameSequenceSyntax :: SequenceName -> SequenceName -> Pg.PgSyntax
     renameSequenceSyntax (SequenceName sName) (SequenceName sName') = Pg.emit $ toS
       $ "ALTER SEQUENCE " <> sqlEscaped sName
-      <> "RENAME TO " <> sqlEscaped sName'
+      <> " RENAME TO " <> sqlEscaped sName'
       <> ";\n"
 
     setSequenceOwnerSyntax :: SequenceName -> Maybe Sequence -> Pg.PgSyntax
