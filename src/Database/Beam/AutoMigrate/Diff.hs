@@ -59,6 +59,7 @@ editPriority = \case
   ColumnAdded {} -> Priority 3
   ColumnDefaultChanged {} -> Priority 4
   ColumnNullableChanged {} -> Priority 4
+  SequenceRenamed {} -> Priority 4
   SequenceSetOwner {} -> Priority 5 -- set owner *after* creating the columns that should own it but before the default is created.
   -- Operations that set constraints or change the shape of a type have lower priority
   ColumnTypeChanged {} -> Priority 5
@@ -76,7 +77,6 @@ editPriority = \case
   EnumTypeRemoved {} -> Priority 15
   SequenceRemoved {} -> Priority 16
   RenameConstraint {} -> Priority 17 -- constraint manipulations are generated from the database
-  SequenceRenamed {} -> Priority 17
 
 -- TODO: This needs to support adding conditional queries.
 mkEdit :: AutomaticEditAction -> WithPriority Edit
