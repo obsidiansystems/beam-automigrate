@@ -406,6 +406,7 @@ toSqlSyntax e =
               NotNull -> " SET NOT NULL"
           )
       ColumnDefaultChanged tblName colName dfltConst ->
+        if dfltConst == Just (Autoincrement Nothing) then updateSyntax "DO $$ BEGIN END; $$" else -- On Autoincrement Nothing, renderColumnDefault generates an empty string, which causes invalid syntax.  We can just skip this statement entirely, in that case.  If we just put an empty string, we get QueryError {qeMessage = "execute: Empty query", qeQuery = "        "}, so we need to put this useless DO statement in here; probably this function should return Maybe or a list or something like that instead
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
             <> sqlEscaped (columnName colName)
