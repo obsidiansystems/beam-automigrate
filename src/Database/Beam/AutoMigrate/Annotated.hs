@@ -52,6 +52,7 @@ module Database.Beam.AutoMigrate.Annotated
     foreignKeyOnPk,
     foreignKeyOn,
     foreignKeyOnNullable,
+    foreignKeyOnWithOptions,
 
     -- * Other types and functions
     TableKind,
