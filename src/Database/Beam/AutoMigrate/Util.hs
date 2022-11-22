@@ -15,7 +15,7 @@ import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables
-import Lens.Micro ((^.))
+import Control.Lens ((^.))
 
 --
 -- Retrieving all the column names for a beam entity.
