@@ -1,6 +1,6 @@
 beam-automigrate
 ================
-[![Haskell](https://img.shields.io/badge/language-Haskell-orange.svg)](https://haskell.org) [![Hackage](https://img.shields.io/hackage/v/beam-automigrate.svg)](https://hackage.haskell.org/package/beam-automigrate) [![Hackage CI](https://matrix.hackage.haskell.org/api/v2/packages/beam-automigrate/badge)](https://matrix.hackage.haskell.org/#/package/beam-automigrate)   [![Github CI](https://github.com/obsidiansystems/beam-automigrate/workflows/github-action/badge.svg)](https://github.com/obsidiansystems/beam-automigrate/actions) [![BSD3 License](https://img.shields.io/badge/license-BSD3-blue.svg)](https://github.com/obsidiansystems/beam-automigrate/blob/master/LICENSE)
+[![Haskell](https://img.shields.io/badge/language-Haskell-orange.svg)](https://haskell.org) [![Hackage](https://img.shields.io/hackage/v/beam-automigrate.svg)](https://hackage.haskell.org/package/beam-automigrate) [![Github CI](https://github.com/obsidiansystems/beam-automigrate/workflows/github-action/badge.svg)](https://github.com/obsidiansystems/beam-automigrate/actions) [![BSD3 License](https://img.shields.io/badge/license-BSD3-blue.svg)](https://github.com/obsidiansystems/beam-automigrate/blob/master/LICENSE)
 
 Automatic migrations for [beam](https://hackage.haskell.org/package/beam-core) databases!
 
