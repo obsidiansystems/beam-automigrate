@@ -45,6 +45,30 @@ Your pull request should add no new warnings to the project. It should also gene
 
 Make sure the project builds and that the tests pass! This will generally also be checked by CI before merge, but trying it yourself first means you'll catch problems earlier and your contribution can be merged that much sooner!
 
+To run the same build as our CI server, you can execute `nix-build release.nix`.
+
+##### Running the tests in a VM
+
+To run the integration tests, you can execute `nix-build test.nix`. This will build and run a [NixOS virtual machine](https://nixos.org/guides/integration-testing-using-virtual-machines.html) with postgres and a few beam-automigrate executables (e.g., `readme` and the other executables defined in the [beam-automigrate.cabal](beam-automigrate.cabal)). Those executables will be run inside the VM to verify that they successfully produce the expected database migrations.
+
+To learn more about the NixOS virtual machine testing framework, including how to debug tests interactively, check out the [NixOS manual section on integration testing](https://nixos.org/manual/nixos/stable/index.html#sec-nixos-tests).
+
+##### Running the tests outside a VM
+
+The integration tests can be run outside of the VM by running the following commands:
+
+```bash
+nix-shell
+cabal repl exe:beam-automigrate-integration-tests
+:main --with-gargoyle test-db
+```
+
+This will spin up a local postgresql database using gargoyle in the folder "test-db" (the name of this folder isn't important - you can replace it with whatever you like).
+
+##### Adding New Tests
+
+New tests should be added for every breaking change, including bug fixes. Tests can be added by defining an executable that runs a migration that demonstrates the error, and then adding that executable to [test.nix](test.nix) so that it is run by the CI server. The failing test case should be committed separately from (and, if possible, prior to) the fix that causes the test case to pass.
+
 #### Dependencies
 
 Include version bounds whenever adding a dependency to the library stanza of the cabal file.

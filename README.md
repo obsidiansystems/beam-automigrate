@@ -1,6 +1,6 @@
 beam-automigrate
 ================
-[![Haskell](https://img.shields.io/badge/language-Haskell-orange.svg)](https://haskell.org) [![Hackage](https://img.shields.io/hackage/v/beam-automigrate.svg)](https://hackage.haskell.org/package/beam-automigrate) [![Hackage CI](https://matrix.hackage.haskell.org/api/v2/packages/beam-automigrate/badge)](https://matrix.hackage.haskell.org/#/package/beam-automigrate)   [![Github CI](https://github.com/obsidiansystems/beam-automigrate/workflows/github-action/badge.svg)](https://github.com/obsidiansystems/beam-automigrate/actions) [![BSD3 License](https://img.shields.io/badge/license-BSD3-blue.svg)](https://github.com/obsidiansystems/beam-automigrate/blob/master/LICENSE)
+[![Haskell](https://img.shields.io/badge/language-Haskell-orange.svg)](https://haskell.org) [![Hackage](https://img.shields.io/hackage/v/beam-automigrate.svg)](https://hackage.haskell.org/package/beam-automigrate) [![Github CI](https://github.com/obsidiansystems/beam-automigrate/workflows/github-action/badge.svg)](https://github.com/obsidiansystems/beam-automigrate/actions) [![BSD3 License](https://img.shields.io/badge/license-BSD3-blue.svg)](https://github.com/obsidiansystems/beam-automigrate/blob/master/LICENSE)
 
 Automatic migrations for [beam](https://hackage.haskell.org/package/beam-core) databases!
 
@@ -36,7 +36,7 @@ If you're using [nix](https://nixos.org/nix), you can enter a shell with the
 appropriate dependencies with the following command:
 
 ```bash
-$ nix-shell release.nix -A env
+$ nix-shell
 ```
 
 From that nix-shell, you can run `cabal repl readme`.
@@ -56,6 +56,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > {-# LANGUAGE DataKinds #-}
 > {-# LANGUAGE DeriveGeneric #-}
 > {-# LANGUAGE DeriveAnyClass #-}
+> {-# LANGUAGE OverloadedStrings #-}
 > {-# LANGUAGE TypeApplications #-}
 > {-# LANGUAGE TypeFamilies #-}
 > import Prelude hiding ((.))
@@ -65,11 +66,11 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Database.Beam.Schema
 > import Database.Beam (val_)
 > import qualified Database.Beam.AutoMigrate as BA
+> import Database.Beam.AutoMigrate.TestUtils
 > import Database.PostgreSQL.Simple as Pg
-> import Gargoyle.PostgreSQL.Connect
 > import GHC.Generics
-> import Data.Pool (withResource)
 > import Data.Text
+> import System.Environment (getArgs)
 >
 > data CitiesT f = City
 >   { ctCity     :: Columnar f Text
@@ -261,36 +262,36 @@ something like this:
 ```haskell
 
 >
-> readmeDbTransaction :: (Connection -> IO a) -> IO a
-> readmeDbTransaction f = withDb "readme-db" $ \pool ->
->   withResource pool $ \conn ->
->     Pg.withTransaction conn $ f conn
+> exampleShowMigration :: Connection -> IO ()
+> exampleShowMigration conn = runBeamPostgres conn $
+>   BA.printMigration $ BA.migrate conn hsSchema
 >
-> exampleShowMigration :: IO ()
-> exampleShowMigration = readmeDbTransaction $ \conn ->
->   runBeamPostgres conn $
->     BA.printMigration $ BA.migrate conn hsSchema
->
-> exampleAutoMigration :: IO ()
-> exampleAutoMigration = withDb "readme-db" $ \pool ->
->   withResource pool $ \conn ->
->     BA.tryRunMigrationsWithEditUpdate annotatedDB conn
+> exampleAutoMigration :: Connection -> IO ()
+> exampleAutoMigration conn =
+>   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
 >
 > main :: IO ()
 > main = do
->   putStrLn "----------------------------------------------------"
->   putStrLn "MIGRATION PLAN (if migration needed):"
->   putStrLn "----------------------------------------------------"
->   exampleShowMigration
->   putStrLn "----------------------------------------------------"
->   putStrLn "MIGRATE?"
->   putStrLn "----------------------------------------------------"
->   putStrLn "Would you like to run the migration on the database in the folder \"readme-db\" (will be created if it doesn't exist)? (y/n)"
->   response <- getLine
->   case response of
->     "y" -> exampleAutoMigration
->     "Y" -> exampleAutoMigration
->     _ -> putStrLn "Exiting"
+>   args <- getArgs
+>   let (getLine', connMethod) = case args of
+>         -- The "ci" argument allows the readme to be run and tested in a headless
+>         -- environment (e.g., by a continuous integration server)
+>         ["ci"] -> (return "y", ConnMethod_Direct $ defaultConnectInfo { connectDatabase = "readme" })
+>         _ -> (getLine, ConnMethod_Gargoyle "readme-db")
+>   withConnection connMethod $ \conn -> Pg.withTransaction conn$ do
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "MIGRATION PLAN (if migration needed):"
+>     putStrLn "----------------------------------------------------"
+>     exampleShowMigration conn
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "MIGRATE?"
+>     putStrLn "----------------------------------------------------"
+>     putStrLn "Would you like to run the migration on the database in the folder \"readme-db\" (will be created if it doesn't exist)? (y/n)"
+>     response <- getLine'
+>     case response of
+>       "y" -> exampleAutoMigration conn
+>       "Y" -> exampleAutoMigration conn
+>       _ -> putStrLn "Exiting"
 >
 
 ```
