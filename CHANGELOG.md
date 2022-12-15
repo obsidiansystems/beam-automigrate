@@ -1,11 +1,8 @@
 # Revision history for beam-automigrate
 
-## Unreleased
-
-* [#47](https://github.com/obsidiansystems/beam-automigrate/pull/47): Generate postgres enum types in schema when using `Nullable PgEnum` values.
-
 ## 0.1.3.0
 
+* [#47](https://github.com/obsidiansystems/beam-automigrate/pull/47): Generate postgres enum types in schema when using `Nullable PgEnum` values.
 * Add `showMigration`
 * Extend allowable version bounds for aeson, base, dlist, pretty-simple, and splitmix
 * Add support for postgres' oid column type
