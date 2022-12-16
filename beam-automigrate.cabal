@@ -2,7 +2,7 @@ name:               beam-automigrate
 version:            0.1.3.0
 license-file:       LICENSE
 build-type:         Simple
-cabal-version:      >=1.10
+cabal-version:      2.0
 author:             Alfredo Di Napoli, Andres Löh, Well-Typed LLP, and Obsidian Systems LLC
 copyright:          2020 Obsidian Systems LLC
 maintainer:         maintainer@obsidian.systems
@@ -92,6 +92,7 @@ library beam-automigrate-test-utils
   exposed-modules:
     Database.Beam.AutoMigrate.TestUtils
   ghc-options: -Wall
+  default-language:   Haskell2010
 
 test-suite beam-automigrate-tests
   type:               exitcode-stdio-1.0
