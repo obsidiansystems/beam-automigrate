@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+* Added runMigrationsWithEditUpdateAndHooks and tryRunMigrationsWithEditUpdateAndHooks, that take Pg actions to run before and after the auto-migration in the same transaction.
 * Major overhaul in how constraints and sequences are diffed
   * haskell/database constraints are now diffed based on *what* they constrain; instead of being an exact match.  inconsequential differences (in particular, the names of constraints, in most cases) no longer require any expensive DML.
   * Sequences ownership is now handled with the `OWNED BY table_name.column_name` mechanism instead of parsing the owner out of the sequence name.  unowned sequences (which might be used for purposes other than surrogate keys, for example) are still supported internally.
