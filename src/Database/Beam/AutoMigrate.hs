@@ -27,7 +27,9 @@ module Database.Beam.AutoMigrate
     migrate,
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
+    runMigrationWithEditUpdateAndHooks,
     tryRunMigrationsWithEditUpdate,
+    tryRunMigrationsWithEditUpdateAndHooks,
     calcMigrationSteps,
 
     -- * Creating a migration from a Diff
@@ -259,7 +261,18 @@ runMigrationWithEditUpdate ::
   Pg.Connection ->
   Schema ->
   IO ()
-runMigrationWithEditUpdate editUpdate conn hsSchema = do
+runMigrationWithEditUpdate = runMigrationWithEditUpdateAndHooks (return ()) (const (return ()))
+
+-- | This is similar to 'runMigrationWithEditUpdate', except that it additionally allows for specifying
+-- pre- and post-auto-migration hooks that run in the same transaction.
+runMigrationWithEditUpdateAndHooks ::
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooks preMigrate postMigrate editUpdate conn hsSchema = do
   -- Create the migration with all the safeety information
   edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
   -- Apply the user function to possibly update the list of edits to allow the user to
@@ -276,7 +289,10 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
-    Pg.runBeamPostgres conn $
+    Pg.runBeamPostgres conn $ do
+      printmsg "Pre-migration"
+      v <- preMigrate
+      printmsg "Auto-migration"
       forM_ newEdits $ \(WithPriority (edit, _)) -> do
         case _editCondition edit of
           Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
@@ -295,6 +311,10 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
                 -- Safe or slow, run that edit.
                 printmsg "edit condition satisfied"
                 safeOrSlow safeMaybeSlow edit
+      printmsg "Post-migration"
+      w <- postMigrate v
+      printmsg "Finished"
+      return w
   where
     safeOrSlow safety edit = do
       when (safety == PotentiallySlow) $ do
@@ -761,7 +781,29 @@ tryRunMigrationsWithEditUpdate
   => AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdate annotatedDb conn = do
+tryRunMigrationsWithEditUpdate = tryRunMigrationsWithEditUpdateAndHooks (return ()) (\_ -> return ())
+
+-- | Similar to 'tryRunMigrationsWithEditUpdate' but additionally allows for pre- and post- auto-migration steps
+-- that run in the same transaction as the auto-migration.
+tryRunMigrationsWithEditUpdateAndHooks
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate annotatedDb conn = do
 
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
 
@@ -777,7 +819,7 @@ tryRunMigrationsWithEditUpdate annotatedDb conn = do
         putStrLn "Database migration required, attempting..."
         prettyPrintEdits edits
 
-        try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
+        try (runMigrationWithEditUpdateAndHooks preMigrate postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
           Left (e :: SomeException) ->
             error $ "Database migration error: " <> displayException e
           Right _ ->
