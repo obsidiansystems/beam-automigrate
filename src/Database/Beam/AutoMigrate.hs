@@ -273,19 +273,6 @@ runMigrationWithEditUpdateAndHooks ::
   Schema ->
   IO b
 runMigrationWithEditUpdateAndHooks preMigrate postMigrate editUpdate conn hsSchema = do
-  -- Create the migration with all the safeety information
-  edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
-  -- Apply the user function to possibly update the list of edits to allow the user to
-  -- intervene in the event of unsafe edits.
-  let newEdits = sortEdits $ editUpdate $ sortEdits edits
-  -- If the new list of edits still contains any unsafe edits then fail out.
-
-  when (newEdits /= sortEdits edits) $ do
-    putStrLn "Changes requested to diff induced migration. Attempting..."
-    prettyPrintEdits newEdits
-
-  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
-    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
   Pg.withTransaction conn $
@@ -293,6 +280,20 @@ runMigrationWithEditUpdateAndHooks preMigrate postMigrate editUpdate conn hsSche
       printmsg "Pre-migration"
       v <- preMigrate
       printmsg "Auto-migration"
+      -- Create the migration with all the safety information
+      edits <- liftIO $ either throwIO pure =<< evalMigration (migrate conn hsSchema)
+      -- Apply the user function to possibly update the list of edits to allow the user to
+      -- intervene in the event of unsafe edits.
+      let newEdits = sortEdits $ editUpdate $ sortEdits edits
+      -- If the new list of edits still contains any unsafe edits then fail out.
+
+      when (newEdits /= sortEdits edits) . liftIO $ do
+        putStrLn "Changes requested to diff induced migration. Attempting..."
+        prettyPrintEdits newEdits
+
+      when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
+        liftIO . throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+
       forM_ newEdits $ \(WithPriority (edit, _)) -> do
         case _editCondition edit of
           Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
@@ -804,26 +805,26 @@ tryRunMigrationsWithEditUpdateAndHooks
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate annotatedDb conn = do
+  let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+      preMigrate' = do
+        v <- preMigrate
+        actualDatabaseSchema <- Pg.liftIOWithHandle getSchema
+        liftIO $ case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
+          Left err -> do
+            putStrLn "Error detecting database migration requirements: "
+            print err
+          Right [] ->
+            putStrLn "No database migration required, continuing."
+          Right edits -> do
+            putStrLn "Database migration required, attempting..."
+            prettyPrintEdits edits
+        return v
 
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
-
-    actualDatabaseSchema <- getSchema conn
-
-    case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
-      Left err -> do
-        putStrLn "Error detecting database migration requirements: "
-        print err
-      Right [] ->
-        putStrLn "No database migration required, continuing startup."
-      Right edits -> do
-        putStrLn "Database migration required, attempting..."
-        prettyPrintEdits edits
-
-        try (runMigrationWithEditUpdateAndHooks preMigrate postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
-          Left (e :: SomeException) ->
-            error $ "Database migration error: " <> displayException e
-          Right _ ->
-            pure ()
+  try (runMigrationWithEditUpdateAndHooks preMigrate' postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
+    Left (e :: SomeException) -> do
+      error $ "Database migration error: " <> displayException e
+    Right _ ->
+      pure ()
 
 -- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
 -- database schema to the given one, without actually performing the migration.
