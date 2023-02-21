@@ -28,8 +28,10 @@ module Database.Beam.AutoMigrate
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
     runMigrationWithEditUpdateAndHooks,
+    runMigrationWithEditUpdateAndHooksDryRun,
     tryRunMigrationsWithEditUpdate,
     tryRunMigrationsWithEditUpdateAndHooks,
+    tryRunMigrationsWithEditUpdateAndHooksDryRun,
     calcMigrationSteps,
 
     -- * Creating a migration from a Diff
@@ -62,6 +64,7 @@ module Database.Beam.AutoMigrate
 where
 
 import Control.Exception
+import qualified Control.Exception as E
 import Control.Monad.Except
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
@@ -93,6 +96,7 @@ import qualified Database.Beam.Postgres.Syntax as Pg
 import Database.Beam.Schema (Database, DatabaseSettings)
 import Database.Beam.Schema.Tables (DatabaseEntity (..))
 import qualified Database.PostgreSQL.Simple as Pg
+import qualified Database.PostgreSQL.Simple.Transaction as Pg
 import GHC.Generics hiding (prec)
 import Control.Lens (over, (^.), _1, _2)
 import qualified Text.Pretty.Simple as PS
@@ -272,11 +276,37 @@ runMigrationWithEditUpdateAndHooks ::
   Pg.Connection ->
   Schema ->
   IO b
-runMigrationWithEditUpdateAndHooks preMigrate postMigrate editUpdate conn hsSchema = do
+runMigrationWithEditUpdateAndHooks = runMigrationWithEditUpdateAndHooks' runPgTransaction
+  where
+    runPgTransaction conn = Pg.withTransaction conn . Pg.runBeamPostgres conn
+
+-- | Dry run version of 'runMigrationWithEditUpdateAndHooks'.
+--   Run all the migration steps in a transaction but roll back the transaction in the end.
+--   Tests whether a migration works without committing it.
+runMigrationWithEditUpdateAndHooksDryRun ::
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooksDryRun =
+  runMigrationWithEditUpdateAndHooks' runPgTransactionDryRun
+
+-- | Same as 'runMigrationWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
+--   Useful if e.g. doing a dry run.
+runMigrationWithEditUpdateAndHooks' ::
+  (forall c. Pg.Connection -> Pg.Pg c -> IO c) ->
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate conn hsSchema = do
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
-  Pg.withTransaction conn $
-    Pg.runBeamPostgres conn $ do
+  runPgTransaction conn $ do
       printmsg "Pre-migration"
       v <- preMigrate
       printmsg "Auto-migration"
@@ -805,6 +835,56 @@ tryRunMigrationsWithEditUpdateAndHooks
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate annotatedDb conn
+  where
+    runPgTransaction conn' = Pg.withTransaction conn' . Pg.runBeamPostgres conn'
+
+-- | Dry run version of 'tryRunMigrationsWithEditUpdateAndHooks'.
+--   Run all the migration steps in a transaction but roll back the transaction in the end.
+--   Tests whether a migration works without committing it.
+tryRunMigrationsWithEditUpdateAndHooksDryRun
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate annotatedDb conn
+
+-- | Same as 'tryRunMigrationsWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
+--   Useful if e.g. doing a dry run.
+tryRunMigrationsWithEditUpdateAndHooks'
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => (forall c. Pg.Connection -> Pg.Pg c -> IO c)
+  -> Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate annotatedDb conn = do
   let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
       preMigrate' = do
         v <- preMigrate
@@ -820,7 +900,7 @@ tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate annotatedDb conn =
             prettyPrintEdits edits
         return v
 
-  try (runMigrationWithEditUpdateAndHooks preMigrate' postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
+  try (runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate' postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
     Left (e :: SomeException) -> do
       error $ "Database migration error: " <> displayException e
     Right _ ->
@@ -849,3 +929,13 @@ calcMigrationSteps annotatedDb conn = do
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema
+
+-- | Run a 'Pg.Pg' action inside a transaction that is finished by rolling back instead of committing.
+runPgTransactionDryRun :: Pg.Connection -> Pg.Pg a -> IO a
+runPgTransactionDryRun conn =
+  withTransactionDryRun . Pg.runBeamPostgres conn
+  where
+    withTransactionDryRun act =
+      E.mask $ \restore -> do
+        Pg.beginMode Pg.defaultTransactionMode conn
+        restore act `E.finally` Pg.rollback conn
