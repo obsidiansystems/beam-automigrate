@@ -809,7 +809,8 @@ tryRunMigrationsWithEditUpdate
         (Rep (db (DatabaseEntity be db)))
      , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
      )
-  => AnnotatedDatabaseSettings be db
+  => ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate = tryRunMigrationsWithEditUpdateAndHooks (return ()) (\_ -> return ())
@@ -831,11 +832,12 @@ tryRunMigrationsWithEditUpdateAndHooks
      )
   => Pg.Pg a
   -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
   -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate annotatedDb conn = do
-  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate annotatedDb conn
+tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate editUpdate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn
   where
     runPgTransaction conn' = Pg.withTransaction conn' . Pg.runBeamPostgres conn'
 
@@ -857,11 +859,12 @@ tryRunMigrationsWithEditUpdateAndHooksDryRun
      )
   => Pg.Pg a
   -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
   -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate annotatedDb conn = do
-  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate annotatedDb conn
+tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate editUpdate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate editUpdate annotatedDb conn
 
 -- | Same as 'tryRunMigrationsWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
 --   Useful if e.g. doing a dry run.
@@ -881,10 +884,11 @@ tryRunMigrationsWithEditUpdateAndHooks'
   => (forall c. Pg.Connection -> Pg.Pg c -> IO c)
   -> Pg.Pg a
   -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
   -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate annotatedDb conn = do
+tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn = do
   let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
       preMigrate' = do
         v <- preMigrate
@@ -900,7 +904,7 @@ tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate 
             prettyPrintEdits edits
         return v
 
-  try (runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate' postMigrate Prelude.id conn expectedHaskellSchema) >>= \case
+  try (runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate' postMigrate editUpdate conn expectedHaskellSchema) >>= \case
     Left (e :: SomeException) -> do
       error $ "Database migration error: " <> displayException e
     Right _ ->
