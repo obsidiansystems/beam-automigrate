@@ -27,7 +27,11 @@ module Database.Beam.AutoMigrate
     migrate,
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
+    runMigrationWithEditUpdateAndHooks,
+    runMigrationWithEditUpdateAndHooksDryRun,
     tryRunMigrationsWithEditUpdate,
+    tryRunMigrationsWithEditUpdateAndHooks,
+    tryRunMigrationsWithEditUpdateAndHooksDryRun,
     calcMigrationSteps,
 
     -- * Creating a migration from a Diff
@@ -60,6 +64,7 @@ module Database.Beam.AutoMigrate
 where
 
 import Control.Exception
+import qualified Control.Exception as E
 import Control.Monad.Except
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
@@ -91,8 +96,9 @@ import qualified Database.Beam.Postgres.Syntax as Pg
 import Database.Beam.Schema (Database, DatabaseSettings)
 import Database.Beam.Schema.Tables (DatabaseEntity (..))
 import qualified Database.PostgreSQL.Simple as Pg
+import qualified Database.PostgreSQL.Simple.Transaction as Pg
 import GHC.Generics hiding (prec)
-import Lens.Micro (over, (^.), _1, _2)
+import Control.Lens (over, (^.), _1, _2)
 import qualified Text.Pretty.Simple as PS
 
 -- $annotatingDbSettings
@@ -259,24 +265,65 @@ runMigrationWithEditUpdate ::
   Pg.Connection ->
   Schema ->
   IO ()
-runMigrationWithEditUpdate editUpdate conn hsSchema = do
-  -- Create the migration with all the safeety information
-  edits <- either throwIO pure =<< evalMigration (migrate conn hsSchema)
-  -- Apply the user function to possibly update the list of edits to allow the user to
-  -- intervene in the event of unsafe edits.
-  let newEdits = sortEdits $ editUpdate $ sortEdits edits
-  -- If the new list of edits still contains any unsafe edits then fail out.
+runMigrationWithEditUpdate = runMigrationWithEditUpdateAndHooks (return ()) (const (return ()))
 
-  when (newEdits /= sortEdits edits) $ do
-    putStrLn "Changes requested to diff induced migration. Attempting..."
-    prettyPrintEdits newEdits
+-- | This is similar to 'runMigrationWithEditUpdate', except that it additionally allows for specifying
+-- pre- and post-auto-migration hooks that run in the same transaction.
+runMigrationWithEditUpdateAndHooks ::
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooks = runMigrationWithEditUpdateAndHooks' runPgTransaction
+  where
+    runPgTransaction conn = Pg.withTransaction conn . Pg.runBeamPostgres conn
 
-  when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
-    throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+-- | Dry run version of 'runMigrationWithEditUpdateAndHooks'.
+--   Run all the migration steps in a transaction but roll back the transaction in the end.
+--   Tests whether a migration works without committing it.
+runMigrationWithEditUpdateAndHooksDryRun ::
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooksDryRun =
+  runMigrationWithEditUpdateAndHooks' runPgTransactionDryRun
+
+-- | Same as 'runMigrationWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
+--   Useful if e.g. doing a dry run.
+runMigrationWithEditUpdateAndHooks' ::
+  (forall c. Pg.Connection -> Pg.Pg c -> IO c) ->
+  Pg.Pg a ->
+  (a -> Pg.Pg b) ->
+  ([WithPriority Edit] -> [WithPriority Edit]) ->
+  Pg.Connection ->
+  Schema ->
+  IO b
+runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate conn hsSchema = do
 
   -- Execute all the edits within a single transaction so we rollback if any of them fail.
-  Pg.withTransaction conn $
-    Pg.runBeamPostgres conn $
+  runPgTransaction conn $ do
+      printmsg "Pre-migration"
+      v <- preMigrate
+      printmsg "Auto-migration"
+      -- Create the migration with all the safety information
+      edits <- liftIO $ either throwIO pure =<< evalMigration (migrate conn hsSchema)
+      -- Apply the user function to possibly update the list of edits to allow the user to
+      -- intervene in the event of unsafe edits.
+      let newEdits = sortEdits $ editUpdate $ sortEdits edits
+      -- If the new list of edits still contains any unsafe edits then fail out.
+
+      when (newEdits /= sortEdits edits) . liftIO $ do
+        putStrLn "Changes requested to diff induced migration. Attempting..."
+        prettyPrintEdits newEdits
+
+      when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
+        liftIO . throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
+
       forM_ newEdits $ \(WithPriority (edit, _)) -> do
         case _editCondition edit of
           Right Unsafe -> liftIO $ throwIO $ UnsafeEditsDetected [_editAction edit]
@@ -295,6 +342,10 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
                 -- Safe or slow, run that edit.
                 printmsg "edit condition satisfied"
                 safeOrSlow safeMaybeSlow edit
+      printmsg "Post-migration"
+      w <- postMigrate v
+      printmsg "Finished"
+      return w
   where
     safeOrSlow safety edit = do
       when (safety == PotentiallySlow) $ do
@@ -344,17 +395,30 @@ toSqlSyntax e =
         ddlSyntax
           ( "CREATE TABLE " <> sqlEscaped (tableName tblName)
               <> " ("
-              <> T.intercalate ", " (map renderTableColumn (M.toList (tableColumns tbl)))
+              <> T.intercalate ", " (map renderTableAddedColumn (M.toList (tableColumns tbl)))
               <> ")"
           )
       TableRemoved tblName ->
         ddlSyntax ("DROP TABLE " <> sqlEscaped (tableName tblName))
-      TableConstraintAdded tblName cstr ->
-        updateSyntax (alterTable tblName <> renderAddConstraint cstr)
-      TableConstraintRemoved tblName cstr ->
+      PrimaryKeyAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreatePrimaryKeyConstraint cstr copt)
+      UniqueConstraintAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreateUniqueConstraint cstr copt)
+      ForeignKeyAdded tblName cstr copt ->
+        updateSyntax (alterTable tblName <> " ADD " <> renderCreateForeignKeyConstraint cstr copt)
+
+      RenameConstraint tblName (ConstraintName oldName) (ConstraintName newName) ->
+        updateSyntax (alterTable tblName
+          <> " RENAME CONSTRAINT "
+          <> sqlEscaped oldName
+          <> " TO "
+          <> sqlEscaped newName)
+      TableConstraintRemoved tblName cstr _ ->
         updateSyntax (alterTable tblName <> renderDropConstraint cstr)
-      SequenceAdded sName (Sequence _tName _cName) -> createSequenceSyntax sName
+      SequenceAdded sName s -> createSequenceSyntax sName s
       SequenceRemoved sName -> dropSequenceSyntax sName
+      SequenceRenamed oldName newName -> renameSequenceSyntax oldName newName
+      SequenceSetOwner sName newOwner -> setSequenceOwnerSyntax sName newOwner
       EnumTypeAdded tyName vals -> createTypeSyntax tyName vals
       EnumTypeRemoved (EnumerationName tyName) -> ddlSyntax ("DROP TYPE " <> tyName)
       EnumTypeValueAdded (EnumerationName tyName) newVal order insPoint ->
@@ -373,9 +437,7 @@ toSqlSyntax e =
               <> "ADD COLUMN "
               <> sqlEscaped (columnName colName)
               <> " "
-              <> renderDataType (columnType col)
-              <> " "
-              <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
+              <> renderDataTypeAdd col
           )
       ColumnRemoved tblName colName ->
         updateSyntax (alterTable tblName <> "DROP COLUMN " <> sqlEscaped (columnName colName))
@@ -386,19 +448,22 @@ toSqlSyntax e =
               <> " TYPE "
               <> renderDataType new
           )
-      ColumnConstraintAdded tblName colName cstr ->
+      ColumnNullableChanged tblName colName nullConstr ->
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
-              <> sqlEscaped (columnName colName)
-              <> " SET "
-              <> renderColumnConstraint SetConstraint cstr
+            <> sqlEscaped (columnName colName)
+            <> case nullConstr of
+              Null -> " DROP NOT NULL"
+              NotNull -> " SET NOT NULL"
           )
-      ColumnConstraintRemoved tblName colName cstr ->
+      ColumnDefaultChanged tblName colName dfltConst ->
+        if dfltConst == Just (Autoincrement Nothing) then updateSyntax "DO $$ BEGIN END; $$" else -- On Autoincrement Nothing, renderColumnDefault generates an empty string, which causes invalid syntax.  We can just skip this statement entirely, in that case.  If we just put an empty string, we get QueryError {qeMessage = "execute: Empty query", qeQuery = "        "}, so we need to put this useless DO statement in here; probably this function should return Maybe or a list or something like that instead
         updateSyntax
           ( alterTable tblName <> "ALTER COLUMN "
-              <> sqlEscaped (columnName colName)
-              <> " DROP "
-              <> renderColumnConstraint DropConstraint cstr
+            <> sqlEscaped (columnName colName)
+            <> case dfltConst of
+              Nothing -> " DROP DEFAULT "
+              Just d -> " SET " <> renderColumnDefault d
           )
     EditAction_Manual ea -> case ea of
       ColumnRenamed tblName oldName newName ->
@@ -420,35 +485,34 @@ toSqlSyntax e =
     alterTable :: TableName -> Text
     alterTable (TableName tName) = "ALTER TABLE " <> sqlEscaped tName <> " "
 
-    renderTableColumn :: (ColumnName, Column) -> Text
-    renderTableColumn (colName, col) =
+    renderTableAddedColumn :: (ColumnName, Column) -> Text
+    renderTableAddedColumn (colName, col) =
       sqlEscaped (columnName colName) <> " "
-        <> renderDataType (columnType col)
-        <> " "
-        <> T.intercalate " " (map (renderColumnConstraint SetConstraint) (S.toList $ columnConstraints col))
+        <> renderDataTypeAdd col
 
     renderInsertionOrder :: InsertionOrder -> Text
     renderInsertionOrder Before = "BEFORE"
     renderInsertionOrder After = "AFTER"
 
-    renderCreateTableConstraint :: TableConstraint -> Text
-    renderCreateTableConstraint = \case
-      Unique fname cols ->
-        conKeyword <> sqlEscaped fname
+    renderCreateUniqueConstraint :: Unique -> UniqueConstraintOptions -> Text
+    renderCreateUniqueConstraint (Unique cols) (UniqueConstraintOptions fname) =
+        conKeyword fname
           <> " UNIQUE ("
           <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
           <> ")"
-      PrimaryKey fname cols ->
-        conKeyword <> sqlEscaped fname
+    renderCreatePrimaryKeyConstraint :: PrimaryKeyConstraint -> UniqueConstraintOptions -> Text
+    renderCreatePrimaryKeyConstraint (PrimaryKey cols) (UniqueConstraintOptions fname) =
+        conKeyword fname
           <> " PRIMARY KEY ("
           <> T.intercalate ", " (map (sqlEscaped . columnName) (S.toList cols))
           <> ")"
-      ForeignKey fname (tableName -> tName) (S.toList -> colPair) onDelete onUpdate ->
+    renderCreateForeignKeyConstraint :: ForeignKey -> ForeignKeyConstraintOptions -> Text
+    renderCreateForeignKeyConstraint (ForeignKey (tableName -> tName) (S.toList -> colPair)) constr  =
         let (fkCols, referenced) =
               ( map (sqlEscaped . columnName . fst) colPair,
                 map (sqlEscaped . columnName . snd) colPair
               )
-         in conKeyword <> sqlEscaped fname
+         in conKeyword (foreignKeyConstraintName constr)
               <> " FOREIGN KEY ("
               <> T.intercalate ", " fkCols
               <> ") REFERENCES "
@@ -456,21 +520,15 @@ toSqlSyntax e =
               <> "("
               <> T.intercalate ", " referenced
               <> ")"
-              <> renderAction "ON DELETE" onDelete
-              <> renderAction "ON UPDATE" onUpdate
-      where
-        conKeyword = "CONSTRAINT "
+              <> renderAction "ON DELETE" (onDelete constr)
+              <> renderAction "ON UPDATE" (onUpdate constr)
 
-    renderAddConstraint :: TableConstraint -> Text
-    renderAddConstraint = mappend "ADD " . renderCreateTableConstraint
+    conKeyword = \case
+      Nothing -> ""
+      Just (ConstraintName fname) -> "CONSTRAINT " <> sqlEscaped fname
 
-    renderDropConstraint :: TableConstraint -> Text
-    renderDropConstraint tc = case tc of
-      Unique cName _ -> dropC cName
-      PrimaryKey cName _ -> dropC cName
-      ForeignKey cName _ _ _ _ -> dropC cName
-      where
-        dropC = mappend "DROP CONSTRAINT " . sqlEscaped
+    renderDropConstraint :: ConstraintName -> Text
+    renderDropConstraint = mappend "DROP CONSTRAINT " . sqlEscaped . unConsraintName
 
     renderAction actionPrefix = \case
       NoAction -> mempty
@@ -479,20 +537,36 @@ toSqlSyntax e =
       SetNull -> " " <> actionPrefix <> " " <> "SET NULL "
       SetDefault -> " " <> actionPrefix <> " " <> "SET DEFAULT "
 
-    renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
-    renderColumnConstraint act = \case
-      NotNull -> "NOT NULL"
-      Default defValue | act == SetConstraint -> "DEFAULT " <> defValue
-      Default _ -> "DEFAULT"
-
     createTypeSyntax :: EnumerationName -> Enumeration -> Pg.PgSyntax
     createTypeSyntax (EnumerationName ty) (Enumeration vals) =
       Pg.emit $
         toS $
           "CREATE TYPE " <> ty <> " AS ENUM (" <> T.intercalate "," (map sqlSingleQuoted vals) <> ");\n"
 
-    createSequenceSyntax :: SequenceName -> Pg.PgSyntax
-    createSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "CREATE SEQUENCE " <> sqlEscaped s <> ";\n"
+    createSequenceSyntax :: SequenceName -> Maybe Sequence -> Pg.PgSyntax
+    createSequenceSyntax (SequenceName sName) sOwner = Pg.emit $ toS
+      $ "CREATE SEQUENCE " <> sqlEscaped sName
+      <> sequenceOwnerSyntax sOwner
+      <> ";\n"
+
+    renameSequenceSyntax :: SequenceName -> SequenceName -> Pg.PgSyntax
+    renameSequenceSyntax (SequenceName sName) (SequenceName sName') = Pg.emit $ toS
+      $ "ALTER SEQUENCE " <> sqlEscaped sName
+      <> " RENAME TO " <> sqlEscaped sName'
+      <> ";\n"
+
+    setSequenceOwnerSyntax :: SequenceName -> Maybe Sequence -> Pg.PgSyntax
+    setSequenceOwnerSyntax (SequenceName sName) sOwner = Pg.emit $ toS
+      $ "ALTER SEQUENCE " <> sqlEscaped sName
+      <> sequenceOwnerSyntax sOwner
+      <> ";\n"
+
+
+    sequenceOwnerSyntax :: Maybe Sequence -> Text
+    sequenceOwnerSyntax sOwner = " OWNED BY " <> case sOwner of
+      Nothing -> " NONE "
+      Just (Sequence (tableName -> tName) (columnName -> cName)) ->
+        sqlEscaped tName <> "." <> sqlEscaped cName
 
     dropSequenceSyntax :: SequenceName -> Pg.PgSyntax
     dropSequenceSyntax (SequenceName s) = Pg.emit $ toS $ "DROP SEQUENCE " <> sqlEscaped s <> ";\n"
@@ -546,6 +620,40 @@ renderStdType = \case
     wTz withTz tt prec =
       tt <> sqlOptPrec prec <> (if withTz then " WITH" else " WITHOUT") <> " TIME ZONE"
 
+-- -- as a special case, when adding a column, we can potentially specify SERIAL, and save some effort creating a name for a sequence and setting it's ownership up.k
+renderDataTypeAdd :: Column -> Text
+renderDataTypeAdd col =
+  let
+    autoIncrement = Just (Autoincrement Nothing) == columnDefault (columnConstraints col)
+    dataType = case (autoIncrement, (columnType col)) of
+      (False, cType) -> renderDataType cType
+      (True, SqlStdType AST.DataTypeInteger) -> " SERIAL "
+      (True, SqlStdType AST.DataTypeSmallInt) -> " SMALLSERIAL "
+      (True, SqlStdType AST.DataTypeBigInt) -> " BIGSERIAL "
+      (True, dtype) -> error $ "inferred illegal autoincrement column: " <> show dtype
+  in mconcat
+    [ dataType
+    , case columnNullable $ columnConstraints col of
+      NotNull -> " NOT NULL "
+      Null -> " "
+    , foldMap renderColumnDefault $ columnDefault $ columnConstraints col
+
+    ]
+
+-- | render the part of a columnconstraint that sets its' default.  This
+-- renders nothing if the sequence name is not known; and so should not be
+-- called if that's possible outside of a context that also adds the column as
+-- a SERIAL type.   It's up to the caller to prefix SET or DROP when needed.
+renderColumnDefault :: DefaultConstraint -> Text
+renderColumnDefault = \case
+  Autoincrement Nothing -> "" -- Don't render the default, use "serial/bigserial" as tye type instead
+  defValue -> " DEFAULT " <> case defValue of
+    DefaultExpr defValueExpr -> defValueExpr
+    Autoincrement x -> flip foldMap x $ \(SequenceName sName) ->
+      "nextval(" <> sqlSingleQuoted sName <> "::regclass)"
+
+
+--
 -- This function also overlaps with beam-migrate functionalities.
 renderDataType :: ColumnType -> Text
 renderDataType = \case
@@ -611,11 +719,17 @@ prettyEditActionDescription = T.unwords . \case
   EditAction_Automatic ea -> case ea of
     TableAdded tblName table ->
       ["create table:", qt tblName, "\n", pshow' table]
+    RenameConstraint tblName oldConstraint newConstraint ->
+      ["constraint ", qn oldConstraint, " on table ", qt tblName," renamed to: ", qn newConstraint]
     TableRemoved tblName ->
       ["remove table:", qt tblName]
-    TableConstraintAdded tblName tableConstraint ->
-      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint]
-    TableConstraintRemoved tblName tableConstraint ->
+    PrimaryKeyAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
+    UniqueConstraintAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
+    ForeignKeyAdded tblName tableConstraint constraintOptions ->
+      ["add table constraint to:", qt tblName, "\n", pshow' tableConstraint, " ", pshow' constraintOptions]
+    TableConstraintRemoved tblName tableConstraint _ ->
       ["remove table constraint from:", qt tblName, "\n", pshow' tableConstraint]
     ColumnAdded tblName colName column ->
       ["add column:", qc colName, ", from:", qt tblName, "\n", pshow' column]
@@ -631,22 +745,10 @@ prettyEditActionDescription = T.unwords . \case
         "\nto:",
         renderDataType newColumnType
       ]
-    ColumnConstraintAdded tblName colName columnConstraint ->
-      [ "add column constraint to:",
-        qc colName,
-        "in table:",
-        qt tblName,
-        "\n",
-        pshow' columnConstraint
-      ]
-    ColumnConstraintRemoved tblName colName columnConstraint ->
-      [ "remove column constraint from:",
-        qc colName,
-        "in table:",
-        qt tblName,
-        "\n",
-        pshow' columnConstraint
-      ]
+    ColumnNullableChanged tblName colName nullConstr ->
+      ["column:", qq tblName colName, " chanted to ", pshow' nullConstr]
+    ColumnDefaultChanged tblName colName dfltConstr ->
+      ["column:", qq tblName colName, " default changed to ", pshow' dfltConstr]
     EnumTypeAdded eName enumeration ->
       ["add enum type:", enumName eName, pshow' enumeration]
     EnumTypeRemoved eName ->
@@ -663,8 +765,12 @@ prettyEditActionDescription = T.unwords . \case
       ]
     SequenceAdded sequenceName sequence0 ->
       ["add sequence:", qs sequenceName, pshow' sequence0]
+    SequenceRenamed sequenceName sequence0 ->
+      ["renamed sequence:", qs sequenceName, " to:", qs sequence0]
     SequenceRemoved sequenceName ->
       ["remove sequence:", qs sequenceName]
+    SequenceSetOwner sequenceName sequence0 ->
+      ["alter sequence:", qs sequenceName, pshow' sequence0]
   EditAction_Manual ea -> case ea of
     ColumnRenamed tblName oldName newName ->
       [ "rename column in table:",
@@ -679,6 +785,8 @@ prettyEditActionDescription = T.unwords . \case
     qt = q . tableName
     qc = q . columnName
     qs = q . seqName
+    qn = q . unConsraintName
+    qq t c = qt t <> "." <> qc c
 
     pshow' :: Show a => a -> Text
     pshow' = LT.toStrict . PS.pShow
@@ -690,39 +798,117 @@ prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL .
 -- schema in Haskell and try to edit the existing schema as necessary
 tryRunMigrationsWithEditUpdate
   :: ( Generic (db (DatabaseEntity be db))
-     , (Generic (db (AnnotatedDatabaseEntity be db)))
+     , Generic (db (AnnotatedDatabaseEntity be db))
      , Database be db
-     , (GZipDatabase be
-         (AnnotatedDatabaseEntity be db)
-         (AnnotatedDatabaseEntity be db)
-         (DatabaseEntity be db)
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (DatabaseEntity be db)))
-       )
-     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
      )
-  => AnnotatedDatabaseSettings be db
+  => ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdate annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
-    actualDatabaseSchema <- getSchema conn
-    case diff expectedHaskellSchema actualDatabaseSchema of
-      Left err -> do
-        putStrLn "Error detecting database migration requirements: "
-        print err
-      Right [] ->
-        putStrLn "No database migration required, continuing startup."
-      Right edits -> do
-        putStrLn "Database migration required, attempting..."
-        prettyPrintEdits edits
+tryRunMigrationsWithEditUpdate = tryRunMigrationsWithEditUpdateAndHooks (return ()) (\_ -> return ())
 
-        try (runMigrationWithEditUpdate Prelude.id conn expectedHaskellSchema) >>= \case
-          Left (e :: SomeException) ->
-            error $ "Database migration error: " <> displayException e
-          Right _ ->
-            pure ()
+-- | Similar to 'tryRunMigrationsWithEditUpdate' but additionally allows for pre- and post- auto-migration steps
+-- that run in the same transaction as the auto-migration.
+tryRunMigrationsWithEditUpdateAndHooks
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate editUpdate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn
+  where
+    runPgTransaction conn' = Pg.withTransaction conn' . Pg.runBeamPostgres conn'
+
+-- | Dry run version of 'tryRunMigrationsWithEditUpdateAndHooks'.
+--   Run all the migration steps in a transaction but roll back the transaction in the end.
+--   Tests whether a migration works without committing it.
+tryRunMigrationsWithEditUpdateAndHooksDryRun
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate editUpdate annotatedDb conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate editUpdate annotatedDb conn
+
+-- | Same as 'tryRunMigrationsWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
+--   Useful if e.g. doing a dry run.
+tryRunMigrationsWithEditUpdateAndHooks'
+  :: ( Generic (db (DatabaseEntity be db))
+     , Generic (db (AnnotatedDatabaseEntity be db))
+     , Database be db
+     , GZipDatabase be
+        (AnnotatedDatabaseEntity be db)
+        (AnnotatedDatabaseEntity be db)
+        (DatabaseEntity be db)
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (AnnotatedDatabaseEntity be db)))
+        (Rep (db (DatabaseEntity be db)))
+     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
+     )
+  => (forall c. Pg.Connection -> Pg.Pg c -> IO c)
+  -> Pg.Pg a
+  -> (a -> Pg.Pg b)
+  -> ([WithPriority Edit] -> [WithPriority Edit])
+  -> AnnotatedDatabaseSettings be db
+  -> Pg.Connection
+  -> IO ()
+tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn = do
+  let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+      preMigrate' = do
+        v <- preMigrate
+        actualDatabaseSchema <- Pg.liftIOWithHandle getSchema
+        liftIO $ case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
+          Left err -> do
+            putStrLn "Error detecting database migration requirements: "
+            print err
+          Right [] ->
+            putStrLn "No database migration required, continuing."
+          Right edits -> do
+            putStrLn "Database migration required, attempting..."
+            prettyPrintEdits edits
+        return v
+
+  try (runMigrationWithEditUpdateAndHooks' runPgTransaction preMigrate' postMigrate editUpdate conn expectedHaskellSchema) >>= \case
+    Left (e :: SomeException) -> do
+      error $ "Database migration error: " <> displayException e
+    Right _ ->
+      pure ()
 
 -- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
 -- database schema to the given one, without actually performing the migration.
@@ -747,3 +933,13 @@ calcMigrationSteps annotatedDb conn = do
     let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema
+
+-- | Run a 'Pg.Pg' action inside a transaction that is finished by rolling back instead of committing.
+runPgTransactionDryRun :: Pg.Connection -> Pg.Pg a -> IO a
+runPgTransactionDryRun conn =
+  withTransactionDryRun . Pg.runBeamPostgres conn
+  where
+    withTransactionDryRun act =
+      E.mask $ \restore -> do
+        Pg.beginMode Pg.defaultTransactionMode conn
+        restore act `E.finally` Pg.rollback conn

@@ -9,18 +9,19 @@ Automatic migrations for [beam](https://hackage.haskell.org/package/beam-core) d
 Table of Contents
 -----------------
 
-* [Table of Contents](#table-of-contents)
-* [Getting started (User guide/reference)](#getting-started-user-guidereference)
-   * [Deriving an AnnotatedDatabaseSettings](#deriving-an-annotateddatabasesettings)
-   * [Overriding the defaults of an AnnotatedDatabaseSettings](#overriding-the-defaults-of-an-annotateddatabasesettings)
-   * [Deriving a Schema](#deriving-a-schema)
-   * [Generating an automatic migration](#generating-an-automatic-migration)
-* [Current design (10_000ft overview)](#current-design-10_000ft-overview)
-   * [Deriving information from a DatabaseSettings](#deriving-information-from-a-databasesettings)
-   * [Deriving information from an AnnotatedDatabaseSettings](#deriving-information-from-an-annotateddatabasesettings)
-   * [What is implemented](#what-is-implemented)
-   * [Shortcomings and limitations](#shortcomings-and-limitations)
-* [Contributors](#contributors)
+- [beam-automigrate](#beam-automigrate)
+  - [Table of Contents](#table-of-contents)
+- [Getting started (User guide/reference)](#getting-started-user-guidereference)
+  - [Deriving an AnnotatedDatabaseSettings](#deriving-an-annotateddatabasesettings)
+  - [Overriding the defaults of an `AnnotatedDatabaseSettings`](#overriding-the-defaults-of-an-annotateddatabasesettings)
+  - [Deriving a Schema](#deriving-a-schema)
+  - [Generating an automatic migration](#generating-an-automatic-migration)
+- [Current design (10_000ft overview)](#current-design-10_000ft-overview)
+  - [Deriving information from a DatabaseSettings](#deriving-information-from-a-databasesettings)
+  - [Deriving information from an AnnotatedDatabaseSettings](#deriving-information-from-an-annotateddatabasesettings)
+  - [What is implemented](#what-is-implemented)
+  - [Shortcomings and limitations](#shortcomings-and-limitations)
+- [Contributors](#contributors)
 
 Getting started (User guide/reference)
 ======================================
@@ -64,11 +65,12 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > import Data.Proxy (Proxy(..))
 > import Database.Beam.Postgres
 > import Database.Beam.Schema
-> import Database.Beam (val_)
+> import Database.Beam (val_, primaryKey)
 > import qualified Database.Beam.AutoMigrate as BA
 > import Database.Beam.AutoMigrate.TestUtils
 > import Database.PostgreSQL.Simple as Pg
 > import GHC.Generics
+> import Data.Default.Class
 > import Data.Text
 > import System.Environment (getArgs)
 >
@@ -132,7 +134,7 @@ ambiguity). To do this, we can piggyback on the familiar API from `beam-core`. F
 >       BA.annotateTableFields tableModification { ctCapital = BA.defaultsTo $ val_ False }
 >         <> BA.uniqueConstraintOn [BA.U ctCity, BA.U ctLocation]
 >   , dbWeathers = BA.annotateTableFields tableModification <>
->       BA.foreignKeyOnPk (dbCities defaultDbSettings) wtCity BA.Cascade BA.Restrict
+>       BA.foreignKeyOnWithOptions (dbCities defaultDbSettings) wtCity primaryKey def { BA.onDelete = BA.Cascade, BA.onUpdate = BA.Restrict}
 >   }
 
 ```
@@ -268,7 +270,7 @@ something like this:
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =
->   BA.tryRunMigrationsWithEditUpdate annotatedDB conn
+>   BA.tryRunMigrationsWithEditUpdate Prelude.id annotatedDB conn
 >
 > main :: IO ()
 > main = do
