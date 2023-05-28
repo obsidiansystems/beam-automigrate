@@ -141,6 +141,8 @@ data ColumnType
     PgSpecificType PgDataType
   | -- | An enumeration implemented with text-based encoding.
     DbEnumeration EnumerationName Enumeration
+  | -- | Array type.
+    SqlArrayType ColumnType Word
   deriving (Show, Eq, Generic)
 
 data PgDataType

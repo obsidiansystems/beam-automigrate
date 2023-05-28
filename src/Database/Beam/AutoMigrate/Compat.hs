@@ -20,6 +20,7 @@ import Data.Time (LocalTime, TimeOfDay, UTCTime)
 import Data.Time.Calendar (Day)
 import Data.Typeable
 import Data.UUID
+import Data.Vector (Vector)
 import Data.Word
 import qualified Database.Beam as Beam
 import Database.Beam.AutoMigrate.Types
@@ -242,6 +243,15 @@ instance HasColumnType (Pg.PgRange Pg.PgTsTzRange a) where
 
 instance HasColumnType (Pg.PgRange Pg.PgDateRange a) where
   defaultColumnType _ = PgSpecificType PgRangeDate
+
+--
+-- support for arrays
+--
+
+instance HasColumnType a => HasColumnType (Vector a) where
+  defaultColumnType _ = case defaultColumnType (Proxy @a) of
+    SqlArrayType t d -> SqlArrayType t (d + 1)
+    t -> SqlArrayType t 1
 
 --
 -- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:
