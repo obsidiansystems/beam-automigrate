@@ -569,6 +569,10 @@ renderDataType = \case
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
   -- oid
   PgSpecificType PgOid -> "oid"
+  -- Arrays
+  SqlArrayType (SqlArrayType _ _) _ -> error "beam-automigrate: invalid nested array."
+  SqlArrayType _ 0 -> error "beam-automigrate: array with zero dimensions"
+  SqlArrayType t d -> renderDataType t <> mconcat (replicate (fromIntegral d) "[]")
 
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do
