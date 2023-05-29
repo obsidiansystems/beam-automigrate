@@ -123,7 +123,7 @@ tableColumnsQ :: Pg.Query
 tableColumnsQ =
   fromString $
     unlines
-      [ "SELECT attname, atttypid, atttypmod, attnotnull, pg_catalog.format_type(atttypid, atttypmod) ",
+      [ "SELECT attname, atttypid, atttypmod, attndims, attnotnull, pg_catalog.format_type(atttypid, atttypmod) ",
         "FROM pg_catalog.pg_attribute att ",
         "WHERE att.attrelid=? AND att.attnum>0 AND att.attisdropped='f' "
       ]
@@ -249,9 +249,9 @@ getSchema conn = do
       Map Pg.Oid (EnumerationName, Enumeration) ->
       AllDefaults ->
       Columns ->
-      (ByteString, Pg.Oid, Int, Bool, ByteString) ->
+      (ByteString, Pg.Oid, Int, Int, Bool, ByteString) ->
       IO Columns
-    getColumns tName enumData defaultData c (attname, atttypid, atttypmod, attnotnull, format_type) = do
+    getColumns tName enumData defaultData c (attname, atttypid, atttypmod, attndims, attnotnull, format_type) = do
       -- /NOTA BENE(adn)/: The atttypmod - 4 was originally taken from 'beam-migrate'
       -- (see: https://github.com/tathougies/beam/blob/d87120b58373df53f075d92ce12037a98ca709ab/beam-postgres/Database/Beam/Postgres/Migrate.hs#L343)
       -- but there are cases where this is not correct, for example in the case of bitstrings.
@@ -272,7 +272,8 @@ getSchema conn = do
       case asum
         [ pgSerialTyColumnType atttypid mbDefault,
           pgTypeToColumnType atttypid mbPrecision,
-          pgEnumTypeToColumnType enumData atttypid
+          pgEnumTypeToColumnType enumData atttypid,
+          pgArrayTypeToColumnType atttypid mbPrecision attndims
         ] of
         Just cType -> do
           let nullConstraint = if attnotnull then S.fromList [NotNull] else mempty
@@ -377,6 +378,13 @@ pgTypeToColumnType oid width
     Just (PgSpecificType PgOid)
   | otherwise =
     Nothing
+
+pgArrayTypeToColumnType :: Pg.Oid -> Maybe Int -> Int -> Maybe ColumnType
+pgArrayTypeToColumnType oid width dims = case Pg.staticTypeInfo oid of
+  Just (Pg.Array _ _ _ _ subTypeInfo) -> case pgTypeToColumnType (Pg.typoid subTypeInfo) width of
+    Just columnType -> Just $ SqlArrayType columnType (fromIntegral dims)
+    _ -> Nothing
+  _ -> Nothing
 
 --
 -- Constraints discovery
