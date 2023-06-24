@@ -273,6 +273,7 @@ instance HasColumnType a => HasColumnType (Vector a) where
 -- \"resource tracking\" (i.e. created-but-now-unused requences remains in the DB).
 instance (Integral ty, HasColumnType ty) => HasColumnType (SqlSerial ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
+  defaultTypeCast _ = defaultTypeCast (Proxy @ty)
 
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname =
