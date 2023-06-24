@@ -10,6 +10,7 @@ module Database.Beam.AutoMigrate.Compat where
 import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString (ByteString)
 import Data.Int
+import Data.Functor ((<&>))
 import qualified Data.Map.Strict as M
 import Data.Scientific (Scientific)
 import Data.Set (Set)
@@ -252,6 +253,7 @@ instance HasColumnType a => HasColumnType (Vector a) where
   defaultColumnType _ = case defaultColumnType (Proxy @a) of
     SqlArrayType t d -> SqlArrayType t (d + 1)
     t -> SqlArrayType t 1
+  defaultTypeCast _ = defaultTypeCast (Proxy @a) <&> (<> "[]")
 
 --
 -- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:
