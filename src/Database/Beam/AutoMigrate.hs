@@ -797,20 +797,8 @@ prettyPrintEdits edits = putStrLn $ T.unpack $ T.unlines $ fmap (prettyEditSQL .
 -- | Compare the existing schema in the database with the expected
 -- schema in Haskell and try to edit the existing schema as necessary
 tryRunMigrationsWithEditUpdate
-  :: ( Generic (db (DatabaseEntity be db))
-     , Generic (db (AnnotatedDatabaseEntity be db))
-     , Database be db
-     , GZipDatabase be
-        (AnnotatedDatabaseEntity be db)
-        (AnnotatedDatabaseEntity be db)
-        (DatabaseEntity be db)
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (DatabaseEntity be db)))
-     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
-     )
-  => ([WithPriority Edit] -> [WithPriority Edit])
-  -> AnnotatedDatabaseSettings be db
+  :: ([WithPriority Edit] -> [WithPriority Edit])
+  -> Schema
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate = tryRunMigrationsWithEditUpdateAndHooks (return ()) (\_ -> return ())
@@ -818,26 +806,14 @@ tryRunMigrationsWithEditUpdate = tryRunMigrationsWithEditUpdateAndHooks (return 
 -- | Similar to 'tryRunMigrationsWithEditUpdate' but additionally allows for pre- and post- auto-migration steps
 -- that run in the same transaction as the auto-migration.
 tryRunMigrationsWithEditUpdateAndHooks
-  :: ( Generic (db (DatabaseEntity be db))
-     , Generic (db (AnnotatedDatabaseEntity be db))
-     , Database be db
-     , GZipDatabase be
-        (AnnotatedDatabaseEntity be db)
-        (AnnotatedDatabaseEntity be db)
-        (DatabaseEntity be db)
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (DatabaseEntity be db)))
-     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
-     )
-  => Pg.Pg a
+  :: Pg.Pg a
   -> (a -> Pg.Pg b)
   -> ([WithPriority Edit] -> [WithPriority Edit])
-  -> AnnotatedDatabaseSettings be db
+  -> Schema
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate editUpdate annotatedDb conn = do
-  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn
+tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate editUpdate expectedHaskellSchema conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate expectedHaskellSchema conn
   where
     runPgTransaction conn' = Pg.withTransaction conn' . Pg.runBeamPostgres conn'
 
@@ -845,52 +821,27 @@ tryRunMigrationsWithEditUpdateAndHooks preMigrate postMigrate editUpdate annotat
 --   Run all the migration steps in a transaction but roll back the transaction in the end.
 --   Tests whether a migration works without committing it.
 tryRunMigrationsWithEditUpdateAndHooksDryRun
-  :: ( Generic (db (DatabaseEntity be db))
-     , Generic (db (AnnotatedDatabaseEntity be db))
-     , Database be db
-     , GZipDatabase be
-        (AnnotatedDatabaseEntity be db)
-        (AnnotatedDatabaseEntity be db)
-        (DatabaseEntity be db)
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (DatabaseEntity be db)))
-     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
-     )
-  => Pg.Pg a
+  :: Pg.Pg a
   -> (a -> Pg.Pg b)
   -> ([WithPriority Edit] -> [WithPriority Edit])
-  -> AnnotatedDatabaseSettings be db
+  -> Schema
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate editUpdate annotatedDb conn = do
-  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate editUpdate annotatedDb conn
+tryRunMigrationsWithEditUpdateAndHooksDryRun preMigrate postMigrate editUpdate expectedHaskellSchema conn = do
+  tryRunMigrationsWithEditUpdateAndHooks' runPgTransactionDryRun preMigrate postMigrate editUpdate expectedHaskellSchema conn
 
 -- | Same as 'tryRunMigrationsWithEditUpdateAndHooks' but allows using a custom "runPgTransaction" function.
 --   Useful if e.g. doing a dry run.
 tryRunMigrationsWithEditUpdateAndHooks'
-  :: ( Generic (db (DatabaseEntity be db))
-     , Generic (db (AnnotatedDatabaseEntity be db))
-     , Database be db
-     , GZipDatabase be
-        (AnnotatedDatabaseEntity be db)
-        (AnnotatedDatabaseEntity be db)
-        (DatabaseEntity be db)
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (AnnotatedDatabaseEntity be db)))
-        (Rep (db (DatabaseEntity be db)))
-     , GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db)))
-     )
-  => (forall c. Pg.Connection -> Pg.Pg c -> IO c)
+  :: (forall c. Pg.Connection -> Pg.Pg c -> IO c)
   -> Pg.Pg a
   -> (a -> Pg.Pg b)
   -> ([WithPriority Edit] -> [WithPriority Edit])
-  -> AnnotatedDatabaseSettings be db
+  -> Schema
   -> Pg.Connection
   -> IO ()
-tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate annotatedDb conn = do
-  let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
-      preMigrate' = do
+tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate editUpdate expectedHaskellSchema conn = do
+  let preMigrate' = do
         v <- preMigrate
         actualDatabaseSchema <- Pg.liftIOWithHandle getSchema
         liftIO $ case fmap sortEdits $ diff expectedHaskellSchema actualDatabaseSchema of
@@ -913,24 +864,10 @@ tryRunMigrationsWithEditUpdateAndHooks' runPgTransaction preMigrate postMigrate 
 -- | Compute the `Diff` consisting of the steps that would be taken to migrate from the current actual
 -- database schema to the given one, without actually performing the migration.
 calcMigrationSteps
-  :: ( Generic (db (DatabaseEntity be db))
-     , (Generic (db (AnnotatedDatabaseEntity be db)))
-     , Database be db
-     , (GZipDatabase be
-         (AnnotatedDatabaseEntity be db)
-         (AnnotatedDatabaseEntity be db)
-         (DatabaseEntity be db)
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (AnnotatedDatabaseEntity be db)))
-         (Rep (db (DatabaseEntity be db)))
-       )
-     , (GSchema be db '[] (Rep (db (AnnotatedDatabaseEntity be db))))
-     )
-  => AnnotatedDatabaseSettings be db
+  :: Schema
   -> Pg.Connection
   -> IO Diff
-calcMigrationSteps annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+calcMigrationSteps expectedHaskellSchema conn = do
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema
 
