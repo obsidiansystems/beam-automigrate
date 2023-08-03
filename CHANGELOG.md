@@ -1,5 +1,10 @@
 # Revision history for beam-automigrate
 
+## 0.1.4.0
+
+* [#52](https://github.com/obsidiansystems/beam-automigrate/pull/52) Support sql arrays
+* Loosen some version bounds
+
 ## 0.1.3.0
 
 * [#47](https://github.com/obsidiansystems/beam-automigrate/pull/47): Generate postgres enum types in schema when using `Nullable PgEnum` values.
