@@ -376,6 +376,8 @@ pgTypeToColumnType oid width
     Just (PgSpecificType PgUuid)
   | Pg.typoid Pg.oid == oid =
     Just (PgSpecificType PgOid)
+  | Pg.Oid 16385 == oid =
+    Just (PgSpecificType PgLTree)
   | otherwise =
     Nothing
 

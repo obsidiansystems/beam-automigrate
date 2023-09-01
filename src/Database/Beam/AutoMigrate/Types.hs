@@ -157,6 +157,7 @@ data PgDataType
   | PgUuid
   | PgEnumeration EnumerationName
   | PgOid
+  | PgLTree
 
 deriving instance Show PgDataType
 
