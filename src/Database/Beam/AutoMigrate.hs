@@ -569,6 +569,8 @@ renderDataType = \case
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
   -- oid
   PgSpecificType PgOid -> "oid"
+  -- ltree
+  PgSpecificType PgLTree -> "ltree"
   -- Arrays
   SqlArrayType (SqlArrayType _ _) _ -> error "beam-automigrate: invalid nested array."
   SqlArrayType _ 0 -> error "beam-automigrate: array with zero dimensions"
