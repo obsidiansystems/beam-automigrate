@@ -111,7 +111,7 @@ defaultsQ =
   fromString $
     unlines
       [ "SELECT"
-      , "    a.attrelid::regclass::text AS \"table_name\""
+      , "    trim(both '\"' from a.attrelid::regclass::text) AS \"table_name\""
       , "  , a.attname::text AS \"column_name\""
       , "  , pg_get_expr(d.adbin, d.adrelid) AS \"column_default\""
       , "  , format_type(a.atttypid, NULL) AS \"data_type\""
@@ -153,8 +153,8 @@ foreignKeysQ =
   fromString $
     unlines
       [ "SELECT"
-      , "    conrelid::regclass::text as \"foreign_table\""
-      , "  , confrelid::regclass::text as \"primary_table\""
+      , "    trim(both '\"' from conrelid::regclass::text) as \"foreign_table\""
+      , "  , trim(both '\"' from confrelid::regclass::text) as \"primary_table\""
       , "  , ARRAY_AGG(col.attname::text ORDER BY u.attposition)::text[] AS \"fk_columns\""
       , "  , ARRAY_AGG(f_col.attname::text ORDER BY f_u.attposition)::text[] AS \"pk_columns\""
       , "  , conname::text as \"cname\""
