@@ -1,5 +1,9 @@
 # Revision history for beam-automigrate
 
+## Unreleased
+
+* Add ltree column type
+
 ## 0.1.4.0
 
 * [#52](https://github.com/obsidiansystems/beam-automigrate/pull/52) Support sql arrays
