@@ -3,6 +3,7 @@
 ## Unreleased
 
 * Add ltree column type
+* Add vector column type
 
 ## 0.1.4.0
 

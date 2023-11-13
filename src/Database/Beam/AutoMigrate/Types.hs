@@ -23,6 +23,7 @@ import qualified Database.Beam.Backend.SQL.AST as AST
 import Database.Beam.Postgres (Pg, Postgres)
 import qualified Database.Beam.Postgres.Syntax as Syntax
 import GHC.Generics hiding (to)
+import Numeric.Natural (Natural)
 import Lens.Micro (Lens', lens, to, _Right)
 import Lens.Micro.Extras (preview)
 
@@ -158,12 +159,21 @@ data PgDataType
   | PgEnumeration EnumerationName
   | PgOid
   | PgLTree
+  | PgVector (Maybe Natural)
 
 deriving instance Show PgDataType
 
 deriving instance Eq PgDataType
 
 deriving instance Generic PgDataType
+
+newtype ExtensionTypeName = ExtensionTypeName
+  { extensionTypeName :: Text
+  }
+  deriving (Show, Eq, Ord, NFData, Generic)
+
+instance IsString ExtensionTypeName where
+  fromString = ExtensionTypeName . T.pack
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
 newtype PgEnum a
