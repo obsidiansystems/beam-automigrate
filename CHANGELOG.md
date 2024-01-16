@@ -1,9 +1,10 @@
 # Revision history for beam-automigrate
 
-## Unreleased
+## 0.1.5.0
 
 * Add ltree column type
 * Add vector column type
+* Fix ghc 9.2.8 build
 
 ## 0.1.4.0
 
