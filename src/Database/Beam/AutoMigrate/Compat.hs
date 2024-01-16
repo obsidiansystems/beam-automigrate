@@ -86,7 +86,8 @@ instance HasSchemaConstraints' 'False (Beam.TableField e t) where
 
 instance
   ( IsMaybe a ~ nullary,
-    HasSchemaConstraints' nullary a
+    HasSchemaConstraints' nullary a,
+    Ord (SchemaConstraint a)
   ) =>
   HasSchemaConstraints a
   where
