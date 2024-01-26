@@ -1,5 +1,9 @@
 # Revision history for beam-automigrate
 
+## 0.1.6.0
+
+* Fix instance HasSchemaConstraints build failure with GHC 9.2.8
+
 ## 0.1.5.0
 
 * Add ltree column type
