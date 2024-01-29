@@ -110,11 +110,16 @@ defaultsQ :: Pg.Query
 defaultsQ =
   fromString $
     unlines
-      [ "SELECT col.table_name::text, col.column_name::text, col.column_default::text, col.data_type::text ",
-        "FROM information_schema.columns col ",
-        "WHERE col.column_default IS NOT NULL ",
-        "AND col.table_schema NOT IN('information_schema', 'pg_catalog') ",
-        "ORDER BY col.table_name"
+      [ "SELECT"
+      , "    trim(both '\"' from a.attrelid::regclass::text) AS \"table_name\""
+      , "  , a.attname::text AS \"column_name\""
+      , "  , pg_get_expr(d.adbin, d.adrelid) AS \"column_default\""
+      , "  , format_type(a.atttypid, NULL) AS \"data_type\""
+      , "FROM pg_catalog.pg_attribute a"
+      , "JOIN pg_catalog.pg_attrdef d ON (a.attrelid, a.attnum) = (d.adrelid, d.adnum)"
+      , "WHERE NOT a.attisdropped -- no dropped (dead) columns"
+      , "  AND a.attnum > 0 -- no system columns"
+      , "ORDER BY \"table_name\", \"column_name\""
       ]
 
 -- | Get information about columns for this table. Due to the fact this is a query executed for /each/
@@ -147,23 +152,23 @@ foreignKeysQ :: Pg.Query
 foreignKeysQ =
   fromString $
     unlines
-      [ "SELECT kcu.table_name::text as foreign_table,",
-        "       rel_kcu.table_name::text as primary_table,",
-        "       array_agg(kcu.column_name::text ORDER BY kcu.position_in_unique_constraint)::text[] as fk_columns,",
-        "       array_agg(rel_kcu.column_name::text ORDER BY rel_kcu.ordinal_position)::text[] as pk_columns,",
-        "       kcu.constraint_name as cname",
-        "FROM information_schema.table_constraints tco",
-        "JOIN information_schema.key_column_usage kcu",
-        "          on tco.constraint_schema = kcu.constraint_schema",
-        "          and tco.constraint_name = kcu.constraint_name",
-        "JOIN information_schema.referential_constraints rco",
-        "          on tco.constraint_schema = rco.constraint_schema",
-        "          and tco.constraint_name = rco.constraint_name",
-        "JOIN information_schema.key_column_usage rel_kcu",
-        "          on rco.unique_constraint_schema = rel_kcu.constraint_schema",
-        "          and rco.unique_constraint_name = rel_kcu.constraint_name",
-        "          and kcu.ordinal_position = rel_kcu.ordinal_position",
-        "GROUP BY foreign_table, primary_table, cname"
+      [ "SELECT"
+      , "    trim(both '\"' from conrelid::regclass::text) as \"foreign_table\""
+      , "  , trim(both '\"' from confrelid::regclass::text) as \"primary_table\""
+      , "  , ARRAY_AGG(col.attname::text ORDER BY u.attposition)::text[] AS \"fk_columns\""
+      , "  , ARRAY_AGG(f_col.attname::text ORDER BY f_u.attposition)::text[] AS \"pk_columns\""
+      , "  , conname::text as \"cname\""
+      , "FROM pg_catalog.pg_constraint c"
+      , "LEFT JOIN LATERAL UNNEST(c.conkey) WITH ORDINALITY AS u(attnum, attposition) ON TRUE"
+      , "LEFT JOIN LATERAL UNNEST(c.confkey) WITH ORDINALITY AS f_u(attnum, attposition) ON f_u.attposition = u.attposition"
+      , "JOIN pg_class tbl ON tbl.oid = c.conrelid"
+      , "JOIN pg_namespace sch ON sch.oid = tbl.relnamespace"
+      , "JOIN pg_attribute col ON (col.attrelid = tbl.oid AND col.attnum = u.attnum)"
+      , "JOIN pg_class f_tbl ON f_tbl.oid = c.confrelid"
+      , "JOIN pg_namespace f_sch ON f_sch.oid = f_tbl.relnamespace"
+      , "JOIN pg_attribute f_col ON (f_col.attrelid = f_tbl.oid AND f_col.attnum = f_u.attnum)"
+      , "WHERE contype = 'f'"
+      , "GROUP BY \"foreign_table\", \"primary_table\", \"cname\""
       ]
 
 -- | Return /all other constraints that are not FKs/ (i.e. 'PRIMARY KEY', 'UNIQUE', etc) for all the tables.
