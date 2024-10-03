@@ -163,7 +163,7 @@ mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
       pks = noTableConstraints {primaryKeyConstraint = Just (PrimaryKey $ S.fromList $ pkFieldNames entity, def)} -- TODO: expose default?
-      (columns, seqs) = gColumns (Proxy @ 'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
+      (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
 

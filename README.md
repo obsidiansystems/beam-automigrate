@@ -270,7 +270,7 @@ something like this:
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =
->   BA.tryRunMigrationsWithEditUpdate Prelude.id annotatedDB conn
+>   BA.tryRunMigrationsWithEditUpdate Prelude.id hsSchema conn
 >
 > main :: IO ()
 > main = do

@@ -677,6 +677,15 @@ renderDataType = \case
   PgSpecificType (PgEnumeration (EnumerationName ty)) -> ty
   -- oid
   PgSpecificType PgOid -> "oid"
+  -- ltree
+  PgSpecificType PgLTree -> "ltree"
+  -- vector
+  PgSpecificType (PgVector Nothing) -> "vector"
+  PgSpecificType (PgVector (Just n)) -> mconcat ["vector(", T.pack . show $ n, ")"]
+  -- Arrays
+  SqlArrayType (SqlArrayType _ _) _ -> error "beam-automigrate: invalid nested array."
+  SqlArrayType _ 0 -> error "beam-automigrate: array with zero dimensions"
+  SqlArrayType t d -> renderDataType t <> mconcat (replicate (fromIntegral d) "[]")
 
 evalMigration :: Monad m => Migration m -> m (Either MigrationError [WithPriority Edit])
 evalMigration m = do

@@ -1,1 +1,20 @@
 packages: .
+
+source-repository-package
+    type: git
+    location: https://github.com/obsidiansystems/beam.git
+    -- branch dylang/sql-deconstruct-maybe
+    tag: 9b6bf4f846869223737131999ceec16e8eb79ef8
+    subdir:
+      beam-core
+      beam-postgres
+      beam-migrate
+
+source-repository-package
+    type: git
+    location: https://github.com/obsidiansystems/postgresql-simple.git
+    -- branch dylang/synthesizable-fields-2
+    tag: 2a3e5210f87628eaa5d7a51d17211e84a5acd13b
+
+allow-older:
+    postgresql-simple

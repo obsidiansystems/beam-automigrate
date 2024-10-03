@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Database.Beam.AutoMigrate.Diff
   ( Diffable (..),
@@ -21,23 +22,25 @@ module Database.Beam.AutoMigrate.Diff
   )
 where
 
-import Control.Monad.Writer.Strict
-import Control.Monad.State.Strict
 import Control.Applicative ((<|>))
-import Control.Lens (preview, ifoldMap, ifor, at, (.=), ix, (<<.=))
 import Control.Exception (assert)
+import Control.Lens (preview, ifoldMap, ifor, at, (.=), ix, (<<.=))
+import Control.Monad
+import Control.Monad.State.Strict
+import Control.Monad.Writer.Strict
 import Data.DList (DList)
-import qualified Data.DList as D
+import Data.DList qualified as D
 import Data.Foldable (foldlM, toList)
-import Data.List ((\\))
-import qualified Data.List as L
-import Data.Map.Merge.Strict
-import qualified Data.Map.Strict as M
 import Data.Function (on)
+import Data.List ((\\))
+import Data.List qualified as L
+import Data.Map.Merge.Strict
+import Data.Map.Strict qualified as M
 import Data.Maybe
-import qualified Data.Set as S
+import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Word (Word8)
+
 import Database.Beam.AutoMigrate.Types
 
 --

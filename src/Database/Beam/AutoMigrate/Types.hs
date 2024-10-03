@@ -2,35 +2,36 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Database.Beam.AutoMigrate.Types where
 
-import Control.DeepSeq
 import Control.Applicative
+import Control.DeepSeq
 import Control.Exception
+import Control.Lens (Lens', lens, to, _Right)
+import Control.Lens (preview, set)
+import Control.Lens.TH
 import Data.ByteString.Lazy (ByteString)
 import Data.Default.Class (Default(..))
 import Data.Map (Map)
+import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.String
 import Data.String.Conv (toS)
 import Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Map as Map
+import Data.Text qualified as T
 import Data.Typeable
 import Database.Beam.Backend.SQL (BeamSqlBackendSyntax)
-import qualified Database.Beam.Backend.SQL.AST as AST
+import Database.Beam.Backend.SQL.AST qualified as AST
 import Database.Beam.Postgres (Pg, Postgres)
-import qualified Database.Beam.Postgres.Syntax as Syntax
+import Database.Beam.Postgres.Syntax qualified as Syntax
 import GHC.Generics hiding (to)
-import Control.Lens (Lens', lens, to, _Right)
-import Control.Lens (preview, set)
-
-import Control.Lens.TH
+import Numeric.Natural (Natural)
 
 --
 -- Types (sketched)
@@ -138,14 +139,14 @@ instance IsString ColumnName where
   fromString = ColumnName . T.pack
 
 data NullableConstraint = Null | NotNull
-  deriving (Show, Eq, Generic)
+  deriving (Show, Eq, Ord, Generic)
 
 instance NFData NullableConstraint
 
 data ColumnConstraints = ColumnConstraints
   { columnNullable :: NullableConstraint,
     columnDefault :: Maybe DefaultConstraint
-  } deriving (Show, Eq, Generic)
+  } deriving (Show, Eq, Ord, Generic)
 
 instance NFData ColumnConstraints
 
@@ -168,6 +169,8 @@ data ColumnType
     PgSpecificType PgDataType
   | -- | An enumeration implemented with text-based encoding.
     DbEnumeration EnumerationName Enumeration
+  | -- | Array type.
+    SqlArrayType ColumnType Word
   deriving (Show, Eq, Generic)
 
 data PgDataType
@@ -182,12 +185,22 @@ data PgDataType
   | PgUuid
   | PgEnumeration EnumerationName
   | PgOid
+  | PgLTree
+  | PgVector (Maybe Natural)
 
 deriving instance Show PgDataType
 
 deriving instance Eq PgDataType
 
 deriving instance Generic PgDataType
+
+newtype ExtensionTypeName = ExtensionTypeName
+  { extensionTypeName :: Text
+  }
+  deriving (Show, Eq, Ord, NFData, Generic)
+
+instance IsString ExtensionTypeName where
+  fromString = ExtensionTypeName . T.pack
 
 -- Newtype wrapper to be able to derive appropriate 'HasDefaultSqlDataType' for /Postgres/ enum types.
 newtype PgEnum a
