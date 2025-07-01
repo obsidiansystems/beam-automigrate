@@ -141,7 +141,7 @@ enumerationsQ =
 -- | Get the sequence data for all sequence types in the database.
 sequencesQ :: Pg.Query
 sequencesQ = fromString $ unlines
-  [ "SELECT c.relname FROM pg_class c JOIN pg_catalog.pg_namespace ns ON (ns.oid = c.relnamespace)",
+  [ "SELECT c.relname FROM pg_class c JOIN pg_catalog.pg_namespace ns ON (ns.oid = c.relnamespace)"
   , " WHERE nspname = any (current_schemas(false)) AND c.relkind = 'S'"
   ]
 
