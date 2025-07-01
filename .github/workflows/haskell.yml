@@ -39,7 +39,7 @@ jobs:
     - name: install postgres (macos)
       run: |
         brew update
-        brew install postgresql@16
+        brew install postgresql
         export PATH=$PATH:`brew --prefix`/bin
         which pg_ctl
         echo "$(brew --prefix)/bin" >> $GITHUB_PATH
