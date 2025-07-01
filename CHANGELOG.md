@@ -1,5 +1,9 @@
 # Revision history for beam-automigrate
 
+## 0.1.7.0
+
+* beam-automigrate will now only manage sequences within the search path, just as it only manages such tables.
+
 ## 0.1.6.0
 
 * Fix instance HasSchemaConstraints build failure with GHC 9.2.8

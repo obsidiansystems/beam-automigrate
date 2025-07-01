@@ -140,7 +140,10 @@ enumerationsQ =
 
 -- | Get the sequence data for all sequence types in the database.
 sequencesQ :: Pg.Query
-sequencesQ = fromString "SELECT c.relname FROM pg_class c WHERE c.relkind = 'S'"
+sequencesQ = fromString $ unlines
+  [ "SELECT c.relname FROM pg_class c JOIN pg_catalog.pg_namespace ns ON (ns.oid = c.relnamespace)"
+  , " WHERE nspname = any (current_schemas(false)) AND c.relkind = 'S'"
+  ]
 
 -- | Return all foreign key constraints for /all/ 'Table's.
 foreignKeysQ :: Pg.Query
