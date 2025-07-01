@@ -84,7 +84,7 @@ library
 library beam-automigrate-test-utils
   hs-source-dirs: util
   build-depends:
-      base
+      base                  >=4.9      && <5
     , gargoyle-postgresql-connect
     , postgresql-simple
     , resource-pool
@@ -100,7 +100,7 @@ test-suite beam-automigrate-tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
   build-depends:
-      base
+      base                  >=4.9      && <5
     , beam-automigrate
     , containers
     , pretty-simple
@@ -118,7 +118,7 @@ executable beam-automigrate-integration-tests
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       PostgresqlSyntax.Data.Orphans
   build-depends:
-      base
+      base                  >=4.9      && <5
     , beam-automigrate
     , beam-automigrate-test-utils
     , beam-core
@@ -149,7 +149,7 @@ executable beam-automigrate-examples
 
   build-depends:
       aeson
-    , base
+    , base                  >=4.9      && <5
     , beam-automigrate
     , beam-core
     , beam-postgres
@@ -182,7 +182,7 @@ executable beam-automigrate-large-migration-test
   hs-source-dirs:     large-migration-test
   main-is:            Main.hs
   build-depends:
-      base
+      base                  >=4.9      && <5
     , beam-automigrate
     , beam-postgres
     , containers
@@ -198,7 +198,7 @@ benchmark beam-automigrate-bench
   hs-source-dirs:   bench
   main-is:          Main.hs
   build-depends:
-      base
+      base                  >=4.9      && <5
     , beam-automigrate
     , beam-postgres
     , bytestring
@@ -214,7 +214,7 @@ benchmark beam-automigrate-bench
 
 executable readme
   build-depends:
-      base
+      base                  >=4.9      && <5
     , beam-automigrate
     , beam-automigrate-test-utils
     , beam-core
