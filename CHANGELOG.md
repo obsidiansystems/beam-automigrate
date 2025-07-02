@@ -13,6 +13,10 @@
   * Many instances of database entities being dropped and recreated instead of altered are now supported.
 * [#47](https://github.com/obsidiansystems/beam-automigrate/pull/47): Generate postgres enum types in schema when using `Nullable PgEnum` values.
 
+## 0.1.7.0
+
+* beam-automigrate will now only manage sequences within the search path, just as it only manages such tables.
+
 ## 0.1.6.0
 
 * Fix instance HasSchemaConstraints build failure with GHC 9.2.8
