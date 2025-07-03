@@ -1,21 +1,23 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ImportQualifiedPost #-}
 
 module Database.Beam.AutoMigrate.Util where
 
 import Control.Applicative.Lift
+import Control.Lens ((^.))
 import Control.Monad.Except
 import Data.Char
 import Data.Functor.Constant
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.String (fromString)
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
+
 import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
-import qualified Database.Beam.Schema as Beam
+import Database.Beam.Schema qualified as Beam
 import Database.Beam.Schema.Tables
-import Lens.Micro ((^.))
 
 --
 -- Retrieving all the column names for a beam entity.
