@@ -168,7 +168,9 @@ sequencesQ = fromString $ unlines
   , "    AND attrib.attrelid = dep.refobjid )"
   , "  ) AS subselect"
   , "  ON ( seqclass.relfilenode = subselect.dep_objid )"
-  , "WHERE  seqclass.relkind = 'S'"
+  , "JOIN pg_catalog.pg_namespace ns ON (ns.oid = seqclass.relnamespace)"
+  , "WHERE seqclass.relkind = 'S'"
+  , "  AND nspname = any (current_schemas(false))"
   ]
 
 
