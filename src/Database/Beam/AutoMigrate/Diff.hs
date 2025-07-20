@@ -76,9 +76,9 @@ editPriority = \case
   TableConstraintRemoved _ _ TableConstraintRemovedType_Unique -> Priority 12
   -- Destructive operations go last
   ColumnRemoved {} -> Priority 13
-  TableRemoved {} -> Priority 14
-  EnumTypeRemoved {} -> Priority 15
-  SequenceRemoved {} -> Priority 16
+  SequenceRemoved {} -> Priority 14
+  TableRemoved {} -> Priority 15
+  EnumTypeRemoved {} -> Priority 16
   RenameConstraint {} -> Priority 17 -- constraint manipulations are generated from the database
 
 -- TODO: This needs to support adding conditional queries.
