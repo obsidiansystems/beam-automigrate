@@ -5,6 +5,7 @@ module Database.Beam.AutoMigrate.Util where
 
 import Control.Applicative.Lift
 import Control.Monad.Except
+import Control.Monad.Trans.Class (lift)
 import Data.Char
 import Data.Functor.Constant
 import Data.Set (Set)

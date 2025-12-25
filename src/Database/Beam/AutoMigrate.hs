@@ -60,6 +60,7 @@ module Database.Beam.AutoMigrate
 where
 
 import Control.Exception
+import Control.Monad (when, forM_)
 import Control.Monad.Except
 import Control.Monad.Identity (runIdentity)
 import Control.Monad.State.Strict
