@@ -548,7 +548,8 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
                               (fieldAsColumnNames (ourColumn (tableSettings e)))
                               (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          tName' = e ^. dbEntityDescriptor . dbEntityName
+                          conname = T.intercalate "_" (tName' : map (columnName . fst) colPairs) <> "_fkey"
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)
@@ -585,7 +586,8 @@ foreignKeyOn externalEntity us onDelete onUpdate =
                               )
                               us
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          tName' = e ^. dbEntityDescriptor . dbEntityName
+                          conname = T.intercalate "_" (tName' : map (columnName . fst) colPairs) <> "_fkey"
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)
