@@ -225,6 +225,9 @@ executable readme
   main-is: README.lhs
   ghc-options: -Wall -optL -q -threaded
 
+  if !flag(build-readme)
+    buildable: False
+
 flag werror
   description: Enable -Werror during development
   default:     False
@@ -232,6 +235,16 @@ flag werror
 
 flag ghcipretty
   description: Enable pretty-show for pretty-printing purposes
+  default:     False
+  manual:      True
+
+flag integration-tests
+  description: Enable integration tests that talks to a Postgres DB.
+  default:     False
+  manual:      True
+
+flag build-readme
+  description: Build README.lhs which depends on gargoyle
   default:     False
   manual:      True
 
