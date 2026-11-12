@@ -208,7 +208,7 @@ Schema
                                 , ColumnName { columnName = "city" }
                                 )
                             ]
-                        ) NoAction NoAction
+                        ) Cascade Restrict
                     ]
                 , tableColumns = fromList
                     [
@@ -313,7 +313,7 @@ ALTER TABLE "cities" ADD CONSTRAINT "cities_pkey" PRIMARY KEY (city);
 
 ALTER TABLE "weathers" ADD CONSTRAINT "weathers_pkey" PRIMARY KEY (id);
 
-ALTER TABLE "weathers" ADD CONSTRAINT "weathers_city__city_fkey" FOREIGN KEY (city__city) REFERENCES "cities"(city);
+ALTER TABLE "weathers" ADD CONSTRAINT "weathers_city__city_fkey" FOREIGN KEY (city__city) REFERENCES "cities"(city) ON DELETE CASCADE  ON UPDATE RESTRICT ;
 
 ```
 

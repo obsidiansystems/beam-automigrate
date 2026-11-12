@@ -99,9 +99,12 @@ test-suite beam-automigrate-tests
   hs-source-dirs:     tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
+                      Test.Database.Beam.AutoMigrate.ForeignKeys
   build-depends:
       base
     , beam-automigrate
+    , beam-core
+    , beam-postgres
     , containers
     , pretty-simple
     , QuickCheck
