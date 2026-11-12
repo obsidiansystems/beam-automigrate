@@ -6,6 +6,7 @@ import Database.Beam.AutoMigrate
 import Database.Beam.AutoMigrate.Schema.Gen
 import Database.Beam.AutoMigrate.Validity
 import Test.Database.Beam.AutoMigrate.Arbitrary hiding ((===))
+import Test.Database.Beam.AutoMigrate.ForeignKeys (foreignKeyTests)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck as QC
@@ -15,7 +16,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Tests" [properties]
+tests = testGroup "Tests" [properties, foreignKeyTests]
 
 properties :: TestTree
 properties =
