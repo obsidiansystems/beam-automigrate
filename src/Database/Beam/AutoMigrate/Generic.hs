@@ -177,9 +177,14 @@ mkTableEntryFkDiscovery ::
   ((TableName, Table), Sequences)
 mkTableEntryFkDiscovery db annEntity =
   let ((tName, table), seqs) = mkTableEntryNoFkDiscovery annEntity
+      annotatedCons = tableConstraints table
+      annotatedFkNames = S.fromList [n | ForeignKey n _ _ _ _ <- S.toList annotatedCons]
       discoveredCons =
         gTableConstraintsColumns db tName . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
-   in ((tName, table {tableConstraints = discoveredCons <> tableConstraints table}), seqs)
+      filteredDiscovered = S.filter (not . isOverridden) discoveredCons
+      isOverridden (ForeignKey n _ _ _ _) = n `S.member` annotatedFkNames
+      isOverridden _ = False
+   in ((tName, table {tableConstraints = filteredDiscovered <> annotatedCons}), seqs)
 
 --
 -- Automatic FK-discovery algorithm starts here

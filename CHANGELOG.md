@@ -1,5 +1,9 @@
 # Revision history for beam-automigrate
 
+## Unreleased
+
+* `foreignKeyOnPk` now overrides the foreign key that FK discovery finds for the same column, so its `ON DELETE` and `ON UPDATE` actions take effect instead of a second `NO ACTION` key being added. The constraint is now named after the table it is defined on (`<table>_<column>_fkey`, as FK discovery names it) rather than after the referenced table, which also keeps two keys to the same table from sharing a name. Existing databases see the old constraint dropped and the new one added on the next migration.
+
 ## 0.1.7.0
 
 * beam-automigrate will now only manage sequences within the search path, just as it only manages such tables.

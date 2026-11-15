@@ -63,6 +63,7 @@ module Database.Beam.AutoMigrate.Annotated
   )
 where
 
+import qualified Data.List as L
 import Data.Kind
 import Data.Monoid (Endo (..))
 import Data.Proxy
@@ -518,6 +519,10 @@ data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) whe
 
 -- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
 -- target table.
+--
+-- The constraint is named @\<table\>_\<column\>_fkey@, after the table it is defined on, the same name
+-- FK discovery gives it. When FK discovery also runs for the table, this constraint replaces the
+-- discovered one, so the 'ReferenceAction's given here take effect.
 foreignKeyOnPk ::
   ( Beam.Beamable (PrimaryKey tbl'),
     Beam.Beamable tbl',
@@ -548,7 +553,10 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
                               (fieldAsColumnNames (ourColumn (tableSettings e)))
                               (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          srcName = e ^. dbEntityDescriptor . dbEntityName
+                          conname = case L.sort (map fst colPairs) of
+                            [] -> srcName <> "_fkey"
+                            (ColumnName cn : _) -> srcName <> "_" <> cn <> "_fkey"
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)
