@@ -368,6 +368,16 @@ instance Exception DiffError
 
 instance NFData DiffError
 
+-- | A structural or name-level refusal from the SQL renderer. Rendering never
+-- inspects arbitrary default SQL expressions; PostgreSQL validates those.
+data RenderError
+  = InvalidSqlIdentifier Text
+  | InvalidSqlType ColumnType Text
+  | InvalidSqlEdit EditAction Text
+  deriving (Show, Eq)
+
+instance Exception RenderError
+
 --
 -- Utility functions
 --

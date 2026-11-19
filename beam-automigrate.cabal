@@ -38,6 +38,9 @@ library
     Database.Beam.AutoMigrate.Util
     Database.Beam.AutoMigrate.Validity
 
+  other-modules:
+    Database.Beam.AutoMigrate.Sql
+
   hs-source-dirs:     src
   build-depends:
       aeson                 >=1.4.4    && <2.3
@@ -102,9 +105,11 @@ test-suite beam-automigrate-tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.Identifiers
+                      Test.Database.Beam.AutoMigrate.Renderer
   build-depends:
       base
     , beam-automigrate
+    , beam-core             >=0.9      && <0.11
     , bytestring
     , containers
     , pretty-simple
@@ -122,6 +127,7 @@ executable beam-automigrate-integration-tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.Integration.Harness
+                      Test.Database.Beam.AutoMigrate.Integration.Renderer
   build-depends:
       base
     , beam-automigrate
