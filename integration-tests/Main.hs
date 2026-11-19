@@ -2,22 +2,18 @@
 
 module Main where
 
-import Control.Monad.IO.Class (liftIO)
-import Data.Proxy
+import Data.ByteString (ByteString)
 import Database.Beam.AutoMigrate
-import Database.Beam.AutoMigrate.BenchUtil (cleanDatabase)
 import Database.Beam.AutoMigrate.Postgres (getSchema)
-import Database.Beam.AutoMigrate.TestUtils
+import Database.Beam.AutoMigrate.Schema.Gen ()
+import Database.Beam.AutoMigrate.TestUtils (requireTestConnInfo, withIsolatedDatabase)
 import Database.Beam.Postgres
 import qualified Database.PostgreSQL.Simple as Pg
-import qualified Database.PostgreSQL.Simple.Transaction as Pg
 import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
+import Test.Database.Beam.AutoMigrate.Integration.Harness (harnessTests)
 import Test.QuickCheck
-import Test.QuickCheck.Monadic
 import Test.Tasty
-import Test.Tasty.Options
 import Test.Tasty.QuickCheck as QC
-import Test.Tasty.Runners
 
 import Data.Generics.Aliases (mkT)
 import Data.Generics.Schemes (everywhere)
@@ -32,45 +28,42 @@ import qualified PostgresqlSyntax.Parsing as PgParsing
 import qualified PostgresqlSyntax.Rendering as PgRendering
 
 main :: IO ()
-main = do
-  let opts = includingOptions [Option (Proxy :: Proxy ConnMethod)]
-  optset <- parseOptions [opts] (testGroup "" [])
-  withConnection (lookupOption optset) $ \conn ->
-    defaultMainWithIngredients (opts : defaultIngredients) $ tests conn
+main = requireTestConnInfo >>= defaultMain . tests
 
-tests :: Pg.Connection -> TestTree
-tests c = testGroup "Tests" [properties c]
+tests :: ByteString -> TestTree
+tests dsn =
+  testGroup
+    "Tests"
+    [ harnessTests dsn,
+      properties dsn
+    ]
 
-properties :: Pg.Connection -> TestTree
-properties conn =
+properties :: ByteString -> TestTree
+properties dsn =
   testGroup
     "Integration tests"
-    [ -- We test that if we generate and apply a migration from a 'hsSchema', when we read the
-      -- 'Schema' back from the DB, we should end up with the original 'hsSchema'.
+    [ -- Check that a migration creates the requested schema.
       QC.testProperty "Migration roundtrip (empty DB)" $
-        \hsSchema -> hsSchema /= noSchema ==> do
-          dbProperty conn $ \_ -> do
-            let mig = migrate conn hsSchema
-            runBeamPostgres conn (unsafeRunMigration mig)
-            dbSchema <- getSchema conn
-            let hsSchema' = normalizeDefaultExprs hsSchema
-                dbSchema' = normalizeDefaultExprs dbSchema
-            pure $ whenFail (printMigrationIO mig) $ hsSchema' Pretty.=== dbSchema'
-      -- We test that after a successful migration, calling 'diff' should yield no edits.
+        \hsSchema -> hsSchema /= noSchema ==> dbProperty dsn $ \conn -> do
+          let mig = migrate conn hsSchema
+          runBeamPostgres conn (unsafeRunMigration mig)
+          dbSchema <- getSchema conn
+          let hsSchema' = normalizeDefaultExprs hsSchema
+              dbSchema' = normalizeDefaultExprs dbSchema
+          pure $ hsSchema' Pretty.=== dbSchema'
+      -- Check that a completed migration needs no further edits.
     , QC.testProperty "Diffing after a migration yields no edits" $
-        \hsSchema -> hsSchema /= noSchema ==> dbProperty conn $ \_ -> liftIO $ do
+        \hsSchema -> hsSchema /= noSchema ==> dbProperty dsn $ \conn -> do
           let mig = migrate conn hsSchema
           runBeamPostgres conn (unsafeRunMigration mig)
           dbSchema <- getSchema conn
           pure $ diff (normalizeDefaultExprs hsSchema) (normalizeDefaultExprs dbSchema) === Right []
     ]
 
--- | Execute a monadic 'Property' while also cleaning up any database's data at the end.
-dbProperty :: Testable prop => Pg.Connection -> (Pg.Connection -> IO prop) -> Property
-dbProperty conn prop = withMaxSuccess 50 $ monadicIO $ liftIO $ Pg.withTransactionSerializable conn $ do
-  cleanDatabase conn
-  r <- prop conn
-  pure r
+-- | Isolate each generated test case to prevent changes to other test databases.
+-- Close the connection and remove the database when the case ends.
+dbProperty :: Testable prop => ByteString -> (Pg.Connection -> IO prop) -> Property
+dbProperty dsn prop = ioProperty (withIsolatedDatabase dsn prop)
 
 class NormalizeDefaultExprs t where
   normalizeDefaultExprs :: t -> t
@@ -114,4 +107,3 @@ evaluableCExprInt64 e = case e of
     [(n,"")] -> Just n
     _ -> Nothing
   _ -> Nothing
-
