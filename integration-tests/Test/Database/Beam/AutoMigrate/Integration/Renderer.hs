@@ -7,11 +7,14 @@ module Test.Database.Beam.AutoMigrate.Integration.Renderer (rendererLiveTests) w
 import Data.ByteString (ByteString)
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Map.Strict as M
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Database.Beam.AutoMigrate
+import Database.Beam.AutoMigrate.Postgres (getSchema)
 import Database.Beam.AutoMigrate.TestUtils (withIsolatedDatabase)
 import qualified Database.Beam.Backend.SQL.AST as AST
+import qualified Database.Beam.Postgres as BeamPg
 import qualified Database.PostgreSQL.Simple as Pg
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -36,6 +39,40 @@ rendererLiveTests dsn =
         withIsolatedDatabase dsn $ \conn -> do
           exec conn "CREATE TABLE renderer_types (id INT)"
           mapM_ (renderCase conn) (zip [1 :: Int ..] typeCases),
+      testCase "supported aliases round-trip through migrate and diff" $
+        withIsolatedDatabase dsn $ \conn -> do
+          let desired =
+                noSchema
+                  { schemaTables =
+                      M.singleton
+                        "alias_roundtrip"
+                        ( Table
+                            Set.empty
+                            ( M.fromList
+                                [ ("id", Column (SqlStdType AST.DataTypeInteger) (Set.singleton NotNull)),
+                                  ("varchar_unbounded", Column (SqlStdType (AST.DataTypeChar True Nothing Nothing)) Set.empty),
+                                  ("char_implied", Column (SqlStdType (AST.DataTypeChar False Nothing Nothing)) Set.empty),
+                                  ("national_char", Column (SqlStdType (AST.DataTypeNationalChar False (Just 4))) Set.empty),
+                                  ("national_varchar", Column (SqlStdType (AST.DataTypeNationalChar True (Just 4))) Set.empty),
+                                  ("decimal_typed", Column (SqlStdType (AST.DataTypeDecimal (Just (8, Just 3)))) Set.empty),
+                                  ("numeric_zero_scale", Column (SqlStdType (AST.DataTypeNumeric (Just (6, Just 0)))) Set.empty),
+                                  ("real_alias", Column (SqlStdType (AST.DataTypeFloat (Just 24))) Set.empty),
+                                  ("double_alias", Column (SqlStdType (AST.DataTypeFloat (Just 25))) Set.empty),
+                                  ("double_unqualified", Column (SqlStdType (AST.DataTypeFloat Nothing)) Set.empty),
+                                  ("bit_implied", Column (SqlStdType (AST.DataTypeBit False Nothing)) Set.empty),
+                                  ("varbit", Column (SqlStdType (AST.DataTypeBit True (Just 5))) Set.empty),
+                                  ("numeric_array", Column (SqlArrayType (SqlStdType (AST.DataTypeNumeric (Just (8, Just 2)))) 2) Set.empty),
+                                  ("text_enum", Column (DbEnumeration (EnumerationName "unused") (Enumeration ["a", "b"])) Set.empty)
+                                ]
+                            )
+                        )
+                  }
+          BeamPg.runBeamPostgres conn (unsafeRunMigration (migrate conn desired))
+          db <- getSchema conn
+          case (canonicalizeSchema desired, canonicalizeSchema db) of
+            (Right desired', Right db') -> diff desired' db' @?= Right []
+            (Left errs, _) -> assertFailure ("desired schema failed canonicalization: " <> show errs)
+            (_, Left errs) -> assertFailure ("observed schema failed canonicalization: " <> show errs),
       testCase "quoted enum type identifiers execute" $
         withIsolatedDatabase dsn $ \conn -> do
           exec conn "CREATE TABLE renderer_enum (id INT)"
@@ -64,11 +101,25 @@ typeCases :: [(ColumnType, Text)]
 typeCases =
   [ (SqlStdType (AST.DataTypeTimeStamp (Just 3) True), "timestamp(3) with time zone"),
     (SqlStdType (AST.DataTypeTime (Just 0) False), "time(0) without time zone"),
+    (SqlStdType (AST.DataTypeTime (Just 6) False), "time(6) without time zone"),
+    (SqlStdType (AST.DataTypeTimeStamp (Just 0) False), "timestamp(0) without time zone"),
+    (SqlStdType (AST.DataTypeTimeStamp (Just 6) True), "timestamp(6) with time zone"),
+    (SqlStdType (AST.DataTypeTime (Just 3) True), "time(3) with time zone"),
     (SqlArrayType (SqlStdType AST.DataTypeInteger) 2, "integer[]"),
+    (SqlArrayType (SqlStdType (AST.DataTypeNumeric (Just (8, Just 2)))) 2, "numeric(8,2)[]"),
+    (SqlArrayType (SqlStdType (AST.DataTypeChar True (Just 4) Nothing)) 1, "character varying(4)[]"),
     (SqlStdType (AST.DataTypeNumeric (Just (10, Just 2))), "numeric(10,2)"),
+    (SqlStdType (AST.DataTypeNumeric (Just (6, Just 0))), "numeric(6,0)"),
+    (SqlStdType (AST.DataTypeDecimal (Just (8, Just 3))), "numeric(8,3)"),
+    (SqlStdType (AST.DataTypeFloat (Just 24)), "real"),
+    (SqlStdType (AST.DataTypeFloat (Just 25)), "double precision"),
+    (SqlStdType (AST.DataTypeFloat Nothing), "double precision"),
+    (SqlStdType (AST.DataTypeNationalChar False (Just 4)), "character(4)"),
+    (SqlStdType (AST.DataTypeNationalChar True (Just 4)), "character varying(4)"),
     (SqlStdType (AST.DataTypeChar True Nothing Nothing), "character varying"),
     (SqlStdType (AST.DataTypeChar False Nothing Nothing), "character(1)"),
     (SqlStdType (AST.DataTypeBit True (Just 5)), "bit varying(5)"),
+    (SqlStdType (AST.DataTypeBit False Nothing), "bit(1)"),
     (SqlStdType AST.DataTypeBoolean, "boolean")
   ]
 

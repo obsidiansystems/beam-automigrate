@@ -110,6 +110,7 @@ test-suite beam-automigrate-tests
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.ForeignKeys
                       Test.Database.Beam.AutoMigrate.Identifiers
+                      Test.Database.Beam.AutoMigrate.PhysicalTypes
                       Test.Database.Beam.AutoMigrate.Renderer
                       Test.Database.Beam.AutoMigrate.Derivation
                       Test.Database.Beam.AutoMigrate.Composite

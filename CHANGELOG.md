@@ -39,6 +39,10 @@
   Existing constraint names can change. Review migration plans before execution.
 * **Breaking API change:** `fromAnnotatedDbSettings` now returns `Either [ValidationFailed] Schema`.
   Handle errors for duplicate tables, columns, sequences, constraints, and invalid foreign keys before using the schema.
+* Normalize equivalent PostgreSQL column types before planning and rendering.
+  This covers default CHAR/BIT widths, NATIONAL CHAR/VARCHAR, DECIMAL/FLOAT aliases, numeric scale zero, and text-backed enums.
+* **Breaking behavior change:** Reject invalid type widths, precisions, array ranks, and vector dimensions with contextual errors.
+  Review type declarations and migration plans before execution.
 
 ## 0.1.6.0
 
