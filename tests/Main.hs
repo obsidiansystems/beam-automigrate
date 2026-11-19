@@ -8,6 +8,8 @@ import Database.Beam.AutoMigrate.Validity
 import Test.Database.Beam.AutoMigrate.Arbitrary hiding ((===))
 import Test.Database.Beam.AutoMigrate.Identifiers (identifierTests)
 import Test.Database.Beam.AutoMigrate.Renderer (rendererTests)
+import qualified Test.Database.Beam.AutoMigrate.Derivation as Derivation
+import Test.Database.Beam.AutoMigrate.Composite (compositeTests)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck as QC
@@ -17,7 +19,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Tests" [identifierTests, rendererTests, properties]
+tests = testGroup "Tests" [identifierTests, rendererTests, Derivation.tests, compositeTests, properties]
 
 properties :: TestTree
 properties =

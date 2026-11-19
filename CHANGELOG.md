@@ -19,6 +19,8 @@
   Replace direct imports from `Types` with imports from `Database.Beam.AutoMigrate` or `Database.Beam.AutoMigrate.Util`.
 * Require GHC 9.10 or newer. Test with GHC 9.10.3 and remove the GHC 8.x build configurations.
 * Use the maintained Haskell setup action and a current Nixpkgs pin for development and CI.
+* `UserDefinedFk` suppresses outgoing inference only on the annotated table types, preserving unrelated and incoming foreign keys.
+* Composite foreign keys preserve structural column correspondence, including nullable references to keys containing embedded keys.
 
 ## 0.1.6.0
 
