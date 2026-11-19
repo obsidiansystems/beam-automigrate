@@ -38,9 +38,6 @@ class HasColumnType ty where
   -- | Provide a 'ColumnType' for the given type
   defaultColumnType :: Proxy ty -> ColumnType
 
-  defaultTypeCast :: Proxy ty -> Maybe Text
-  defaultTypeCast _ = Nothing
-
   -- | If @ty@ maps to a DB @ENUM@, use this method to specify which one.
   defaultEnums :: Proxy ty -> Enumerations
   defaultEnums _ = mempty
@@ -107,14 +104,14 @@ class HasCompanionSequence' (generatesSeq :: Bool) ty where
     Proxy ty ->
     TableName ->
     ColumnName ->
-    Maybe ((SequenceName, Sequence), ColumnConstraint)
+    Maybe ((SequenceName, Sequence), DefaultExpr)
 
 class HasCompanionSequence ty where
   hasCompanionSequence ::
     Proxy ty ->
     TableName ->
     ColumnName ->
-    Maybe ((SequenceName, Sequence), ColumnConstraint)
+    Maybe ((SequenceName, Sequence), DefaultExpr)
 
 instance
   ( GeneratesSqlSequence ty ~ genSeq,
@@ -133,87 +130,67 @@ instance HasCompanionSequence' 'False ty where
 
 instance HasColumnType ty => HasColumnType (Beam.TableField e ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
-  defaultTypeCast _ = defaultTypeCast (Proxy @ty)
 
 instance HasColumnType ty => HasColumnType (Maybe ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
-  defaultTypeCast _ = defaultTypeCast (Proxy @ty)
   defaultEnums _ = defaultEnums (Proxy @ty)
 
 instance HasColumnType Int where
   defaultColumnType _ = SqlStdType intType
-  defaultTypeCast _ = Just "integer"
 
 instance HasColumnType Int32 where
   defaultColumnType _ = SqlStdType intType
-  defaultTypeCast _ = Just "integer"
 
 instance HasColumnType Int16 where
   defaultColumnType _ = SqlStdType intType
-  defaultTypeCast _ = Just "integer"
 
 instance HasColumnType Int64 where
   defaultColumnType _ = SqlStdType bigIntType
-  defaultTypeCast _ = Just "bigint"
 
 instance HasColumnType Word where
   defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
-  defaultTypeCast _ = Just "numeric"
 
 instance HasColumnType Word16 where
   defaultColumnType _ = SqlStdType $ numericType (Just (5, Nothing))
-  defaultTypeCast _ = Just "numeric"
 
 instance HasColumnType Word32 where
   defaultColumnType _ = SqlStdType $ numericType (Just (10, Nothing))
-  defaultTypeCast _ = Just "numeric"
 
 instance HasColumnType Word64 where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Nothing))
-  defaultTypeCast _ = Just "numeric"
 
 instance HasColumnType Text where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
-  defaultTypeCast _ = Just "character varying"
 
 instance HasColumnType SqlBitString where
   defaultColumnType _ = SqlStdType $ varBitType Nothing
-  defaultTypeCast _ = Just "bit"
 
 instance HasColumnType ByteString where
   defaultColumnType _ = SqlStdType AST.DataTypeBinaryLargeObject
 
 instance HasColumnType Double where
   defaultColumnType _ = SqlStdType doubleType
-  defaultTypeCast _ = Just "double precision"
 
 instance HasColumnType Scientific where
   defaultColumnType _ = SqlStdType $ numericType (Just (20, Just 10))
-  defaultTypeCast _ = Just "numeric"
 
 instance HasColumnType Day where
   defaultColumnType _ = SqlStdType dateType
-  defaultTypeCast _ = Just "date"
 
 instance HasColumnType TimeOfDay where
   defaultColumnType _ = SqlStdType $ timeType Nothing False
-  defaultTypeCast _ = Just "time without time zone"
 
 instance HasColumnType Bool where
   defaultColumnType _ = SqlStdType booleanType
-  defaultTypeCast _ = Just "boolean"
 
 instance HasColumnType LocalTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing False
-  defaultTypeCast _ = Just "timestamp without time zone"
 
 instance HasColumnType UTCTime where
   defaultColumnType _ = SqlStdType $ timestampType Nothing True
-  defaultTypeCast _ = Just "timestamp with time zone"
 
 instance HasColumnType UUID where
   defaultColumnType _ = PgSpecificType PgUuid
-  defaultTypeCast _ = Just "uuid"
 
 --
 -- support for json types
@@ -277,11 +254,29 @@ instance (Integral ty, HasColumnType ty) => HasColumnType (SqlSerial ty) where
 
 instance HasCompanionSequence' 'True (SqlSerial a) where
   hasCompanionSequence' Proxy Proxy tName cname =
-    let s@(SequenceName sname) = mkSeqName
-     in Just ((s, Sequence tName cname), Default ("nextval('" <> Util.sqlEscaped sname <> "'::regclass)"))
+    let s@(SequenceName sname) = Util.mkSequenceName tName cname
+        nextvalExpr = "nextval(" <> regclassLiteral sname <> "::regclass)"
+     in Just ((s, Sequence tName cname), DefaultExpr nextvalExpr (S.singleton s) S.empty)
     where
-      mkSeqName :: SequenceName
-      mkSeqName = SequenceName (tableName tName <> "___" <> columnName cname <> "___seq")
+      -- Serialize the *generated* regclass literal in PostgreSQL's canonical
+      -- spelling: a plain lower-ascii identifier stays bare, anything else is
+      -- double-quoted and apostrophes/backslashes are escaped by the literal
+      -- encoder. The leading E is dropped only when the generated value has no
+      -- backslash, matching pg_get_expr's standard-string spelling.
+      regclassLiteral :: Text -> Text
+      regclassLiteral name =
+        let value = if isPlainIdentifier name then name else Util.sqlEscaped name
+            encoded = Util.sqlSingleQuoted value
+         in if T.any (== '\\') value then encoded else T.drop 1 encoded
+
+      isPlainIdentifier t = case T.uncons t of
+        Nothing -> False
+        Just (c, cs) ->
+          (isAsciiLower c || c == '_')
+            && T.all (\x -> isAsciiLower x || isDigit x || x == '_') cs
+        where
+          isAsciiLower x = x >= 'a' && x <= 'z'
+          isDigit x = x >= '0' && x <= '9'
 
 --
 -- support for enum types
@@ -301,7 +296,6 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
 -- side to reconstruct the enumerated values.
 instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (DbEnum a) where
   defaultColumnType _ = SqlStdType $ varCharType Nothing Nothing
-  defaultTypeCast _ = Just "character varying"
 
 --
 -- support for oid

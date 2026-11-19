@@ -43,6 +43,11 @@
   This covers default CHAR/BIT widths, NATIONAL CHAR/VARCHAR, DECIMAL/FLOAT aliases, numeric scale zero, and text-backed enums.
 * **Breaking behavior change:** Reject invalid type widths, precisions, array ranks, and vector dimensions with contextual errors.
   Review type declarations and migration plans before execution.
+* **Breaking API change:** Store each column default in one slot as a complete SQL expression with sequence and enum dependencies.
+  Update callers to use the new default representation and `ColumnDefaultChanged` edit.
+  `defaultsTo` replaces the existing default. A default-only change produces one edit.
+  Serial defaults use bounded sequence names and PostgreSQL-compatible escaping.
+  Read default dependencies from `pg_depend` instead of parsing expression text.
 
 ## 0.1.6.0
 

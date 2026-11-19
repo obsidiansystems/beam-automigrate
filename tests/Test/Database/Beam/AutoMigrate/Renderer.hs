@@ -98,13 +98,22 @@ rendererTests =
                     S.empty
                     ( M.singleton
                         "id"
-                        (Column (SqlStdType AST.DataTypeInteger) (S.singleton NotNull))
+                        (Column (SqlStdType AST.DataTypeInteger) (S.singleton NotNull) Nothing)
                     )
             sql <- renderEdit (defMkEdit (TableAdded "t" tbl))
             assertEqual "table SQL" "CREATE TABLE \"t\" (\"id\" INT NOT NULL);\n" sql,
-          testCase "defaults are passed through as trusted SQL" $ do
-            sql <- renderEdit (defMkEdit (ColumnConstraintAdded "t" "c" (Default "nextval('s'::regclass)")))
-            assertBool "default is not quoted or cast" ("DEFAULT nextval('s'::regclass)" `T.isInfixOf` sql),
+          testCase "column defaults are inline, trusted SQL" $ do
+            let de = DefaultExpr "nextval('s'::regclass)" S.empty S.empty
+                col = Column (SqlStdType AST.DataTypeInteger) S.empty (Just de)
+                tbl = Table S.empty (M.singleton "c" col)
+            sql <- renderEdit (defMkEdit (TableAdded "t" tbl))
+            assertBool "default is inline, unquoted and cast-free" ("\"c\" INT DEFAULT nextval('s'::regclass)" `T.isInfixOf` sql),
+          testCase "default-only change renders one SET or DROP" $ do
+            let new = DefaultExpr "2" S.empty S.empty
+            setSql <- renderEdit (defMkEdit (ColumnDefaultChanged "t" "c" Nothing (Just new)))
+            assertEqual "single set default" "ALTER TABLE \"t\" ALTER COLUMN \"c\" SET DEFAULT 2;\n" setSql
+            dropSql <- renderEdit (defMkEdit (ColumnDefaultChanged "t" "c" (Just new) Nothing))
+            assertEqual "single drop default" "ALTER TABLE \"t\" ALTER COLUMN \"c\" DROP DEFAULT;\n" dropSql,
           testCase "quoted identifiers round-trip through the renderer" $ do
             sql <- renderEdit (defMkEdit (TableRemoved "select"))
             assertEqual "reserved word is quoted" "DROP TABLE \"select\";\n" sql

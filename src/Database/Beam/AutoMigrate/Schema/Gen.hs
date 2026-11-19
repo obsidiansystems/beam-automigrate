@@ -30,7 +30,7 @@ import qualified Data.Text as T
 import Data.Time (Day, LocalTime, TimeOfDay)
 import Data.Word
 import Database.Beam.AutoMigrate (HasColumnType, defaultColumnType, sqlSingleQuoted)
-import Database.Beam.AutoMigrate.Annotated (pgDefaultConstraint)
+import Database.Beam.AutoMigrate.Annotated (pgDefaultExpression)
 import Database.Beam.AutoMigrate.Types
 import Database.Beam.Backend.SQL (HasSqlValueSyntax, timestampType)
 import qualified Database.Beam.Backend.SQL.AST as AST
@@ -118,7 +118,7 @@ genTableConstraints _allOtherTables ourColums =
     ]
 
 -- Generate a 'ColumnType' alongside a possible default value.
-genColumnType :: Gen (ColumnType, ColumnConstraint)
+genColumnType :: Gen (ColumnType, Maybe DefaultExpr)
 genColumnType =
   oneof
     [ genSqlStdType,
@@ -129,7 +129,7 @@ genColumnType =
 -- | Rather than trying to generate __all__ the possible values, we restrict ourselves to only the types
 -- we can conjure via the 'defaultColumnType' combinator at 'Database.Beam.AutoMigrate.Compat', and we piggyback
 -- on 'beam-core' machinery in order to generate the default values.
-genSqlStdType :: Gen (ColumnType, ColumnConstraint)
+genSqlStdType :: Gen (ColumnType, Maybe DefaultExpr)
 genSqlStdType =
   oneof
     [ genType arbitrary (Proxy @Int32),
@@ -152,7 +152,7 @@ genSqlStdType =
       -- Unfortunately subject to rounding errors if a truly arbitrary type is used.
       genType (pure (read "1864-05-10 13:50:45.919197" :: LocalTime)) (Proxy @LocalTime),
       -- Explicitly test for the 'CURRENT_TIMESTAMP' case.
-      pure (SqlStdType $ timestampType Nothing False, pgDefaultConstraint @LocalTime currentTimestamp_),
+      pure (SqlStdType $ timestampType Nothing False, Just (pgDefaultExpression @LocalTime currentTimestamp_)),
       genType (fmap SqlSerial arbitrary) (Proxy @(SqlSerial Int64))
     ]
 
@@ -163,10 +163,10 @@ genType ::
   ) =>
   Gen a ->
   Proxy a ->
-  Gen (ColumnType, ColumnConstraint)
+  Gen (ColumnType, Maybe DefaultExpr)
 genType gen Proxy =
   (,) <$> pure (defaultColumnType (Proxy @a))
-    <*> (gen <&> (\(x :: a) -> pgDefaultConstraint $ val_ x))
+    <*> (gen <&> (\(x :: a) -> Just (pgDefaultExpression $ val_ x)))
 
 -- | From postgres' documentation:
 -- \"Bit strings are strings of 1's and 0's. They can be used to store or visualize bit masks. There are
@@ -178,25 +178,18 @@ genType gen Proxy =
 -- /NOTE(and)/: This was not generated using the 'defaultsTo_' combinator, because it's unclear how
 -- \"Beam\" allows the construction and handling of a 'SqlBitString', considering that it's treated
 -- internally as an integer.
-genBitStringType :: Gen (ColumnType, ColumnConstraint)
+genBitStringType :: Gen (ColumnType, Maybe DefaultExpr)
 genBitStringType = do
   varying <- arbitrary
   charPrec <- elements [1 :: Word, 2, 4, 6, 8, 16, 32, 64]
   string <- vectorOf (fromIntegral charPrec) (elements ['0', '1'])
   let txt = sqlSingleQuoted (T.pack string) <> "::bit(" <> (T.pack . show $ charPrec) <> ")"
+      def = Just (DefaultExpr txt mempty mempty)
   case varying of
-    False ->
-      pure
-        ( SqlStdType $ AST.DataTypeBit False (Just charPrec),
-          Default txt
-        )
-    True ->
-      pure
-        ( SqlStdType $ AST.DataTypeBit True (Just 1),
-          Default txt
-        )
+    False -> pure (SqlStdType $ AST.DataTypeBit False (Just charPrec), def)
+    True -> pure (SqlStdType $ AST.DataTypeBit True (Just 1), def)
 
-genPgSpecificType :: Gen (ColumnType, ColumnConstraint)
+genPgSpecificType :: Gen (ColumnType, Maybe DefaultExpr)
 genPgSpecificType =
   oneof
     [ genType (fmap Pg.PgJSON (arbitrary @Int)) (Proxy @(Pg.PgJSON Int)),
@@ -222,7 +215,7 @@ _genRangeType ::
   ) =>
   Proxy n ->
   Proxy a ->
-  Gen (ColumnType, ColumnConstraint)
+  Gen (ColumnType, Maybe DefaultExpr)
 _genRangeType Proxy Proxy = do
   let colType = defaultColumnType (Proxy @(Pg.PgRange n a))
   lowerBoundRange <- elements [Pg.Inclusive, Pg.Exclusive]
@@ -233,9 +226,9 @@ _genRangeType Proxy Proxy = do
       Nothing -> u
       Just (ub, lb) -> Just $ Positive $ (getPositive ub) + lb + 1
   let dVal =
-        pgDefaultConstraint $
+        pgDefaultExpression $
           Pg.range_ @n @a lowerBoundRange upperBoundRange (val_ mbLower) (val_ (fmap getPositive mbUpper))
-  pure $ (colType, dVal)
+  pure $ (colType, Just dVal)
 
 --
 --
@@ -358,9 +351,10 @@ _genCharType f = do
 genColumn :: Columns -> Gen Column
 genColumn _allColums = do
   constNum <- choose (0, 2)
-  (cType, dVal) <- genColumnType
-  constrs <- vectorOf constNum (elements [NotNull, dVal])
-  pure $ Column cType (S.fromList constrs)
+  (cType, mbDefault) <- genColumnType
+  withDefault <- arbitrary
+  constrs <- vectorOf constNum (pure NotNull)
+  pure $ Column cType (S.fromList constrs) (if withDefault then mbDefault else Nothing)
 
 genColumns :: Gen Columns
 genColumns = do
@@ -487,15 +481,8 @@ similarColumn col = do
   case editAction' of
     ChangeType -> do
       (newType, newDef) <- genColumnType
-      let oldConstraints = S.filter (\c -> case c of Default _ -> False; _ -> True) (columnConstraints col)
-      pure $
-        col
-          { columnType = newType,
-            columnConstraints = S.insert newDef oldConstraints
-          }
+      pure $ col {columnType = newType, columnDefault = newDef}
     ChangeConstraints -> do
-      -- At the moment we cannot add a new default value as we don't have a meanigful way of
-      -- generating it.
       let oldConstraints = columnConstraints col
       let newConstraints = case S.toList oldConstraints of
             [] -> S.singleton NotNull

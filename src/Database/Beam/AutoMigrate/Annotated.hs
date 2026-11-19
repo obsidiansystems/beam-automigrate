@@ -62,12 +62,13 @@ module Database.Beam.AutoMigrate.Annotated
     GZipDatabase(..),
 
     -- * Internals
-    pgDefaultConstraint,
+    pgDefaultExpression,
   )
 where
 
 import Data.Kind
 import Data.List.NonEmpty (NonEmpty, toList)
+import qualified Data.Map.Strict as M
 import Data.Monoid (Endo (..))
 import Data.Proxy
 import Data.Set (Set)
@@ -289,6 +290,7 @@ data FieldSchema ty where
   FieldSchema ::
     ColumnType ->
     Set ColumnConstraint ->
+    Maybe DefaultExpr ->
     FieldSchema ty
 
 deriving instance Show (FieldSchema ty)
@@ -332,6 +334,7 @@ instance
         FieldSchema
           (defaultColumnType (Proxy @ty))
           (schemaConstraints (Proxy @(Beam.TableField tbl ty)))
+          Nothing
 
 -- | Instance where /g/ is things like a 'PrimaryKey' or a /mixin/.
 instance
@@ -443,28 +446,29 @@ defaultsTo ::
   FieldModification (TableFieldSchema tbl) ty
 defaultsTo tyVal = FieldModification $ \old ->
   case tableFieldSchema old of
-    FieldSchema ty c ->
+    FieldSchema ty c _ ->
       old
         { tableFieldSchema =
-            FieldSchema ty $ S.singleton (pgDefaultConstraint tyVal) <> c
+            FieldSchema ty c (Just (pgDefaultExpression tyVal))
         }
 
--- | Postgres-specific function to convert any 'QGenExpr' into a meaningful 'PgExpressionSyntax', so
--- that it can be rendered inside a 'Default' column constraint.
-pgDefaultConstraint ::
+-- | Postgres-specific function to convert any 'QGenExpr' into a meaningful
+-- 'DefaultExpr', preserving the complete rendered expression. The expression is
+-- never quoted as a string literal and no type cast is appended: PostgreSQL
+-- coerces it to the declared column type itself. Enum dependencies come from
+-- the expression's recursive column type; sequence dependencies start empty and
+-- are discovered by server normalization.
+pgDefaultExpression ::
   forall ty.
   (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty) =>
   (forall ctx s. Beam.QGenExpr ctx Postgres s ty) ->
-  ColumnConstraint
-pgDefaultConstraint tyVal =
-  let syntaxFragment = T.pack . displaySyntax . Pg.fromPgExpression $ defaultTo_ tyVal
-      dVal = case defaultTypeCast (Proxy @ty) of
-        Nothing -> syntaxFragment
-        Just tc | T.head syntaxFragment == '\'' -> syntaxFragment <> "::" <> tc
-        -- NOTE(and) Special-case handling for CURRENT_TIMESTAMP. See issue #31.
-        Just tc | syntaxFragment == "CURRENT_TIMESTAMP" -> "(" <> syntaxFragment <> ")::" <> tc
-        Just tc -> "'" <> syntaxFragment <> "'::" <> tc
-   in Default dVal
+  DefaultExpr
+pgDefaultExpression tyVal =
+  DefaultExpr
+    { defaultExpression = T.pack . displaySyntax . Pg.fromPgExpression $ defaultTo_ tyVal,
+      defaultSequenceDependencies = S.empty,
+      defaultEnumDependencies = S.fromList (M.keys (defaultEnums (Proxy @ty)))
+    }
   where
     -- NOTE(adn) We are unfortunately once again forced to copy and paste some code from beam-migrate.
     -- In particular, `beam-migrate` wraps the returning 'QExpr' into a 'DefaultValue' newtype wrapper,

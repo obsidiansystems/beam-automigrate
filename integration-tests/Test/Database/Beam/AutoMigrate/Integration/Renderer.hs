@@ -49,20 +49,20 @@ rendererLiveTests dsn =
                         ( Table
                             Set.empty
                             ( M.fromList
-                                [ ("id", Column (SqlStdType AST.DataTypeInteger) (Set.singleton NotNull)),
-                                  ("varchar_unbounded", Column (SqlStdType (AST.DataTypeChar True Nothing Nothing)) Set.empty),
-                                  ("char_implied", Column (SqlStdType (AST.DataTypeChar False Nothing Nothing)) Set.empty),
-                                  ("national_char", Column (SqlStdType (AST.DataTypeNationalChar False (Just 4))) Set.empty),
-                                  ("national_varchar", Column (SqlStdType (AST.DataTypeNationalChar True (Just 4))) Set.empty),
-                                  ("decimal_typed", Column (SqlStdType (AST.DataTypeDecimal (Just (8, Just 3)))) Set.empty),
-                                  ("numeric_zero_scale", Column (SqlStdType (AST.DataTypeNumeric (Just (6, Just 0)))) Set.empty),
-                                  ("real_alias", Column (SqlStdType (AST.DataTypeFloat (Just 24))) Set.empty),
-                                  ("double_alias", Column (SqlStdType (AST.DataTypeFloat (Just 25))) Set.empty),
-                                  ("double_unqualified", Column (SqlStdType (AST.DataTypeFloat Nothing)) Set.empty),
-                                  ("bit_implied", Column (SqlStdType (AST.DataTypeBit False Nothing)) Set.empty),
-                                  ("varbit", Column (SqlStdType (AST.DataTypeBit True (Just 5))) Set.empty),
-                                  ("numeric_array", Column (SqlArrayType (SqlStdType (AST.DataTypeNumeric (Just (8, Just 2)))) 2) Set.empty),
-                                  ("text_enum", Column (DbEnumeration (EnumerationName "unused") (Enumeration ["a", "b"])) Set.empty)
+                                [ ("id", Column (SqlStdType AST.DataTypeInteger) (Set.singleton NotNull) Nothing),
+                                  ("varchar_unbounded", Column (SqlStdType (AST.DataTypeChar True Nothing Nothing)) Set.empty Nothing),
+                                  ("char_implied", Column (SqlStdType (AST.DataTypeChar False Nothing Nothing)) Set.empty Nothing),
+                                  ("national_char", Column (SqlStdType (AST.DataTypeNationalChar False (Just 4))) Set.empty Nothing),
+                                  ("national_varchar", Column (SqlStdType (AST.DataTypeNationalChar True (Just 4))) Set.empty Nothing),
+                                  ("decimal_typed", Column (SqlStdType (AST.DataTypeDecimal (Just (8, Just 3)))) Set.empty Nothing),
+                                  ("numeric_zero_scale", Column (SqlStdType (AST.DataTypeNumeric (Just (6, Just 0)))) Set.empty Nothing),
+                                  ("real_alias", Column (SqlStdType (AST.DataTypeFloat (Just 24))) Set.empty Nothing),
+                                  ("double_alias", Column (SqlStdType (AST.DataTypeFloat (Just 25))) Set.empty Nothing),
+                                  ("double_unqualified", Column (SqlStdType (AST.DataTypeFloat Nothing)) Set.empty Nothing),
+                                  ("bit_implied", Column (SqlStdType (AST.DataTypeBit False Nothing)) Set.empty Nothing),
+                                  ("varbit", Column (SqlStdType (AST.DataTypeBit True (Just 5))) Set.empty Nothing),
+                                  ("numeric_array", Column (SqlArrayType (SqlStdType (AST.DataTypeNumeric (Just (8, Just 2)))) 2) Set.empty Nothing),
+                                  ("text_enum", Column (DbEnumeration (EnumerationName "unused") (Enumeration ["a", "b"])) Set.empty Nothing)
                                 ]
                             )
                         )
@@ -80,7 +80,7 @@ rendererLiveTests dsn =
           let eName = EnumerationName "my enum"
           sql <-
             renderOrFail
-              (defMkEdit (ColumnAdded "renderer_enum" "e" (Column (PgSpecificType (PgEnumeration eName)) Set.empty)))
+              (defMkEdit (ColumnAdded "renderer_enum" "e" (Column (PgSpecificType (PgEnumeration eName)) Set.empty Nothing)))
           assertBool "enum is quoted" ("\"my enum\"" `T.isInfixOf` sql)
           exec conn sql
           [Pg.Only actual] <-
@@ -126,7 +126,7 @@ typeCases =
 renderCase :: Pg.Connection -> (Int, (ColumnType, Text)) -> IO ()
 renderCase conn (i, (ty, expected)) = do
   let col = ColumnName ("c" <> T.pack (show i))
-  sql <- renderOrFail (defMkEdit (ColumnAdded "renderer_types" col (Column ty Set.empty)))
+  sql <- renderOrFail (defMkEdit (ColumnAdded "renderer_types" col (Column ty Set.empty Nothing)))
   exec conn sql
   [Pg.Only actual] <-
     Pg.query

@@ -377,6 +377,7 @@ data TableFieldSchema (tbl :: (* -> *) -> *) ty where
 data FieldSchema ty where
   FieldSchema :: ColumnType
               -> Set ColumnConstraint
+              -> Maybe DefaultExpr
               -> FieldSchema ty
 ```
 

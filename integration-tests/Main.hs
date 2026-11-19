@@ -13,6 +13,7 @@ import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
 import Test.Database.Beam.AutoMigrate.Integration.Harness (harnessTests)
 import Test.Database.Beam.AutoMigrate.Integration.Renderer (rendererLiveTests)
 import Test.Database.Beam.AutoMigrate.Integration.Composite (compositeLiveTests)
+import Test.Database.Beam.AutoMigrate.Integration.Defaults (defaultsLiveTests)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck as QC
@@ -21,7 +22,6 @@ import Data.Generics.Aliases (mkT)
 import Data.Generics.Schemes (everywhere)
 import Data.Int
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import PostgresqlSyntax.Ast
@@ -38,6 +38,7 @@ tests dsn =
     [ harnessTests dsn,
       rendererLiveTests dsn,
       compositeLiveTests dsn,
+      defaultsLiveTests dsn,
       properties dsn
     ]
 
@@ -78,12 +79,10 @@ instance NormalizeDefaultExprs Table where
   normalizeDefaultExprs t = t { tableColumns = Map.map normalizeDefaultExprs (tableColumns t)}
 
 instance NormalizeDefaultExprs Column where
-  normalizeDefaultExprs c = c { columnConstraints = Set.map normalizeDefaultExprs (columnConstraints c) }
+  normalizeDefaultExprs c = c { columnDefault = fmap normalizeDefaultExprs (columnDefault c) }
 
-instance NormalizeDefaultExprs ColumnConstraint where
-  normalizeDefaultExprs = \case
-    NotNull -> NotNull
-    Default t -> Default (normalizeDefaultExpr t)
+instance NormalizeDefaultExprs DefaultExpr where
+  normalizeDefaultExprs de = de { defaultExpression = normalizeDefaultExpr (defaultExpression de) }
 
 normalizeDefaultExpr :: Text -> Text
 normalizeDefaultExpr t = case PgParsing.run PgParsing.aExpr t of

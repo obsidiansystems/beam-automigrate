@@ -406,6 +406,16 @@ prettyEditActionDescription = T.unwords . \case
         "\nto:",
         pshow' newColumnType
       ]
+    ColumnDefaultChanged tblName colName oldDefault newDefault ->
+      [ "change default of column:",
+        qc colName,
+        "in table:",
+        qt tblName,
+        "\nfrom:",
+        pshow' oldDefault,
+        "\nto:",
+        pshow' newDefault
+      ]
     ColumnConstraintAdded tblName colName columnConstraint ->
       [ "add column constraint to:",
         qc colName,
