@@ -4,6 +4,8 @@
 
 * Run database tests in separate temporary databases to protect unrelated databases.
 * Limit sequence management to the search path, as for tables.
+* SQL rendering now returns typed `RenderError` refusals instead of partial-function errors, and every edit is pre-rendered before any DDL executes.
+* Rendered enum and extension type names are quoted, temporal precision is emitted before `WITH/WITHOUT TIME ZONE`, and executable SQL no longer contains `<UNSAFE>` markers.
 * Identifiers are always double-quoted and string literals are emitted as escaped E-strings.
 * **Breaking change:** Generated identifiers longer than 63 UTF-8 bytes now use a deterministic FNV-1a suffix within PostgreSQL's 63-byte limit.
   This includes companion sequence names. The new names can differ from names that PostgreSQL previously truncated.
