@@ -12,6 +12,7 @@ import qualified Database.PostgreSQL.Simple as Pg
 import qualified Test.Database.Beam.AutoMigrate.Arbitrary as Pretty
 import Test.Database.Beam.AutoMigrate.Integration.Harness (harnessTests)
 import Test.Database.Beam.AutoMigrate.Integration.Renderer (rendererLiveTests)
+import Test.Database.Beam.AutoMigrate.Integration.Composite (compositeLiveTests)
 import Test.QuickCheck
 import Test.Tasty
 import Test.Tasty.QuickCheck as QC
@@ -36,6 +37,7 @@ tests dsn =
     "Tests"
     [ harnessTests dsn,
       rendererLiveTests dsn,
+      compositeLiveTests dsn,
       properties dsn
     ]
 
