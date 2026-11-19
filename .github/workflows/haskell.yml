@@ -54,3 +54,46 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
     - name: Run tests
       run: cabal test all
+
+  postgres-contracts:
+    strategy:
+      matrix:
+        postgres:
+          - { version: '14', image: 'pgvector/pgvector:0.8.7-pg14-bookworm', port: '55432' }
+          - { version: '16', image: 'pgvector/pgvector:0.8.7-pg16-bookworm', port: '55433' }
+    runs-on: ubuntu-latest
+    name: PostgreSQL ${{ matrix.postgres.version }} contracts
+    services:
+      postgres:
+        image: ${{ matrix.postgres.image }}
+        env:
+          POSTGRES_PASSWORD: beamtest
+        ports:
+          - 127.0.0.1:${{ matrix.postgres.port }}:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+    - uses: actions/checkout@v3
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.10.3'
+    - name: Cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cabal
+        key: ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-contracts-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-contracts-
+    - name: Install libpq
+      run: sudo apt-get update && sudo apt-get install -y libpq-dev
+    - name: Install dependencies
+      run: |
+        cabal update
+        cabal build --only-dependencies --enable-tests
+    - name: Build
+      run: cabal build --enable-tests all
+    - name: Database harness contracts
+      run: cabal run exe:beam-automigrate-integration-tests -- -p /Harness/ --num-threads=2 +RTS -N2 -RTS
