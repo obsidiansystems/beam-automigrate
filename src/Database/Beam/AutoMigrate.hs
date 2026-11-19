@@ -24,6 +24,7 @@ module Database.Beam.AutoMigrate
 
     -- * Generating and running migrations
     Migration,
+    MigrationError (..),
     migrate,
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
@@ -191,8 +192,11 @@ fromAnnotatedDbSettings ::
   ) =>
   AnnotatedDatabaseSettings be db ->
   Proxy (anns :: [Annotation]) ->
-  Schema
-fromAnnotatedDbSettings db p = gSchema db p (from db)
+  Either [ValidationFailed] Schema
+fromAnnotatedDbSettings db p = do
+  derived <- gSchema db p (from db)
+  validateSchema derived
+  pure derived
 
 -- | Render all edits before executing DDL to detect rendering errors before any database changes.
 renderEditCommands :: [WithPriority Edit] -> Either RenderError [Pg.PgCommandSyntax]
@@ -474,7 +478,8 @@ tryRunMigrationsWithEditUpdate
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    expectedHaskellSchema <-
+      either (throwIO . HaskellSchemaValidationFailed) pure (fromAnnotatedDbSettings annotatedDb (Proxy @'[]))
     actualDatabaseSchema <- getSchema conn
     case diff expectedHaskellSchema actualDatabaseSchema of
       Left err -> do
@@ -512,6 +517,7 @@ calcMigrationSteps
   -> Pg.Connection
   -> IO Diff
 calcMigrationSteps annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    expectedHaskellSchema <-
+      either (throwIO . HaskellSchemaValidationFailed) pure (fromAnnotatedDbSettings annotatedDb (Proxy @'[]))
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema

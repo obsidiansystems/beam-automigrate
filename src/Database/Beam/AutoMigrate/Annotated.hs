@@ -22,6 +22,7 @@ module Database.Beam.AutoMigrate.Annotated
     FieldSchema (..),
     dbAnnotatedSchema,
     dbAnnotatedConstraints,
+    dbAnnotatedForeignKeys,
     annotatedDescriptor,
     defaultTableSchema,
     GDefaultTableSchema(..),
@@ -47,7 +48,9 @@ module Database.Beam.AutoMigrate.Annotated
 
     -- ** Foreign key constraint
     ForeignKeyConstraint (..),
+    PendingForeignKey (..),
     foreignKeyOnPk,
+    foreignKeyOnNullablePk,
     foreignKeyOn,
 
     -- * Other types and functions
@@ -64,6 +67,7 @@ module Database.Beam.AutoMigrate.Annotated
 where
 
 import Data.Kind
+import Data.List.NonEmpty (NonEmpty, toList)
 import Data.Monoid (Endo (..))
 import Data.Proxy
 import Data.Set (Set)
@@ -78,7 +82,8 @@ import Database.Beam.Postgres (Postgres)
 import qualified Database.Beam.Postgres.Syntax as Pg
 import Database.Beam.Query (QExpr)
 import Database.Beam.Schema.Tables
-  ( DatabaseEntity,
+  ( Columnar' (..),
+    DatabaseEntity,
     DatabaseEntityDefaultRequirements,
     DatabaseEntityDescriptor,
     DatabaseEntityRegularRequirements,
@@ -87,9 +92,12 @@ import Database.Beam.Schema.Tables
     IsDatabaseEntity,
     PrimaryKey,
     TableEntity,
+    TableField,
+    allBeamValues,
     dbEntityDescriptor,
     dbEntityName,
     dbTableSettings,
+    fieldName,
   )
 import GHC.Generics as Generic
 import Lens.Micro (SimpleGetter, (^.))
@@ -238,7 +246,8 @@ instance
     AnnotatedDatabaseTable ::
       Beam.Table tbl =>
       { dbAnnotatedSchema :: TableSchema tbl,
-        dbAnnotatedConstraints :: Set TableConstraint
+        dbAnnotatedConstraints :: Set TableConstraint,
+        dbAnnotatedForeignKeys :: [PendingForeignKey]
       } ->
       AnnotatedDatabaseEntityDescriptor be (TableEntity tbl)
   type
@@ -252,7 +261,7 @@ instance
         Generic (Beam.TableSettings tbl)
       )
 
-  dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) mempty
+  dbAnnotatedEntityAuto edesc = AnnotatedDatabaseTable (defaultTableSchema . dbTableSettings $ edesc) mempty mempty
 
 -- | A 'SimpleGetter' to get a plain 'DatabaseEntityDescriptor' from an 'AnnotatedDatabaseEntity'.
 lowerEntityDescriptor :: SimpleGetter (AnnotatedDatabaseEntity be db entityType) (DatabaseEntityDescriptor be entityType)
@@ -512,12 +521,33 @@ uniqueConstraintOn us =
 -- Specifying FK constrainst
 --
 
-data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) where
+-- | Strip 'Maybe' from a field type so nullable and non-nullable selectors both
+-- expose their scalar type for compatibility checking.
+type family UnMaybe a where
+  UnMaybe (Maybe a) = a
+  UnMaybe a = a
+
+-- | One manually declared FK column pair. Each 'References' contributes exactly
+-- one (local, remote) pair; scalar type mismatches fail compilation through
+-- 'UnMaybe'.
+data ForeignKeyConstraint local remote where
   References ::
-    Beam.Beamable (PrimaryKey tbl') =>
-    (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.TableField tbl)) ->
-    (tbl' (Beam.TableField tbl') -> Beam.Columnar Beam.Identity (Beam.TableField tbl' ty)) ->
-    ForeignKeyConstraint tbl tbl'
+    (UnMaybe a ~ UnMaybe b) =>
+    (local (Beam.TableField local) -> TableField local a) ->
+    (remote (Beam.TableField remote) -> TableField remote b) ->
+    ForeignKeyConstraint local remote
+
+-- | A not-yet-validated manual FK declaration. Arity and column-name checks are
+-- deferred until the whole database has been derived, so they are reported as
+-- structured validation failures instead of compile-time truncation.
+data PendingForeignKey = PendingForeignKey
+  { pfkTargetTable :: TableName,
+    pfkLocalColumns :: [ColumnName],
+    pfkRemoteColumns :: [ColumnName],
+    pfkOnDelete :: ReferenceAction,
+    pfkOnUpdate :: ReferenceAction
+  }
+  deriving (Show, Eq)
 
 -- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
 -- target table.
@@ -528,8 +558,7 @@ data ForeignKeyConstraint (tbl :: ((* -> *) -> *)) (tbl' :: ((* -> *) -> *)) whe
 foreignKeyOnPk ::
   ( Beam.Beamable (PrimaryKey tbl'),
     Beam.Beamable tbl',
-    Beam.Table tbl',
-    PrimaryKey tbl' f ~ PrimaryKey tbl' g
+    Beam.Table tbl'
   ) =>
   -- | The 'DatabaseEntity' of the /referenced/ table.
   DatabaseEntity be db (TableEntity tbl') ->
@@ -548,34 +577,71 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
             AnnotatedDatabaseEntity
               ( tbl
-                  { dbAnnotatedConstraints =
-                      let colPairs =
-                            zipWith
-                              (,)
+                  { dbAnnotatedForeignKeys =
+                      dbAnnotatedForeignKeys tbl
+                        <> [ PendingForeignKey
+                              (TableName (externalEntity ^. dbEntityDescriptor . dbEntityName))
                               (fieldAsColumnNames (ourColumn (tableSettings e)))
                               (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
-                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          srcName = e ^. dbEntityDescriptor . dbEntityName
-                          localCols = map (columnName . fst) colPairs
-                          remoteCols = map (columnName . snd) colPairs
-                          candidate = case localCols of
-                            [] -> srcName <> "_fkey"
-                            cn : _ -> srcName <> "_" <> cn <> "_fkey"
-                          conname =
-                            generatedIdentifier candidate (["foreign-key", srcName, tName] <> localCols <> remoteCols)
-                       in S.insert
-                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                            (dbAnnotatedConstraints tbl)
+                              onDelete
+                              onUpdate
+                           ]
                   }
               )
               e
         )
     )
 
+-- | Like 'foreignKeyOnPk', but for a /nullable/ whole-key reference.
+foreignKeyOnNullablePk ::
+  ( Beam.Beamable (PrimaryKey tbl'),
+    Beam.Beamable tbl',
+    Beam.Table tbl'
+  ) =>
+  DatabaseEntity be db (TableEntity tbl') ->
+  (tbl (Beam.TableField tbl) -> PrimaryKey tbl' (Beam.Nullable (Beam.TableField tbl))) ->
+  ReferenceAction ->
+  ReferenceAction ->
+  EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
+foreignKeyOnNullablePk externalEntity ourColumn onDelete onUpdate =
+  EntityModification
+    ( Endo
+        ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
+            AnnotatedDatabaseEntity
+              ( tbl
+                  { dbAnnotatedForeignKeys =
+                      dbAnnotatedForeignKeys tbl
+                        <> [ PendingForeignKey
+                              (TableName (externalEntity ^. dbEntityDescriptor . dbEntityName))
+                              (pkSelectorColumnNames (ourColumn (tableSettings e)))
+                              (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
+                              onDelete
+                              onUpdate
+                           ]
+                  }
+              )
+              e
+        )
+    )
+  where
+    -- @Columnar (Nullable f) x = f (Maybe x)@, so the fields are still real
+    -- 'TableField's and their names can be projected directly.
+    pkSelectorColumnNames ::
+      forall tbl' table.
+      Beam.Beamable (PrimaryKey tbl') =>
+      PrimaryKey tbl' (Beam.Nullable (Beam.TableField table)) ->
+      [ColumnName]
+    pkSelectorColumnNames k =
+      map ColumnName
+        ( allBeamValues
+            (\(Columnar' f) -> f ^. fieldName)
+            (k :: PrimaryKey tbl' (Beam.Nullable (Beam.TableField table)))
+        )
+
 foreignKeyOn ::
   Beam.Beamable tbl' =>
   DatabaseEntity be db (TableEntity tbl') ->
-  [ForeignKeyConstraint tbl tbl'] ->
+  NonEmpty (ForeignKeyConstraint tbl tbl') ->
   -- | On Delete
   ReferenceAction ->
   -- | On Update
@@ -585,29 +651,23 @@ foreignKeyOn externalEntity us onDelete onUpdate =
   EntityModification
     ( Endo
         ( \(AnnotatedDatabaseEntity tbl@(AnnotatedDatabaseTable {}) e) ->
-            AnnotatedDatabaseEntity
-              ( tbl
-                  { dbAnnotatedConstraints =
-                      let colPairs =
-                            concatMap
-                              ( \case
-                                  (References ours theirs) ->
-                                    zipWith
-                                      (,)
-                                      (fieldAsColumnNames (ours (tableSettings e)))
-                                      [ColumnName (theirs (tableSettings externalEntity) ^. Beam.fieldName)]
-                              )
-                              us
-                          tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname =
-                            generatedIdentifier
-                              (T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey")
-                              (["foreign-key", tName] <> map (columnName . snd) colPairs)
-                       in S.insert
-                            (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
-                            (dbAnnotatedConstraints tbl)
-                  }
-              )
-              e
+            let localCols (References ours _) =
+                  [ColumnName ((ours (tableSettings e)) ^. fieldName)]
+                remoteCols (References _ theirs) =
+                  [ColumnName ((theirs (tableSettings externalEntity)) ^. fieldName)]
+             in AnnotatedDatabaseEntity
+                  ( tbl
+                      { dbAnnotatedForeignKeys =
+                          dbAnnotatedForeignKeys tbl
+                            <> [ PendingForeignKey
+                                  (TableName (externalEntity ^. dbEntityDescriptor . dbEntityName))
+                                  (concatMap localCols (toList us))
+                                  (concatMap remoteCols (toList us))
+                                  onDelete
+                                  onUpdate
+                               ]
+                      }
+                  )
+                  e
         )
     )

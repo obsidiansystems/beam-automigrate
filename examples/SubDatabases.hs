@@ -12,6 +12,8 @@ import Data.Typeable
 import Database.Beam.AutoMigrate
   ( Diff,
     Migration,
+    MigrationError (..),
+    ValidationFailed,
     Schema,
     defaultAnnotatedDbSettings,
     diff,
@@ -280,7 +282,7 @@ annotatedDB =
             }
       }
 
-hsSchema :: Schema
+hsSchema :: Either [ValidationFailed] Schema
 hsSchema = fromAnnotatedDbSettings annotatedDB manualFks
   where
     -- Uncomment this if you want to check what happens if you introduce a 'user2' table.
@@ -299,18 +301,21 @@ getFlowerDbSchema :: IO Schema
 getFlowerDbSchema = getDbSchema "beam-test-subdb"
 
 getSchemaDiff :: IO Diff
-getSchemaDiff = diff hsSchema <$> getFlowerDbSchema
+getSchemaDiff = do
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
+  diff desired <$> getFlowerDbSchema
 
 exampleShowMigration :: IO ()
 exampleShowMigration = withBeamTestDb printMigration
 
 withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
 withBeamTestDb action = do
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
   let connInfo = "host=localhost port=5432 dbname=beam-test-subdb"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
     Pg.withTransaction conn $
       runBeamPostgresDebug putStrLn conn $ do
-        let mig = migrate conn hsSchema
+        let mig = migrate conn desired
         action mig
 
 exampleAutoMigration :: IO ()

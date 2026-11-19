@@ -23,6 +23,8 @@ import Database.Beam.AutoMigrate
     Diff,
     HasColumnType,
     Migration,
+    MigrationError (..),
+    ValidationFailed,
     PgEnum,
     ReferenceAction (..),
     Schema,
@@ -201,7 +203,12 @@ annotatedDB =
             <> uniqueConstraintOn [U (addressPostalCode . addressRegion . flowerAddress)],
         dbLineItems =
           annotateTableFields tableModification {lineItemDiscount = defaultsTo (val_ $ Just False)}
-            <> uniqueConstraintOn [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity],
+            <> uniqueConstraintOn [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
+            -- 'UserDefinedFk LineItemT' suppresses automatic outgoing FK
+            -- discovery on this table, so every reference is declared here.
+            <> foreignKeyOnPk (dbOrders flowerDB) lineItemOrderID Cascade Restrict
+            <> foreignKeyOnPk (dbFlowers flowerDB) lineItemFlowerID Cascade Restrict
+            <> foreignKeyOnNullablePk (dbOrders flowerDB) lineItemNullableRef SetNull Restrict,
         dbOrders =
           annotateTableFields
             tableModification
@@ -215,9 +222,8 @@ annotatedDB =
             --                        ] Cascade Restrict
       }
 
-hsSchema :: Schema
-hsSchema =
-  fromAnnotatedDbSettings annotatedDB (Proxy @'[ 'UserDefinedFk LineItemT])
+hsSchema :: Either [ValidationFailed] Schema
+hsSchema = fromAnnotatedDbSettings annotatedDB (Proxy @'[ 'UserDefinedFk LineItemT])
 
 -- fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
@@ -229,7 +235,9 @@ getFlowerDbSchema :: IO Schema
 getFlowerDbSchema = getDbSchema "beam-test-db"
 
 getSchemaDiff :: IO Diff
-getSchemaDiff = diff hsSchema <$> getFlowerDbSchema
+getSchemaDiff = do
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
+  diff desired <$> getFlowerDbSchema
 
 getGroundhogSchema :: IO Schema
 getGroundhogSchema = getDbSchema "groundhog-test-db"
@@ -237,11 +245,12 @@ getGroundhogSchema = getDbSchema "groundhog-test-db"
 -- | Just a simple example demonstrating a possible workflow for a migration.
 example :: IO ()
 example = do
-  print hsSchema
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
+  print desired
   dbSchema <- getFlowerDbSchema
   print dbSchema
-  print $ dbSchema == hsSchema
-  let schemaDiff = diff hsSchema dbSchema
+  print $ dbSchema == desired
+  let schemaDiff = diff desired dbSchema
   print schemaDiff
   putStrLn "GROUNDHOG"
   getGroundhogSchema >>= print
@@ -251,11 +260,12 @@ exampleShowMigration = withBeamTestDb printMigration
 
 withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
 withBeamTestDb action = do
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
   let connInfo = "host=localhost port=5432 dbname=beam-test-db"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
     Pg.withTransaction conn $
       runBeamPostgresDebug putStrLn conn $ do
-        let mig = migrate conn hsSchema
+        let mig = migrate conn desired
         action mig
 
 exampleAutoMigration :: IO ()

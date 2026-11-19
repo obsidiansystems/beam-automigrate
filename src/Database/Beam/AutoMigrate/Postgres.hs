@@ -15,6 +15,7 @@ import Control.Monad.State
 import Data.Bits (shiftR, (.&.))
 import Data.ByteString (ByteString)
 import Data.Foldable (asum, foldlM)
+import qualified Data.List.NonEmpty as NE
 import Data.Map (Map)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
@@ -26,6 +27,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
 import Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Util (canonicalizeForeignKeyPairs)
 import Database.Beam.Backend.SQL hiding (tableName)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.PostgreSQL.Simple as Pg
@@ -494,14 +496,20 @@ getAllConstraints conn = do
       AllTableConstraints ->
       SqlForeignConstraint ->
       AllTableConstraints
-    addFkConstraint actions st SqlForeignConstraint {..} = flip execState st $ do
-      let currentTable = sqlFk_foreign_table
-      let columnSet = S.fromList $ zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)
-      let (onDelete, onUpdate) =
-            case M.lookup sqlFk_name (getActions actions) of
-              Nothing -> (NoAction, NoAction)
-              Just a -> (actionOnDelete a, actionOnUpdate a)
-      addTableConstraint currentTable (ForeignKey sqlFk_name sqlFk_primary_table columnSet onDelete onUpdate)
+    addFkConstraint actions st SqlForeignConstraint {..} =
+      case NE.nonEmpty (zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)) of
+        -- PostgreSQL never reports a foreign key without columns; an
+        -- incomplete row cannot become a meaningful constraint.
+        Nothing -> st
+        Just pairs -> flip execState st $ do
+          let currentTable = sqlFk_foreign_table
+          let (onDelete, onUpdate) =
+                case M.lookup sqlFk_name (getActions actions) of
+                  Nothing -> (NoAction, NoAction)
+                  Just a -> (actionOnDelete a, actionOnUpdate a)
+          addTableConstraint
+            currentTable
+            (ForeignKey sqlFk_name sqlFk_primary_table (canonicalizeForeignKeyPairs pairs) onDelete onUpdate)
 
     addOtherConstraint ::
       AllTableConstraints ->

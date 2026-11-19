@@ -9,6 +9,9 @@ import Control.Monad.Trans.Class (lift)
 import Data.Bits (xor)
 import qualified Data.ByteString as BS
 import Data.Functor.Constant
+import Data.List (sortOn)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -183,6 +186,36 @@ generatedIdentifier candidate components
               header = TE.encodeUtf8 (T.pack (show (BS.length bs)) <> ":")
            in BS.foldl' fnvByte (BS.foldl' fnvByte acc header) bs
         fnvByte h b = (h `xor` fromIntegral b) * fnvPrime
+
+-- | Order FK pairs by (local, remote) name. Pairing must happen before this
+-- sort; the two sides are never sorted independently.
+canonicalizeForeignKeyPairs :: NonEmpty (ColumnName, ColumnName) -> NonEmpty (ColumnName, ColumnName)
+canonicalizeForeignKeyPairs =
+  NE.fromList . sortOn (\(l, r) -> (columnName l, columnName r)) . NE.toList
+
+-- | The deterministic constraint name for a foreign key, derived from every
+-- semantic component: local table, all paired columns and the target table.
+foreignKeyName :: TableName -> NonEmpty (ColumnName, ColumnName) -> TableName -> Text
+foreignKeyName localTable pairs targetTable =
+  generatedIdentifier candidate components
+  where
+    pairList = NE.toList pairs
+    locals = map (unColumnName . fst) pairList
+    remotes = map (unColumnName . snd) pairList
+    candidate =
+      T.intercalate
+        "_"
+        ([unTableName localTable] <> locals <> [unTableName targetTable] <> remotes <> ["fkey"])
+    components =
+      [ "foreign-key",
+        unTableName localTable,
+        unTableName targetTable,
+        T.pack (show (length pairList))
+      ]
+        <> concatMap (\(l, r) -> [unColumnName l, unColumnName r]) pairList
+
+    unTableName (TableName t) = t
+    unColumnName (ColumnName c) = c
 
 -- | Name the companion sequence for a serial column.
 -- Keep @table___column___seq@ when it fits within 63 UTF-8 bytes to preserve existing sequence names.

@@ -61,6 +61,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > {-# LANGUAGE TypeFamilies #-}
 > import Prelude hiding ((.))
 > import Control.Category ((.))
+> import Control.Exception (throwIO)
 > import Data.Proxy (Proxy(..))
 > import Database.Beam.Postgres
 > import Database.Beam.Schema
@@ -155,7 +156,7 @@ Once we have an `AnnotatedDatabaseSettings`, the next step is to generate a `Sch
 simply by calling `fromAnnotatedDbSettings`, like so:
 
 ```
-> hsSchema :: BA.Schema
+> hsSchema :: Either [BA.ValidationFailed] BA.Schema
 > hsSchema = BA.fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 ```
@@ -263,8 +264,9 @@ something like this:
 
 >
 > exampleShowMigration :: Connection -> IO ()
-> exampleShowMigration conn = runBeamPostgres conn $
->   BA.printMigration $ BA.migrate conn hsSchema
+> exampleShowMigration conn = do
+>   desired <- either (throwIO . BA.HaskellSchemaValidationFailed) pure hsSchema
+>   runBeamPostgres conn $ BA.printMigration $ BA.migrate conn desired
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =

@@ -31,6 +31,12 @@
   Preserve this correspondence through embedded keys and nullable references.
   Migration plans can replace incorrectly paired constraints. Existing rows might violate the corrected constraints.
   Review the migration plan and affected rows before execution.
+* **Breaking API change:** `foreignKeyOn` now requires a non-empty list of scalar `References` pairs with compatible types.
+  Use `foreignKeyOnNullablePk` for nullable whole-key references.
+* Check manual declarations against the completed schema. Manual foreign keys replace inferred keys only for the same local columns.
+  Generate constraint names from both tables and every column pair.
+* **Breaking API change:** `fromAnnotatedDbSettings` now returns `Either [ValidationFailed] Schema`.
+  Handle errors for duplicate tables, columns, sequences, constraints, and invalid foreign keys before using the schema.
 
 ## 0.1.6.0
 
