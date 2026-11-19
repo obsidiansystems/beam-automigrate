@@ -426,11 +426,15 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
--- Preserve an explicit column default instead of generating a companion sequence.
+-- Reject competing explicit and generated defaults on the same column.
+-- Referencing keys keep explicit defaults without generating a companion sequence.
 instance HasCompanionSequence ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr mbDefault)))) =
     case (mbDefault, hasCompanionSequence (Proxy @ty) t name) of
-      (Just _, _) ->
+      (Just _, Just _) ->
+        let qualified = Qualified t name
+         in Left [InvalidColumn qualified (CompanionSequenceConflictsWithDefault qualified)]
+      (Just _, Nothing) ->
         Right (M.singleton name (Column ty constr mbDefault), mempty)
       (Nothing, Just (sq, companionDefault)) ->
         Right (M.singleton name (Column ty constr (Just companionDefault)), uncurry M.singleton sq)

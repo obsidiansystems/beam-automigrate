@@ -48,6 +48,12 @@
   `defaultsTo` replaces the existing default. A default-only change produces one edit.
   Serial defaults use bounded sequence names and PostgreSQL-compatible escaping.
   Read default dependencies from `pg_depend` instead of parsing expression text.
+* **Breaking behavior change:** Reject explicit defaults that conflict with a generated serial sequence.
+  Schema derivation returns `CompanionSequenceConflictsWithDefault` with the affected table and column.
+  Remove the explicit default to retain automatic sequence generation.
+  Referencing keys can keep explicit defaults without generating another sequence.
+* Preserve native enum definitions through table fields, nullable values, and vectors.
+  Schema derivation now includes the enum definitions required by nullable enum arrays.
 
 ## 0.1.6.0
 
