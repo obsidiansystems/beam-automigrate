@@ -101,13 +101,16 @@ test-suite beam-automigrate-tests
   hs-source-dirs:     tests
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
+                      Test.Database.Beam.AutoMigrate.Identifiers
   build-depends:
       base
     , beam-automigrate
+    , bytestring
     , containers
     , pretty-simple
     , QuickCheck
     , tasty
+    , tasty-hunit
     , tasty-quickcheck
     , text
 

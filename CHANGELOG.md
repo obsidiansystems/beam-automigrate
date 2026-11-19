@@ -2,8 +2,11 @@
 
 ## 0.2.0.0
 
+<<<<<<< HEAD
 * Run database tests in separate temporary databases to protect unrelated databases.
 * Limit sequence management to the search path, as for tables.
+* Identifiers are always double-quoted and string literals are emitted as escaped E-strings.
+* Overlong generated identifiers, including companion sequence names, use a deterministic FNV-1a suffix within PostgreSQL's 63-byte limit.
 * Require GHC 9.10 or newer. Test with GHC 9.10.3 and remove the GHC 8.x build configurations.
 * Use the maintained Haskell setup action and a current Nixpkgs pin for development and CI.
 

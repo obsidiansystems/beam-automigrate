@@ -497,7 +497,10 @@ uniqueConstraintOn us =
                   { dbAnnotatedConstraints =
                       let cols = concatMap (\case (U f) -> colNames (tableSettings e) f) us
                           tName = e ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
+                          conname =
+                            generatedIdentifier
+                              (T.intercalate "_" (tName : map columnName cols) <> "_ukey")
+                              (["unique", tName] <> map columnName cols)
                        in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
                   }
               )
@@ -548,7 +551,10 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
                               (fieldAsColumnNames (ourColumn (tableSettings e)))
                               (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          conname =
+                            generatedIdentifier
+                              (T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey")
+                              (["foreign-key", tName] <> map (columnName . snd) colPairs)
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)
@@ -585,7 +591,10 @@ foreignKeyOn externalEntity us onDelete onUpdate =
                               )
                               us
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          conname =
+                            generatedIdentifier
+                              (T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey")
+                              (["foreign-key", tName] <> map (columnName . snd) colPairs)
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)

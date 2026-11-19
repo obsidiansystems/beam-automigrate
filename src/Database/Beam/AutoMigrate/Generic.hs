@@ -21,7 +21,7 @@ import qualified Data.Set as S
 import Database.Beam.AutoMigrate.Annotated
 import Database.Beam.AutoMigrate.Compat
 import Database.Beam.AutoMigrate.Types
-import Database.Beam.AutoMigrate.Util (pkFieldNames)
+import Database.Beam.AutoMigrate.Util (generatedIdentifier, pkFieldNames)
 import Database.Beam.Schema (PrimaryKey, TableEntity)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables (Beamable (..), dbEntityDescriptor, dbEntityName)
@@ -160,8 +160,13 @@ mkTableEntryNoFkDiscovery ::
 mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
-      pkColSet = S.fromList $ pkFieldNames entity
-      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey (tName <> "_pkey") pkColSet)
+      pkCols = pkFieldNames entity
+      pkColSet = S.fromList pkCols
+      pkName =
+        generatedIdentifier
+          (tName <> "_pkey")
+          (["primary-key", tName] <> map columnName pkCols)
+      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey pkName pkColSet)
       (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
@@ -346,24 +351,30 @@ instance
   GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f)))
   where
   gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
-    case cnames of
+    case localCols of
       [] -> S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
       ColumnName cname : _ ->
         S.singleton
           ( ForeignKey
-              (tname <> "_" <> cname <> "_fkey")
+              ( generatedIdentifier
+                  (tname <> "_" <> cname <> "_fkey")
+                  (["foreign-key", tname, refName] <> map columnName localCols <> map columnName remoteCols)
+              )
               reftname
-              (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
+              (S.fromList (zip localCols remoteCols))
               NoAction -- TODO: what should the default be?
               NoAction -- TODO: what should the default be?
           )
     where
-      cnames :: [ColumnName]
-      cnames = M.keys $ fst (gColumns (Proxy @NoGenSequences) (TableName tname) (from e))
+      localCols :: [ColumnName]
+      localCols = L.sort $ M.keys $ fst (gColumns (Proxy @NoGenSequences) (TableName tname) (from e))
 
       reftname :: TableName
       refcnames :: [ColumnName]
-      (reftname, refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+      (reftname@(TableName refName), refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+
+      remoteCols :: [ColumnName]
+      remoteCols = L.sort refcnames
 
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!

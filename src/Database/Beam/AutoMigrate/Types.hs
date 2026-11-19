@@ -83,9 +83,6 @@ instance NFData SequenceName
 
 instance NFData Sequence
 
-mkSequenceName :: TableName -> ColumnName -> SequenceName
-mkSequenceName tname cname = SequenceName (tableName tname <> "___" <> columnName cname <> "___seq")
-
 parseSequenceName :: SequenceName -> Maybe (TableName, ColumnName)
 parseSequenceName (SequenceName sName) = case T.splitOn "___" sName of
   [tName, cName, "seq"] -> Just (TableName tName, ColumnName cName)

@@ -55,6 +55,7 @@ module Database.Beam.AutoMigrate
     ToAnnotated,
     sqlSingleQuoted,
     sqlEscaped,
+    mkSequenceName,
     editToSqlCommand,
   )
 where
