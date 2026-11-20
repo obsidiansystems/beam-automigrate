@@ -2,7 +2,6 @@
 
 ## 0.2.0.0
 
-<<<<<<< HEAD
 * Run database tests in separate temporary databases to protect unrelated databases.
 * Limit sequence management to the search path, as for tables.
 * Identifiers are always double-quoted and string literals are emitted as escaped E-strings.
