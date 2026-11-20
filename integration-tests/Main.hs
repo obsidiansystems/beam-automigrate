@@ -23,7 +23,6 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import PostgresqlSyntax.Ast
-import PostgresqlSyntax.Data.Orphans ()
 import qualified PostgresqlSyntax.Parsing as PgParsing
 import qualified PostgresqlSyntax.Rendering as PgRendering
 
