@@ -56,7 +56,7 @@ module Database.Beam.AutoMigrate.Annotated
 
     -- * Ports from Beam
     zipTables,
-    GZipDatabase,
+    GZipDatabase(..),
 
     -- * Internals
     pgDefaultConstraint,
