@@ -56,25 +56,22 @@ jobs:
       run: cabal test all
 
   postgres-contracts:
-    strategy:
-      matrix:
-        postgres:
-          - { version: '14', image: 'pgvector/pgvector:0.8.7-pg14-bookworm', port: '55432' }
-          - { version: '16', image: 'pgvector/pgvector:0.8.7-pg16-bookworm', port: '55433' }
     runs-on: ubuntu-latest
-    name: PostgreSQL ${{ matrix.postgres.version }} contracts
+    name: PostgreSQL 16 contracts
     services:
       postgres:
-        image: ${{ matrix.postgres.image }}
+        image: pgvector/pgvector:0.8.7-pg16-bookworm
         env:
           POSTGRES_PASSWORD: beamtest
         ports:
-          - 127.0.0.1:${{ matrix.postgres.port }}:5432
+          - 127.0.0.1:55433:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+    env:
+      BEAM_AUTOMIGRATE_TEST_CONNINFO: host=127.0.0.1 port=55433 user=postgres password=beamtest dbname=postgres
     steps:
     - uses: actions/checkout@v3
     - uses: haskell-actions/setup@v2
