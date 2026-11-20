@@ -6,14 +6,14 @@ jobs:
   build:
     strategy:
       matrix:
-        ghc: ['8.10.7']
+        ghc: ['9.10.3']
         os: ['ubuntu-latest', 'macos-latest']
     runs-on: ${{ matrix.os }}
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
-    - uses: haskell/actions/setup@v2
+    - uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc }}
     - name: Cache
@@ -22,15 +22,17 @@ jobs:
         cache-name: cache-cabal
       with:
         path: ~/.cabal
-        key: ${{ runner.os }}-${{ matrix.ghc }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.ghc }}-build-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
         restore-keys: |
-          ${{ runner.os }}-${{ matrix.ghc }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-${{ matrix.ghc }}-build-
-          ${{ runner.os }}-${{ matrix.ghc }}-
-          ${{ runner.os }}
+          ${{ runner.os }}-${{ runner.arch }}-${{ matrix.ghc }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-${{ runner.arch }}-${{ matrix.ghc }}-build-
+          ${{ runner.os }}-${{ runner.arch }}-${{ matrix.ghc }}-
+          ${{ runner.os }}-${{ runner.arch }}
     - name: install postgres (linux)
       run: |
         sudo apt-get update
+        sudo apt-get install -y postgresql-common
+        sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
         sudo apt-get install postgresql-16
         export PATH=$PATH:/usr/lib/postgresql/16/bin
         which pg_ctl
@@ -43,7 +45,7 @@ jobs:
         export PATH=$PATH:`brew --prefix`/bin
         which pg_ctl
         echo "$(brew --prefix)/bin" >> $GITHUB_PATH
-      if: matrix.os == 'macos-latest'
+      if: runner.os == 'macOS'
     - name: Install dependencies
       run: |
         cabal update

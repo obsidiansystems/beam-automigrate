@@ -1,8 +1,11 @@
 # Revision history for beam-automigrate
 
-## 0.1.7.0
+## 0.2.0.0
 
-* beam-automigrate will now only manage sequences within the search path, just as it only manages such tables.
+* Run database tests in separate temporary databases to protect unrelated databases.
+* Limit sequence management to the search path, as for tables.
+* Require GHC 9.10 or newer. Test with GHC 9.10.3 and remove the GHC 8.x build configurations.
+* Use the maintained Haskell setup action and a current Nixpkgs pin for development and CI.
 
 ## 0.1.6.0
 
