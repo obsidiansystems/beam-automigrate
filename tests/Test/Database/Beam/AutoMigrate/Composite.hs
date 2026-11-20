@@ -9,9 +9,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
--- | Pure, database-free checks for structurally paired inferred composite
--- foreign keys, including nested keys reached through a nullable whole-key
--- reference.
+-- | Check that inferred composite foreign keys preserve field correspondence.
+-- Include embedded keys inside nullable references. These tests require no database.
 module Test.Database.Beam.AutoMigrate.Composite (compositeTests, compositeSchema) where
 
 import qualified Data.Map.Strict as M
@@ -40,9 +39,8 @@ compositeTests =
           [ForeignKey name target pairs onDelete onUpdate] -> do
             name @?= "child_z_fkey"
             target @?= TableName "parent"
-            -- The local key is structurally (z, a) and the referenced key is
-            -- (a, z). Pairing happens before 'Set' canonicalises the pairs, so
-            -- the old independent sorts (a->a, z->z) must not reappear.
+            -- Preserve the correspondence between local (z, a) and referenced (a, z) fields.
+            -- Pair fields before storing the pairs in a set.
             pairs
               @?= S.fromList
                 [ (ColumnName "z", ColumnName "a"),
@@ -80,7 +78,7 @@ foreignKeyConstraints = filter isFk . S.toList . tableConstraints
     isFk _ = False
 
 --
--- Composite key with renamed, reversed lexical key components
+-- Check field pairing when column names have different sort orders.
 --
 
 data ParentT f = ParentRow
@@ -127,13 +125,12 @@ compositeDb =
       }
 
 --
--- Nested nullable keys
+-- Check field pairing through embedded keys and nullable references.
 --
 
--- | A key containing another key: @PrimaryKey NestedOuterT@ embeds
--- @PrimaryKey NestedBaseT@. The leaf references it through a nullable
--- whole-key field, so the ordered traversal must recurse through the nested
--- key inside the nullable wrapper.
+-- | Check that nullable references preserve every column of an embedded key.
+-- @PrimaryKey NestedOuterT@ contains @PrimaryKey NestedBaseT@.
+-- The leaf table references the outer key through a nullable field.
 data NestedBaseT f = NestedBaseRow
   { nestedBaseA :: Columnar f Int,
     nestedBaseZ :: Columnar f Int

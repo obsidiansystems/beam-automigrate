@@ -571,7 +571,8 @@ instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :
   gTableLookupTable _ sel tbl _ (k :*: ks) =
     gTableLookupTables sel tbl k ks
 
--- | Traverse annotated key fields structurally, before canonicalizing FK pairs.
+-- | Preserve field correspondence when pairing foreign key columns.
+-- Collect names in structural order before storing complete pairs in a set.
 class GOrderedColumnNames (x :: * -> *) where
   gOrderedColumnNames :: x p -> [T.Text]
 
