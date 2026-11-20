@@ -6,14 +6,16 @@ module Database.Beam.AutoMigrate.Util where
 import Control.Applicative.Lift
 import Control.Monad.Except
 import Control.Monad.Trans.Class (lift)
-import Data.Char
+import Data.Bits (xor)
+import qualified Data.ByteString as BS
 import Data.Functor.Constant
-import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.Beam.AutoMigrate.Types (ColumnName(..), TableName(..))
+import qualified Data.Text.Encoding as TE
+import Data.Word (Word64)
+import Database.Beam.AutoMigrate.Types (ColumnName (..), SequenceName (..), TableName (..))
+import Numeric (showHex)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables
 import Lens.Micro ((^.))
@@ -107,114 +109,91 @@ sqlOptCharSet :: Maybe Text -> Text
 sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
--- | Escape a sql identifier according to the rules defined in the postgres manual
+-- | Limit identifiers to the maximum byte length that PostgreSQL permits.
+maxIdentifierBytes :: Int
+maxIdentifierBytes = 63
+
+-- | Check that an identifier meets these requirements:
+--
+-- * The identifier is not empty.
+-- * The identifier contains no NUL characters.
+-- * The UTF-8 encoding contains at most 63 bytes.
+--
+-- SQL rendering uses double quotes, so reserved words and unusual characters are valid.
+isValidIdentifier :: Text -> Bool
+isValidIdentifier t =
+  not (T.null t)
+    && not (T.any (== '\NUL') t)
+    && BS.length (TE.encodeUtf8 t) <= maxIdentifierBytes
+
+-- | Quote an SQL identifier to preserve its name.
+-- Always use double quotes for reserved words, names that start with digits, and names with mixed case.
 sqlEscaped :: Text -> Text
-sqlEscaped t = if sqlValidUnescaped t
-  then t
-  else
-    -- Double-quotes inside identifier names must be escaped by with an additional double-quote
-    "\"" <> (T.intercalate "\"\"" $ T.splitOn "\"" t) <> "\""
+sqlEscaped t = "\"" <> T.replace "\"" "\"\"" t <> "\""
 
--- | Check whether an identifier is valid without escaping (True) or must be escaped (False)
--- according to the postgres <https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS manual>
-sqlValidUnescaped :: Text -> Bool
-sqlValidUnescaped t = case T.uncons t of
-  Nothing -> True
-  Just (c, rest) -> validUnescapedHead c && validUnescapedTail rest && not (sqlIsReservedKeyword t)
-  where
-    lowercase c = isAlpha c && isLower c
-    validUnescapedHead c = c `elem` ("1234567890_"::String) || lowercase c
-    validUnescapedTail = all
-      (\r -> lowercase r || r `elem` ("1234567890$_"::String)) . T.unpack
-
-sqlIsReservedKeyword :: Text -> Bool
-sqlIsReservedKeyword t = T.toCaseFold t `Set.member` postgresKeywordsReserved
-
--- | Reserved keywords according to
--- https://www.postgresql.org/docs/current/sql-keywords-appendix.html
-postgresKeywordsReserved :: Set Text
-postgresKeywordsReserved = Set.fromList $ map T.toCaseFold
-  [ "ALL"
-  , "ANALYSE"
-  , "ANALYZE"
-  , "AND"
-  , "ANY"
-  , "ARRAY"
-  , "AS"
-  , "ASC"
-  , "ASYMMETRIC"
-  , "BOTH"
-  , "CASE"
-  , "CAST"
-  , "CHECK"
-  , "COLLATE"
-  , "COLUMN"
-  , "CONSTRAINT"
-  , "CREATE"
-  , "CURRENT_CATALOG"
-  , "CURRENT_DATE"
-  , "CURRENT_ROLE"
-  , "CURRENT_TIME"
-  , "CURRENT_TIMESTAMP"
-  , "CURRENT_USER"
-  , "DEFAULT"
-  , "DEFERRABLE"
-  , "DESC"
-  , "DISTINCT"
-  , "DO"
-  , "ELSE"
-  , "END"
-  , "EXCEPT"
-  , "FALSE"
-  , "FETCH"
-  , "FOR"
-  , "FOREIGN"
-  , "FROM"
-  , "GRANT"
-  , "GROUP"
-  , "HAVING"
-  , "IN"
-  , "INITIALLY"
-  , "INTERSECT"
-  , "INTO"
-  , "LATERAL"
-  , "LEADING"
-  , "LIMIT"
-  , "LOCALTIME"
-  , "LOCALTIMESTAMP"
-  , "NOT"
-  , "NULL"
-  , "OFFSET"
-  , "ON"
-  , "ONLY"
-  , "OR"
-  , "ORDER"
-  , "PLACING"
-  , "PRIMARY"
-  , "REFERENCES"
-  , "RETURNING"
-  , "SELECT"
-  , "SESSION_USER"
-  , "SOME"
-  , "SYMMETRIC"
-  , "TABLE"
-  , "THEN"
-  , "TO"
-  , "TRAILING"
-  , "TRUE"
-  , "UNION"
-  , "UNIQUE"
-  , "USER"
-  , "USING"
-  , "VARIADIC"
-  , "WHEN"
-  , "WHERE"
-  , "WINDOW"
-  , "WITH"
-  ]
-
+-- | Escape a string literal independently of @standard_conforming_strings@.
+-- Use the @E'...'@ form to escape apostrophes and backslashes.
 sqlSingleQuoted :: Text -> Text
-sqlSingleQuoted t = "'" <> t <> "'"
+sqlSingleQuoted t = "E'" <> T.concatMap escapeChar t <> "'"
+  where
+    escapeChar c = case c of
+      '\'' -> "''"
+      '\\' -> "\\\\"
+      _ -> T.singleton c
+
+-- | Define the initial hash value and multiplier for FNV-1a-64.
+fnvOffsetBasis, fnvPrime :: Word64
+fnvOffsetBasis = 14695981039346656037
+fnvPrime = 1099511628211
+
+-- | Generate the same bounded identifier from the same inputs.
+--
+-- The first argument contains the complete readable name.
+-- The second argument lists the semantic components, including the resource kind, for the FNV-1a-64 hash.
+-- Keep names of at most 63 UTF-8 bytes unchanged.
+--
+-- For longer names, keep a complete UTF-8 prefix of at most 46 bytes.
+-- Append @_@ followed by the hash as 16 lowercase hexadecimal digits.
+-- The result contains at most 63 bytes.
+generatedIdentifier :: Text -> [Text] -> Text
+generatedIdentifier candidate components
+  | BS.length cBytes <= maxIdentifierBytes = candidate
+  | otherwise =
+      let digest = T.justifyRight 16 '0' (T.pack (showHex (hashComponents components) ""))
+       in utf8Prefix 46 cBytes <> "_" <> digest
+  where
+    cBytes = TE.encodeUtf8 candidate
+
+    -- Keep the longest complete UTF-8 prefix that fits within @n@ bytes.
+    utf8Prefix :: Int -> BS.ByteString -> Text
+    utf8Prefix n bs =
+      let start = BS.take n bs
+       in case TE.decodeUtf8' start of
+            Right t -> t
+            Left _ -> case BS.unsnoc start of
+              Nothing -> ""
+              Just (shorter, _) -> utf8Prefix (BS.length shorter) bs
+
+    -- Encode each component with its decimal UTF-8 byte length, a colon, and its bytes before hashing.
+    hashComponents :: [Text] -> Word64
+    hashComponents = foldl step fnvOffsetBasis
+      where
+        step acc comp =
+          let bs = TE.encodeUtf8 comp
+              header = TE.encodeUtf8 (T.pack (show (BS.length bs)) <> ":")
+           in BS.foldl' fnvByte (BS.foldl' fnvByte acc header) bs
+        fnvByte h b = (h `xor` fromIntegral b) * fnvPrime
+
+-- | Name the companion sequence for a serial column.
+-- Keep @table___column___seq@ when it fits within 63 UTF-8 bytes to preserve existing sequence names.
+-- Use 'generatedIdentifier' to shorten longer names.
+mkSequenceName :: TableName -> ColumnName -> SequenceName
+mkSequenceName tname cname =
+  let candidate = unTable tname <> "___" <> unCol cname <> "___seq"
+   in SequenceName (generatedIdentifier candidate ["sequence", unTable tname, unCol cname])
+  where
+    unTable (TableName t) = t
+    unCol (ColumnName c) = c
 
 sqlOptNumericPrec :: Maybe (Word, Maybe Word) -> Text
 sqlOptNumericPrec Nothing = mempty

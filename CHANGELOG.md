@@ -4,6 +4,12 @@
 
 * Run database tests in separate temporary databases to protect unrelated databases.
 * Limit sequence management to the search path, as for tables.
+* Identifiers are always double-quoted and string literals are emitted as escaped E-strings.
+* **Breaking change:** Generated identifiers longer than 63 UTF-8 bytes now use a deterministic FNV-1a suffix within PostgreSQL's 63-byte limit.
+  This includes companion sequence names. The new names can differ from names that PostgreSQL previously truncated.
+  Review migration plans for existing schemas before execution. Generated names within the byte limit remain unchanged.
+* **Breaking API change:** Move `mkSequenceName` from `Database.Beam.AutoMigrate.Types` to `Database.Beam.AutoMigrate.Util`.
+  Replace direct imports from `Types` with imports from `Database.Beam.AutoMigrate` or `Database.Beam.AutoMigrate.Util`.
 * Require GHC 9.10 or newer. Test with GHC 9.10.3 and remove the GHC 8.x build configurations.
 * Use the maintained Haskell setup action and a current Nixpkgs pin for development and CI.
 
