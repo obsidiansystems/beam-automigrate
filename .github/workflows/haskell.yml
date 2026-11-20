@@ -33,7 +33,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y postgresql-common
         sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-        sudo apt-get install postgresql-16
+        sudo apt-get install -y postgresql-16 libpq-dev libcurl4-openssl-dev
+        pkg-config --cflags --libs libpq
         export PATH=$PATH:/usr/lib/postgresql/16/bin
         which pg_ctl
         echo "/usr/lib/postgresql/16/bin" >> $GITHUB_PATH
@@ -54,3 +55,49 @@ jobs:
       run: cabal build --enable-tests --enable-benchmarks all
     - name: Run tests
       run: cabal test all
+
+  postgres-harness:
+    runs-on: ubuntu-latest
+    name: Database isolation and cleanup (PostgreSQL 16)
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg16-bookworm
+        env:
+          POSTGRES_PASSWORD: beamtest
+        ports:
+          - 127.0.0.1:55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BEAM_AUTOMIGRATE_TEST_CONNINFO: host=127.0.0.1 port=55433 user=postgres password=beamtest dbname=postgres
+    steps:
+    - uses: actions/checkout@v3
+    - uses: haskell-actions/setup@v2
+      with:
+        ghc-version: '9.10.3'
+    - name: Cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cabal
+        key: ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-
+    - name: Install PostgreSQL build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-common
+        sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+        sudo apt-get install -y postgresql-16 libpq-dev libcurl4-openssl-dev
+        pkg-config --cflags --libs libpq
+        echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+    - name: Install dependencies
+      run: |
+        cabal update
+        cabal build --only-dependencies --enable-tests
+    - name: Build
+      run: cabal build --enable-tests all
+    - name: Test database isolation and cleanup
+      run: cabal run exe:beam-automigrate-integration-tests -- -p /Harness/ --num-threads=2 +RTS -N2 -RTS
