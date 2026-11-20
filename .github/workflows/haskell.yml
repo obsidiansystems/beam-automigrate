@@ -84,8 +84,13 @@ jobs:
         key: ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
         restore-keys: |
           ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-
-    - name: Install libpq
-      run: sudo apt-get update && sudo apt-get install -y libpq-dev
+    - name: Install PostgreSQL build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-common
+        sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+        sudo apt-get install -y postgresql-16 libpq-dev
+        echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
     - name: Install dependencies
       run: |
         cabal update
