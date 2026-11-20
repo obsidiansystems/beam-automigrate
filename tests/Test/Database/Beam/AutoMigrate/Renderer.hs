@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Pure regression tests for total SQL rendering: typed refusals, quoted
--- identifiers, valid type precision, structural edit checks and marker-free
--- executable SQL.
+-- | Check that SQL rendering returns typed errors for invalid inputs.
+-- Check quoted identifiers, type precision, edit structures, and SQL without safety markers.
 module Test.Database.Beam.AutoMigrate.Renderer (rendererTests) where
 
 import qualified Data.Map.Strict as M

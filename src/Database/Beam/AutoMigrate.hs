@@ -194,8 +194,7 @@ fromAnnotatedDbSettings ::
   Schema
 fromAnnotatedDbSettings db p = gSchema db p (from db)
 
--- | Render every edit before any DDL executes, so a later malformed edit can
--- never leave a partially applied migration.
+-- | Render all edits before executing DDL to detect rendering errors before any database changes.
 renderEditCommands :: [WithPriority Edit] -> Either RenderError [Pg.PgCommandSyntax]
 renderEditCommands = traverse (editToSqlCommand . fst . unPriority)
 
@@ -281,8 +280,7 @@ runMigrationWithEditUpdate editUpdate conn hsSchema = do
   when (any (editSafetyIs Unsafe . fst . unPriority) newEdits) $
     throwIO $ UnsafeEditsDetected $ fmap (\(WithPriority (e, _)) -> _editAction e) newEdits
 
-  -- Render every command before executing any DDL: an invalid later edit must
-  -- fail without leaving a partially applied migration behind.
+  -- Render all commands first to detect rendering errors before executing any DDL.
   renderedEdits <- forM newEdits $ \(WithPriority (edit, _)) -> do
     command <- either throwIO pure (editToSqlCommand edit)
     pure (edit, command)

@@ -1,10 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | SQL rendering for managed DDL. Extracted from the 'Database.Beam.AutoMigrate'
--- facade so it can be validated independently. Every renderer is total: it
--- returns 'Left' for invalid names, unsupported types or structurally invalid
--- edits instead of calling partial functions. Arbitrary default-expression text
--- is trusted SQL and is PostgreSQL's job to validate.
+-- | Convert schema edits to executable PostgreSQL statements.
+-- Return 'Left' for invalid names, unsupported types, or invalid edit structures.
+-- Treat default expressions as trusted SQL. PostgreSQL checks these expressions.
 module Database.Beam.AutoMigrate.Sql
   ( renderDataType,
     editToSqlCommand,
@@ -28,20 +26,19 @@ checkIdent t
   | isValidIdentifier t = Right ()
   | otherwise = Left (InvalidSqlIdentifier t)
 
--- | Enum labels are identifiers too, except that the empty string is a valid
--- label.
+-- | Check enum labels against identifier limits, but permit an empty label.
 checkLabel :: Text -> Either RenderError ()
 checkLabel t
   | T.null t || isValidIdentifier t = Right ()
   | otherwise = Left (InvalidSqlIdentifier t)
 
--- | Render a column type. Invalid precision, width, array-rank and vector
--- dimensions are rejected; unsupported AST constructors never fall back to
--- text.
+-- | Render a column type or return a typed error.
+-- Reject invalid precision, width, array rank, and vector dimensions.
+-- Reject unsupported AST constructors instead of substituting a text type.
 renderDataType :: ColumnType -> Either RenderError Text
 renderDataType ty0 = case ty0 of
   SqlStdType stdType -> renderStdType stdType
-  -- Text-based enum types are stored as unbounded VARCHAR.
+  -- Store text-based enums as unbounded VARCHAR.
   DbEnumeration _ _ -> Right "VARCHAR"
   PgSpecificType pgType -> renderPgType pgType
   SqlArrayType inner dims
@@ -137,9 +134,9 @@ renderStdType dt = case dt of
 -- Edit rendering
 --
 
--- | Convert a single 'Edit' into PostgreSQL command syntax. The emitted SQL is
--- independent of safety: risk labels belong to human logging, never to
--- executable statements.
+-- | Convert one 'Edit' to PostgreSQL command syntax.
+-- Keep the SQL independent of the safety classification.
+-- Report risk labels in logs, not in executable statements.
 editToSqlCommand :: Edit -> Either RenderError Pg.PgCommandSyntax
 editToSqlCommand e = do
   sql <- renderEditAction (_editAction e)
@@ -150,8 +147,8 @@ renderEditAction action = case action of
   EditAction_Automatic ea -> case ea of
     TableAdded tblName tbl -> do
       checkIdent (tableName tblName)
-      -- Columns, nullability and defaults are emitted exactly once; table
-      -- constraints are separate actions.
+      -- Emit each column with its nullability and default once.
+      -- Use separate actions for table constraints.
       cols <- traverse renderDefinition (M.toList (tableColumns tbl))
       pure $ "CREATE TABLE " <> qual tblName <> " (" <> T.intercalate ", " cols <> ")"
     TableRemoved tblName -> do
@@ -242,7 +239,7 @@ renderEditAction action = case action of
         ty
           <> T.concat (map (" " <>) (map (renderColumnConstraint SetConstraint) (S.toList (columnConstraints col))))
 
-    -- Validate a constraint and return its name.
+    -- Check a constraint before returning its name.
     validateTableConstraint :: TableConstraint -> Either RenderError Text
     validateTableConstraint c = do
       let name = constraintName c
@@ -308,8 +305,7 @@ renderInsertionOrder :: InsertionOrder -> Text
 renderInsertionOrder Before = "BEFORE"
 renderInsertionOrder After = "AFTER"
 
--- Unfortunately PostgreSQL's syntax is different when setting or dropping
--- constraints, so the caller has to discriminate between the two events.
+-- Select the PostgreSQL syntax for setting or removing a constraint.
 data AlterTableAction = SetConstraint | DropConstraint
   deriving (Eq)
 
@@ -327,7 +323,6 @@ renderAction actionPrefix = \case
   SetNull -> " " <> actionPrefix <> " SET NULL"
   SetDefault -> " " <> actionPrefix <> " SET DEFAULT"
 
--- | Render one edit as executable SQL text. Risk labels live in
--- 'prettyEditActionDescription' for human logging; this is pure SQL.
+-- | Render one edit as executable SQL text without risk labels.
 prettyEditSQL :: Edit -> Either RenderError Text
 prettyEditSQL e = toS . Pg.pgRenderSyntaxScript . Pg.fromPgCommand <$> editToSqlCommand e
