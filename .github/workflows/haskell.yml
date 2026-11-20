@@ -55,9 +55,9 @@ jobs:
     - name: Run tests
       run: cabal test all
 
-  postgres-contracts:
+  postgres-harness:
     runs-on: ubuntu-latest
-    name: PostgreSQL 16 contracts
+    name: Database isolation and cleanup (PostgreSQL 16)
     services:
       postgres:
         image: pgvector/pgvector:0.8.7-pg16-bookworm
@@ -81,9 +81,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.cabal
-        key: ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-contracts-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/cabal.project') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-contracts-
+          ${{ runner.os }}-${{ runner.arch }}-9.10.3-pg-harness-
     - name: Install libpq
       run: sudo apt-get update && sudo apt-get install -y libpq-dev
     - name: Install dependencies
@@ -92,5 +92,5 @@ jobs:
         cabal build --only-dependencies --enable-tests
     - name: Build
       run: cabal build --enable-tests all
-    - name: Database harness contracts
+    - name: Test database isolation and cleanup
       run: cabal run exe:beam-automigrate-integration-tests -- -p /Harness/ --num-threads=2 +RTS -N2 -RTS
