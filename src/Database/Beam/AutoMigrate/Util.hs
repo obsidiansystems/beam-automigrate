@@ -109,27 +109,30 @@ sqlOptCharSet :: Maybe Text -> Text
 sqlOptCharSet Nothing = mempty
 sqlOptCharSet (Just cs) = " CHARACTER SET " <> cs
 
--- | PostgreSQL's hard limit on the length of an identifier, in bytes.
+-- | Limit identifiers to the maximum byte length that PostgreSQL permits.
 maxIdentifierBytes :: Int
 maxIdentifierBytes = 63
 
--- | Validate a PostgreSQL identifier: non-empty, no NUL bytes, at most
--- 63 UTF-8 bytes long. Reserved words and unusual characters are fine, because
--- we always double-quote identifiers when rendering SQL.
+-- | Check that an identifier meets these requirements:
+--
+-- * The identifier is not empty.
+-- * The identifier contains no NUL characters.
+-- * The UTF-8 encoding contains at most 63 bytes.
+--
+-- SQL rendering uses double quotes, so reserved words and unusual characters are valid.
 isValidIdentifier :: Text -> Bool
 isValidIdentifier t =
   not (T.null t)
     && not (T.any (== '\NUL') t)
     && BS.length (TE.encodeUtf8 t) <= maxIdentifierBytes
 
--- | Escape a sql identifier according to the rules defined in the postgres
--- manual. We always double-quote, so reserved words, digit-leading names and
--- mixed-case names are all handled uniformly.
+-- | Quote an SQL identifier to preserve its name.
+-- Always use double quotes for reserved words, names that start with digits, and names with mixed case.
 sqlEscaped :: Text -> Text
 sqlEscaped t = "\"" <> T.replace "\"" "\"\"" t <> "\""
 
--- | Emit an @E'...'@ string literal, escaping both apostrophes and backslashes,
--- independent of @standard_conforming_strings@.
+-- | Escape a string literal independently of @standard_conforming_strings@.
+-- Use the @E'...'@ form to escape apostrophes and backslashes.
 sqlSingleQuoted :: Text -> Text
 sqlSingleQuoted t = "E'" <> T.concatMap escapeChar t <> "'"
   where
@@ -138,20 +141,20 @@ sqlSingleQuoted t = "E'" <> T.concatMap escapeChar t <> "'"
       '\\' -> "\\\\"
       _ -> T.singleton c
 
--- | FNV-1a-64 parameters.
+-- | Define the initial hash value and multiplier for FNV-1a-64.
 fnvOffsetBasis, fnvPrime :: Word64
 fnvOffsetBasis = 14695981039346656037
 fnvPrime = 1099511628211
 
--- | Build a deterministic, collision-averse identifier.
+-- | Generate the same bounded identifier from the same inputs.
 --
--- The first argument is the /complete readable candidate/; the second is the
--- list of semantic components (including the resource kind) used to derive the
--- digest for overlong candidates. Candidates of at most 63 UTF-8 bytes are
--- preserved verbatim. Longer candidates get a @_@ plus a 16-digit lowercase
--- FNV-1a-64 digest of the components appended to a UTF-8-boundary-truncated
--- prefix of at most 46 bytes, so the result is always within the PostgreSQL
--- identifier limit.
+-- The first argument contains the complete readable name.
+-- The second argument lists the semantic components, including the resource kind, for the FNV-1a-64 hash.
+-- Keep names of at most 63 UTF-8 bytes unchanged.
+--
+-- For longer names, keep a complete UTF-8 prefix of at most 46 bytes.
+-- Append @_@ followed by the hash as 16 lowercase hexadecimal digits.
+-- The result contains at most 63 bytes.
 generatedIdentifier :: Text -> [Text] -> Text
 generatedIdentifier candidate components
   | BS.length cBytes <= maxIdentifierBytes = candidate
@@ -161,7 +164,7 @@ generatedIdentifier candidate components
   where
     cBytes = TE.encodeUtf8 candidate
 
-    -- Longest complete UTF-8 prefix of at most @n@ bytes.
+    -- Keep the longest complete UTF-8 prefix that fits within @n@ bytes.
     utf8Prefix :: Int -> BS.ByteString -> Text
     utf8Prefix n bs =
       let start = BS.take n bs
@@ -171,7 +174,7 @@ generatedIdentifier candidate components
               Nothing -> ""
               Just (shorter, _) -> utf8Prefix (BS.length shorter) bs
 
-    -- Hash components as decimal UTF-8 byte length, colon, then the bytes.
+    -- Encode each component with its decimal UTF-8 byte length, a colon, and its bytes before hashing.
     hashComponents :: [Text] -> Word64
     hashComponents = foldl step fnvOffsetBasis
       where
@@ -181,10 +184,9 @@ generatedIdentifier candidate components
            in BS.foldl' fnvByte (BS.foldl' fnvByte acc header) bs
         fnvByte h b = (h `xor` fromIntegral b) * fnvPrime
 
--- | The identifier used for the companion sequence of a serial column.
--- Valid-length candidates keep the historical @table___column___seq@ spelling,
--- so existing databases' sequences are not spuriously replaced; overlong
--- candidates fall back to 'generatedIdentifier'.
+-- | Name the companion sequence for a serial column.
+-- Keep @table___column___seq@ when it fits within 63 UTF-8 bytes to preserve existing sequence names.
+-- Use 'generatedIdentifier' to shorten longer names.
 mkSequenceName :: TableName -> ColumnName -> SequenceName
 mkSequenceName tname cname =
   let candidate = unTable tname <> "___" <> unCol cname <> "___seq"

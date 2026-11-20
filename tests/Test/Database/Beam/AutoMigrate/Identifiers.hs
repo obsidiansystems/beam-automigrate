@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Pure regression tests for identifier quoting, validation and deterministic
--- bounded name generation.
+-- | Check identifier quoting, validation, and deterministic name generation within the byte limit.
 module Test.Database.Beam.AutoMigrate.Identifiers (identifierTests) where
 
 import qualified Data.ByteString as BS
