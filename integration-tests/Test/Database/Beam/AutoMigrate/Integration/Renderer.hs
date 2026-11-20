@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Direct live checks for executable renderer output: quoted identifiers,
--- physical type precision/arrays and the absence of safety markers in SQL.
+-- | Execute rendered SQL against PostgreSQL.
+-- Check quoted identifiers, type precision, arrays, and SQL without safety markers.
 module Test.Database.Beam.AutoMigrate.Integration.Renderer (rendererLiveTests) where
 
 import Data.ByteString (ByteString)
