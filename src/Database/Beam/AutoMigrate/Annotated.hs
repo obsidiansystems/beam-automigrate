@@ -521,15 +521,14 @@ uniqueConstraintOn us =
 -- Specifying FK constrainst
 --
 
--- | Strip 'Maybe' from a field type so nullable and non-nullable selectors both
--- expose their scalar type for compatibility checking.
+-- | Compare scalar types independently of whether a field permits NULL.
+-- Remove 'Maybe' from nullable field types before checking compatibility.
 type family UnMaybe a where
   UnMaybe (Maybe a) = a
   UnMaybe a = a
 
--- | One manually declared FK column pair. Each 'References' contributes exactly
--- one (local, remote) pair; scalar type mismatches fail compilation through
--- 'UnMaybe'.
+-- | Reject manual foreign keys whose paired columns have incompatible scalar types.
+-- Each 'References' supplies one local column and one referenced column.
 data ForeignKeyConstraint local remote where
   References ::
     (UnMaybe a ~ UnMaybe b) =>
@@ -537,9 +536,8 @@ data ForeignKeyConstraint local remote where
     (remote (Beam.TableField remote) -> TableField remote b) ->
     ForeignKeyConstraint local remote
 
--- | A not-yet-validated manual FK declaration. Arity and column-name checks are
--- deferred until the whole database has been derived, so they are reported as
--- structured validation failures instead of compile-time truncation.
+-- | Preserve a manual foreign key declaration until the complete schema is available.
+-- Check column counts and names during schema derivation to return structured errors without discarding unmatched columns.
 data PendingForeignKey = PendingForeignKey
   { pfkTargetTable :: TableName,
     pfkLocalColumns :: [ColumnName],
@@ -592,7 +590,7 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
         )
     )
 
--- | Like 'foreignKeyOnPk', but for a /nullable/ whole-key reference.
+-- | Declare a foreign key whose reference to the complete primary key permits NULL.
 foreignKeyOnNullablePk ::
   ( Beam.Beamable (PrimaryKey tbl'),
     Beam.Beamable tbl',
@@ -624,8 +622,8 @@ foreignKeyOnNullablePk externalEntity ourColumn onDelete onUpdate =
         )
     )
   where
-    -- @Columnar (Nullable f) x = f (Maybe x)@, so the fields are still real
-    -- 'TableField's and their names can be projected directly.
+    -- Read column names through nullable key fields.
+    -- @Columnar (Nullable f) x = f (Maybe x)@ preserves the 'TableField' values.
     pkSelectorColumnNames ::
       forall tbl' table.
       Beam.Beamable (PrimaryKey tbl') =>

@@ -75,15 +75,14 @@ class GTableConstraintColumns be db x where
 -- Combining independent results
 --
 
--- | Combine two independent results, accumulating both failures.
+-- | Preserve errors from both independent results when combining them.
 bothEither :: Either [e] a -> Either [e] b -> Either [e] (a, b)
 bothEither (Left e1) (Left e2) = Left (e1 <> e2)
 bothEither (Left e1) _ = Left e1
 bothEither _ (Left e2) = Left e2
 bothEither (Right a) (Right b) = Right (a, b)
 
--- | Merge two table/sequence maps, rejecting shared names before a 'Map' union
--- can silently discard a definition.
+-- | Prevent duplicate table or sequence names from discarding definitions during a map merge.
 combineTables :: Tables -> Sequences -> Tables -> Sequences -> Either [ValidationFailed] (Tables, Sequences)
 combineTables tablesA seqsA tablesB seqsB =
   if null errs then Right (M.union tablesA tablesB, M.union seqsA seqsB) else Left errs
@@ -92,8 +91,7 @@ combineTables tablesA seqsA tablesB seqsB =
       [InvalidTableName tName (DuplicateTableName tName) | tName <- M.keys (M.intersection tablesA tablesB)]
         <> [InvalidSequence sName (DuplicateSequenceName sName) | sName <- M.keys (M.intersection seqsA seqsB)]
 
--- | Merge two table-entry lists, rejecting duplicates before 'M.fromList'
--- erases them.
+-- | Reject duplicate table entries before converting the entries to a map.
 combineEntries ::
   [(TableName, Table)] ->
   Sequences ->
@@ -115,7 +113,7 @@ combineEntries entriesA seqsA entriesB seqsB =
              length (filter (== sName) seqNames) > 1
            ]
 
--- | Merge two column/sequence maps, rejecting repeated columns and sequences.
+-- | Reject duplicate columns and sequences before merging their maps.
 combineColumns :: TableName -> (Columns, Sequences) -> (Columns, Sequences) -> Either [ValidationFailed] (Columns, Sequences)
 combineColumns tName (colsA, seqsA) (colsB, seqsB) =
   if null errs then Right (M.union colsA colsB, M.union seqsA seqsB) else Left errs
@@ -124,8 +122,7 @@ combineColumns tName (colsA, seqsA) (colsB, seqsB) =
       [InvalidColumn (Qualified tName cName) (DuplicateColumnName tName cName) | cName <- M.keys (M.intersection colsA colsB)]
         <> [InvalidSequence sName (DuplicateSequenceName sName) | sName <- M.keys (M.intersection seqsA seqsB)]
 
--- | Merge enumerations, accepting identical definitions of the same name and
--- reporting every conflicting pair.
+-- | Preserve identical enum definitions and report every conflicting pair with the same name.
 mergeEnumMaps :: Enumerations -> Enumerations -> Either [ValidationFailed] Enumerations
 mergeEnumMaps enumsA enumsB =
   if null errs then Right (M.union enumsA enumsB) else Left errs
@@ -280,8 +277,7 @@ mkTableEntryFkDiscovery db annEntity = do
         S.filter (\c -> not (isForeignKey c && foreignKeyLocalColumns c `S.member` explicitLocalSets)) inferred
   pure ((tName, table {tableConstraints = keptInferred <> tableConstraints table}), seqs)
 
--- | Resolve one manual declaration into an executable constraint, checking
--- arity and repeated columns before the pairs are stored.
+-- | Reject unequal column counts and repeated columns before pairing a manual foreign key.
 resolvePendingForeignKey :: TableName -> PendingForeignKey -> Either [ValidationFailed] TableConstraint
 resolvePendingForeignKey localTable pfk =
   let target = pfkTargetTable pfk

@@ -498,8 +498,7 @@ getAllConstraints conn = do
       AllTableConstraints
     addFkConstraint actions st SqlForeignConstraint {..} =
       case NE.nonEmpty (zip (V.toList sqlFk_fk_columns) (V.toList sqlFk_pk_columns)) of
-        -- PostgreSQL never reports a foreign key without columns; an
-        -- incomplete row cannot become a meaningful constraint.
+        -- Avoid constructing an incomplete foreign key when a catalog row contains no columns.
         Nothing -> st
         Just pairs -> flip execState st $ do
           let currentTable = sqlFk_foreign_table

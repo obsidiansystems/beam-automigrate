@@ -1,6 +1,5 @@
--- | Renamed composite and nullable whole-key references, installed through the
--- nullable whole-key manual helper, plus a nullable reference to a composite
--- key that itself contains another key (inferred FK discovery).
+-- | Check that renamed composite keys and nullable whole-key declarations compile.
+-- Include an inferred nullable reference to a composite key that contains another key.
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -33,8 +32,7 @@ data ChildT f = ChildRow
   }
   deriving (Generic, Beamable)
 
--- A key that itself contains another key, referenced through a nullable
--- whole-key field. This exercises the nested 'GOrderedColumnNames' dictionary.
+-- Check that inferred nullable references support embedded keys.
 data NestedBaseT f = NestedBaseRow
   { nbA :: Columnar f Int
   , nbZ :: Columnar f Int
@@ -86,8 +84,8 @@ instance Beam.Table NestedLeafT where
     deriving (Generic, Beamable)
   primaryKey = NestedLeafKey . nlId
 
--- The child's structural key order (z,a) deliberately differs from the
--- parent's (a,z); pairing is positional, not name-based.
+-- Preserve field correspondence despite different column-name orders.
+-- The child fields are (z,a), and the parent fields are (a,z).
 db :: DatabaseSettings Postgres DbT
 db =
   defaultDbSettings

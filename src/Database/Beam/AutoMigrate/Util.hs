@@ -187,14 +187,14 @@ generatedIdentifier candidate components
            in BS.foldl' fnvByte (BS.foldl' fnvByte acc header) bs
         fnvByte h b = (h `xor` fromIntegral b) * fnvPrime
 
--- | Order FK pairs by (local, remote) name. Pairing must happen before this
--- sort; the two sides are never sorted independently.
+-- | Give equivalent foreign keys the same pair order without changing column correspondence.
+-- Sort complete pairs by local and referenced names. Never sort the two sides independently.
 canonicalizeForeignKeyPairs :: NonEmpty (ColumnName, ColumnName) -> NonEmpty (ColumnName, ColumnName)
 canonicalizeForeignKeyPairs =
   NE.fromList . sortOn (\(l, r) -> (columnName l, columnName r)) . NE.toList
 
--- | The deterministic constraint name for a foreign key, derived from every
--- semantic component: local table, all paired columns and the target table.
+-- | Distinguish foreign keys by both tables and every column pair.
+-- Generate the constraint name from these components.
 foreignKeyName :: TableName -> NonEmpty (ColumnName, ColumnName) -> TableName -> Text
 foreignKeyName localTable pairs targetTable =
   generatedIdentifier candidate components

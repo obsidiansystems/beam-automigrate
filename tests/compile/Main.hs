@@ -1,8 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 
--- | Compiler fixture runner: @ghc -fno-code@ over typed-derivation pass/fail
--- fixtures. Invoked via @cabal exec -- runghc tests/compile/Main.hs@ from the
--- repository root; not a database-dependent Cabal test suite.
+-- | Check that valid FK declarations compile and incompatible declarations fail.
+-- Run @cabal exec -- runghc tests/compile/Main.hs@ from the repository root.
+-- These checks require no database.
 module Main (main) where
 
 import Control.Exception (SomeException, bracket, try)
@@ -13,8 +13,7 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Process (proc, readCreateProcessWithExitCode, readProcess)
 
--- | The explicit manifest. A missing file is a harness failure, never a
--- silently skipped check.
+-- | Require every listed fixture so missing files cannot silently reduce test coverage.
 passFixtures :: [FilePath]
 passFixtures =
   [ "ManualDisambiguation.hs",
@@ -80,8 +79,7 @@ checkFail failDir controlDir name = do
               )
           pure [failedAsExpected, controlResult]
 
--- | Compile one module without code generation into a freshly created,
--- bracket-cleaned output directory.
+-- | Check a fixture without generating code or reusing output from another compilation.
 ghcNoCode :: FilePath -> FilePath -> IO (ExitCode, String, String)
 ghcNoCode outDir path = do
   let args =
@@ -109,7 +107,7 @@ ghcNoCode outDir path = do
     Left e -> pure (ExitFailure 125, "", "could not run ghc: " <> show (e :: SomeException))
     Right r -> pure r
 
--- | A unique native temporary directory, removed even on async exceptions.
+-- | Remove temporary compiler output when the check ends, including after cancellation.
 withTempDir :: (FilePath -> IO a) -> IO a
 withTempDir action =
   bracket

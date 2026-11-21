@@ -204,8 +204,7 @@ annotatedDB =
         dbLineItems =
           annotateTableFields tableModification {lineItemDiscount = defaultsTo (val_ $ Just False)}
             <> uniqueConstraintOn [U lineItemFlowerID, U lineItemOrderID, U lineItemQuantity]
-            -- 'UserDefinedFk LineItemT' suppresses automatic outgoing FK
-            -- discovery on this table, so every reference is declared here.
+            -- Declare every outgoing reference because 'UserDefinedFk LineItemT' disables automatic inference for this table.
             <> foreignKeyOnPk (dbOrders flowerDB) lineItemOrderID Cascade Restrict
             <> foreignKeyOnPk (dbFlowers flowerDB) lineItemFlowerID Cascade Restrict
             <> foreignKeyOnNullablePk (dbOrders flowerDB) lineItemNullableRef SetNull Restrict,

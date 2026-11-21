@@ -1,6 +1,5 @@
--- | Two manual declarations on an explicitly annotated table: multiple scalar
--- column pairs through 'foreignKeyOn' and a whole-key reference through
--- 'foreignKeyOnPk'.
+-- | Check that explicit declarations select the intended table when multiple targets have the same type.
+-- Declare scalar pairs with 'foreignKeyOn' and a whole-key reference with 'foreignKeyOnPk'.
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}

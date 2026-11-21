@@ -1,5 +1,5 @@
--- | Control for ManualTypeMismatch: the only change is that the manual
--- selector now binds a compatible Int column instead of Text.
+-- | Check that compatible scalar types compile.
+-- Change only the selector from Text to Int relative to the failing fixture.
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}

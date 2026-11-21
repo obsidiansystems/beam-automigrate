@@ -196,7 +196,7 @@ data TableConstraint
     PrimaryKey ConstraintName (Set ColumnName)
   | -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
     -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
-    -- The list stores a (fk_column, pk_column) correspondence in canonical order.
+    -- Preserve each local-to-referenced column pair in canonical order.
     ForeignKey ConstraintName TableName (NonEmpty (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
   | Unique ConstraintName (Set ColumnName)
   deriving (Show, Eq, Ord, Generic)

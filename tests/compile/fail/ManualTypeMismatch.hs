@@ -1,5 +1,5 @@
--- | A manual 'References' pair whose scalar types are incompatible must not
--- compile. The control changes only that binding to a compatible Int column.
+-- | Check that a manual 'References' pair with incompatible scalar types fails compilation.
+-- The control changes only the selector to a compatible Int column.
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
