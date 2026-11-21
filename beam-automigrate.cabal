@@ -106,16 +106,19 @@ test-suite beam-automigrate-tests
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.Identifiers
                       Test.Database.Beam.AutoMigrate.Renderer
+                      Test.Database.Beam.AutoMigrate.Derivation
+                      Test.Database.Beam.AutoMigrate.Composite
   build-depends:
       base
     , beam-automigrate
     , beam-core             >=0.9      && <0.11
+    , beam-postgres
     , bytestring
     , containers
     , pretty-simple
     , QuickCheck
     , tasty
-    , tasty-hunit
+    , tasty-hunit            >=0.10 && <0.11
     , tasty-quickcheck
     , text
 
@@ -128,6 +131,8 @@ executable beam-automigrate-integration-tests
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.Integration.Harness
                       Test.Database.Beam.AutoMigrate.Integration.Renderer
+                      Test.Database.Beam.AutoMigrate.Composite
+                      Test.Database.Beam.AutoMigrate.Integration.Composite
   build-depends:
       base
     , beam-automigrate
