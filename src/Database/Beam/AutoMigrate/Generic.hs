@@ -668,7 +668,7 @@ lookupFkTarget rep idx =
           <> ", because the database does not contain a table of that type."
 
 -- | Collect one 'FkIndex' entry for each table of a database, in one pass over its 'Rep'.
-class GTableIndex (x :: * -> *) where
+class GTableIndex (x :: Type -> Type) where
   gTableIndex :: x p -> [(TypeRep, (TableName, [ColumnName]))] -> [(TypeRep, (TableName, [ColumnName]))]
 
 instance GTableIndex x => GTableIndex (D1 f x) where
@@ -725,7 +725,7 @@ type family HasUserDefinedFk (tbl :: TableKind) (anns :: [Annotation]) :: Bool w
   HasUserDefinedFk tbl (_ ': xs) = HasUserDefinedFk tbl xs
 
 -- | Assemble the tables of a database. The indexed counterpart of 'GTables'.
-class GIndexedTables (anns :: [Annotation]) (x :: * -> *) where
+class GIndexedTables (anns :: [Annotation]) (x :: Type -> Type) where
   gIndexedTables :: Proxy anns -> FkIndex -> x p -> (Tables, Sequences)
 
 instance GIndexedTables anns x => GIndexedTables anns (D1 f x) where
@@ -743,7 +743,7 @@ instance (GIndexedTables anns a, GIndexedTables anns b) => GIndexedTables anns (
   gIndexedTables p idx (a :*: b) = gIndexedTables p idx a <> gIndexedTables p idx b
 
 -- | Assemble the tables under one field of a database. The indexed counterpart of 'GTableEntry'.
-class GIndexedTableEntry (anns :: [Annotation]) (x :: * -> *) where
+class GIndexedTableEntry (anns :: [Annotation]) (x :: Type -> Type) where
   gIndexedTableEntries :: Proxy anns -> FkIndex -> x p -> ([(TableName, Table)], Sequences)
 
 instance
@@ -825,7 +825,7 @@ mkTableEntryIndexedFkDiscovery idx annEntity =
    in ((tName, table {tableConstraints = discoveredCons <> tableConstraints table}), seqs)
 
 -- | Discover the foreign keys of one table. The indexed counterpart of 'GTableConstraintColumns'.
-class GIndexedFks (x :: * -> *) where
+class GIndexedFks (x :: Type -> Type) where
   gIndexedFks :: FkIndex -> TableName -> x p -> S.Set TableConstraint
 
 instance GIndexedFks x => GIndexedFks (D1 f x) where
