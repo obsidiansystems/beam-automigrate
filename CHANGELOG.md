@@ -2,9 +2,9 @@
 
 ## 0.2.0.0
 
-* **Breaking behavior change:** `foreignKeyOnPk` replaces the inferred foreign key with the same constraint name.
+* **Breaking behavior change:** `foreignKeyOnPk` replaces inferred foreign keys for the same local columns.
   The declared `ON DELETE` and `ON UPDATE` actions replace the inferred `NO ACTION` actions.
-  Generate names from the local table and first structural key column, with the same bounded-name rule as inference.
+  This extends the manual-override fix contributed in [#69](https://github.com/obsidiansystems/beam-automigrate/pull/69).
   Existing databases can require constraint replacement. Review migration plans before execution.
 
 * Run database tests in separate temporary databases to protect unrelated databases.

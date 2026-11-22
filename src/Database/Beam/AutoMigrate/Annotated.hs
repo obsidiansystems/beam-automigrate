@@ -550,9 +550,8 @@ data PendingForeignKey = PendingForeignKey
 -- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
 -- target table.
 --
--- The constraint is named @\<table\>_\<column\>_fkey@, after the table it is defined on, the same name
--- FK discovery gives it. When FK discovery also runs for the table, this constraint replaces the
--- discovered one, so the 'ReferenceAction's given here take effect.
+-- Apply the declared reference actions instead of the inferred actions for the same local columns.
+-- Other inferred foreign keys remain unchanged.
 foreignKeyOnPk ::
   ( Beam.Beamable (PrimaryKey tbl'),
     Beam.Beamable tbl',
