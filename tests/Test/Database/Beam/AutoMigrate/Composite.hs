@@ -11,7 +11,7 @@
 
 -- | Check that inferred composite foreign keys preserve field correspondence.
 -- Include embedded keys inside nullable references. These tests require no database.
-module Test.Database.Beam.AutoMigrate.Composite (compositeTests, compositeSchema) where
+module Test.Database.Beam.AutoMigrate.Composite (compositeTests, compositeSchema, compositeDb, nestedDb) where
 
 import qualified Data.Map.Strict as M
 import Data.Proxy

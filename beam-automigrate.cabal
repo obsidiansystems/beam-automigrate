@@ -101,26 +101,33 @@ library beam-automigrate-test-utils
 
 test-suite beam-automigrate-tests
   type:               exitcode-stdio-1.0
-  hs-source-dirs:     tests
+  hs-source-dirs:     tests examples
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
                       Test.Database.Beam.AutoMigrate.Identifiers
                       Test.Database.Beam.AutoMigrate.Renderer
                       Test.Database.Beam.AutoMigrate.Derivation
                       Test.Database.Beam.AutoMigrate.Composite
+                      Test.Database.Beam.AutoMigrate.Indexed
+                      Example
+                      ForeignKeys
   build-depends:
-      base
+      aeson
+    , base
     , beam-automigrate
     , beam-core             >=0.9      && <0.11
     , beam-postgres
     , bytestring
     , containers
+    , deepseq
+    , postgresql-simple
     , pretty-simple
     , QuickCheck
     , tasty
     , tasty-hunit            >=0.10 && <0.11
     , tasty-quickcheck
     , text
+    , time
 
   default-language:   Haskell2010
   default-extensions: OverloadedStrings

@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Test.Database.Beam.AutoMigrate.Derivation (tests) where
+module Test.Database.Beam.AutoMigrate.Derivation (tests, annotatedDb, RegionT, CityT) where
 
 import Data.List (sort)
 import qualified Data.Map.Strict as M
