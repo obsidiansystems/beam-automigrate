@@ -536,7 +536,7 @@ data ForeignKeyConstraint local remote where
     (remote (Beam.TableField remote) -> TableField remote b) ->
     ForeignKeyConstraint local remote
 
--- | Preserve a manual foreign key declaration until the complete schema is available.
+-- | Report manual foreign key errors after deriving the complete schema.
 -- Check column counts and names during schema derivation to return structured errors without discarding unmatched columns.
 data PendingForeignKey = PendingForeignKey
   { pfkTargetTable :: TableName,
@@ -640,9 +640,9 @@ foreignKeyOn ::
   Beam.Beamable tbl' =>
   DatabaseEntity be db (TableEntity tbl') ->
   NonEmpty (ForeignKeyConstraint tbl tbl') ->
-  -- | On Delete
+  -- | Action when PostgreSQL deletes a referenced row.
   ReferenceAction ->
-  -- | On Update
+  -- | Action when PostgreSQL updates a referenced key.
   ReferenceAction ->
   EntityModification (AnnotatedDatabaseEntity be db) be (TableEntity tbl)
 foreignKeyOn externalEntity us onDelete onUpdate =

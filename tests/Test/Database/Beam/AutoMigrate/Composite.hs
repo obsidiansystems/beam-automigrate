@@ -230,7 +230,7 @@ nestedDb =
       }
 
 --
--- Manual scalar pairs and nullable whole-key reference
+-- Check manual column pairs and nullable whole-key references.
 --
 
 data ManualParentT f = ManualParentRow

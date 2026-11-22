@@ -164,7 +164,7 @@ tests =
     ]
 
 --
--- Manual foreign keys
+-- Check manual foreign key declarations.
 --
 
 data ManFooT f = ManFooRow
@@ -381,7 +381,7 @@ foreignKeyConstraints = filter isFk . S.toList . tableConstraints
     isFk _ = False
 
 --
--- Explicit override of inferred FKs
+-- Check that explicit declarations replace the corresponding inferred foreign keys.
 --
 
 data OverTargetT f = OverTargetRow {overTargetId :: Columnar f Int}
@@ -427,7 +427,7 @@ overrideAnnotated =
       }
 
 --
--- A UNIQUE key which is not the primary key
+-- Check references to a UNIQUE key that is not the primary key.
 --
 
 data PairTargetT f = PairTargetRow {pairTargetId :: Columnar f Int}
@@ -501,7 +501,7 @@ uniqueAnnotated =
       }
 
 --
--- Raw pending declarations
+-- Check invalid declarations before constructing foreign keys.
 --
 
 data PendingT f = PendingRow {pendingId :: Columnar f Int}
@@ -610,7 +610,7 @@ expectValidationError predicate result =
     Right _ -> assertFailure "expected validation to fail"
 
 --
--- Duplicate objects
+-- Check that schema derivation rejects duplicate objects.
 --
 
 data DupTableAT f = DupTableARow {dupTableAId :: Columnar f Int}
