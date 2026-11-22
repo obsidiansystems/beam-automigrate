@@ -7,7 +7,7 @@
 # one-line modules that derive the Schema, one per path, and reports each compile's wall time and
 # peak RSS (GNU time). A small program then checks that both paths give the same Schema.
 #
-# Usage, from the repository root, after `cabal build lib:beam-automigrate`:
+# Usage, from the repository root (it builds the library first):
 #   bench/compile-time/run.sh [N ...]          (default: 50 100 200)
 # Environment: GHC_OPTS (default -O1), TIME (path to GNU time, default: `time` on PATH),
 #              LIMIT_SECONDS (per compile, default 7200), OUT (default dist-newstyle/compile-bench).
@@ -21,6 +21,10 @@ time_bin=${TIME:-$(command -v time || true)}
 limit=${LIMIT_SECONDS:-7200}
 out=${OUT:-dist-newstyle/compile-bench}
 mkdir -p "$out"
+
+# GHC reads the library and its dependencies from the environment file cabal writes.
+cabal build -v1 --write-ghc-environment-files=always lib:beam-automigrate
+env_file=$(ls -t "$PWD"/.ghc.environment.* | head -n 1)
 
 gen_db() {
   local n=$1 f=$2 i
@@ -111,9 +115,9 @@ HS
 measure() {
   local log=$1; shift
   local rc=0
-  timeout "$limit" "$time_bin" -f 'BENCH %e %M' cabal exec -v0 -- ghc $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" -c "$@" > "$log" 2>&1 || rc=$?
+  timeout "$limit" "$time_bin" -f 'BENCH %e %M' ghc -package-env "$env_file" $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" -c "$@" > "$log" 2>&1 || rc=$?
   if [ "$rc" = 124 ]; then echo "timeout"; return; fi
-  if [ "$rc" != 0 ]; then echo "failed($rc)"; return; fi
+  if [ "$rc" != 0 ]; then echo "failed($rc)"; head -n 30 "$log" >&2; return; fi
   awk '/^BENCH/ { printf "%.1f s, %d MB", $2, $3 / 1024 }' "$log"
 }
 
@@ -134,7 +138,7 @@ for n in "${sizes[@]}"; do
     tail -n 5 "$dir"/*.log
     continue
   fi
-  cabal exec -v0 -- ghc $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" "$dir/Check$n.hs" -o "$dir/check" > "$dir/check.log" 2>&1 || { tail -n 20 "$dir/check.log"; exit 1; }
+  ghc -package-env "$env_file" $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" "$dir/Check$n.hs" -o "$dir/check" > "$dir/check.log" 2>&1 || { tail -n 20 "$dir/check.log"; exit 1; }
   "$dir/check"
 done
 echo
