@@ -56,14 +56,13 @@ module Database.Beam.AutoMigrate.Annotated
 
     -- * Ports from Beam
     zipTables,
-    GZipDatabase,
+    GZipDatabase(..),
 
     -- * Internals
     pgDefaultConstraint,
   )
 where
 
-import qualified Data.List as L
 import Data.Kind
 import Data.Monoid (Endo (..))
 import Data.Proxy
@@ -498,7 +497,10 @@ uniqueConstraintOn us =
                   { dbAnnotatedConstraints =
                       let cols = concatMap (\case (U f) -> colNames (tableSettings e) f) us
                           tName = e ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map columnName cols) <> "_ukey"
+                          conname =
+                            generatedIdentifier
+                              (T.intercalate "_" (tName : map columnName cols) <> "_ukey")
+                              (["unique", tName] <> map columnName cols)
                        in S.insert (Unique conname (S.fromList cols)) (dbAnnotatedConstraints tbl)
                   }
               )
@@ -554,9 +556,13 @@ foreignKeyOnPk externalEntity ourColumn onDelete onUpdate =
                               (fieldAsColumnNames (Beam.pk (tableSettings externalEntity)))
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
                           srcName = e ^. dbEntityDescriptor . dbEntityName
-                          conname = case L.sort (map fst colPairs) of
+                          localCols = map (columnName . fst) colPairs
+                          remoteCols = map (columnName . snd) colPairs
+                          candidate = case localCols of
                             [] -> srcName <> "_fkey"
-                            (ColumnName cn : _) -> srcName <> "_" <> cn <> "_fkey"
+                            cn : _ -> srcName <> "_" <> cn <> "_fkey"
+                          conname =
+                            generatedIdentifier candidate (["foreign-key", srcName, tName] <> localCols <> remoteCols)
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)
@@ -593,7 +599,10 @@ foreignKeyOn externalEntity us onDelete onUpdate =
                               )
                               us
                           tName = externalEntity ^. dbEntityDescriptor . dbEntityName
-                          conname = T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey"
+                          conname =
+                            generatedIdentifier
+                              (T.intercalate "_" (tName : map (columnName . snd) colPairs) <> "_fkey")
+                              (["foreign-key", tName] <> map (columnName . snd) colPairs)
                        in S.insert
                             (ForeignKey conname (TableName tName) (S.fromList colPairs) onDelete onUpdate)
                             (dbAnnotatedConstraints tbl)

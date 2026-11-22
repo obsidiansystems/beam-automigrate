@@ -1,12 +1,36 @@
 # Revision history for beam-automigrate
 
-## Unreleased
+## 0.2.0.0
 
-* `foreignKeyOnPk` now overrides the foreign key that FK discovery finds for the same column, so its `ON DELETE` and `ON UPDATE` actions take effect instead of a second `NO ACTION` key being added. The constraint is now named after the table it is defined on (`<table>_<column>_fkey`, as FK discovery names it) rather than after the referenced table, which also keeps two keys to the same table from sharing a name. Existing databases see the old constraint dropped and the new one added on the next migration.
+* **Breaking behavior change:** `foreignKeyOnPk` replaces the inferred foreign key with the same constraint name.
+  The declared `ON DELETE` and `ON UPDATE` actions replace the inferred `NO ACTION` actions.
+  Generate names from the local table and first structural key column, with the same bounded-name rule as inference.
+  Existing databases can require constraint replacement. Review migration plans before execution.
 
-## 0.1.7.0
-
-* beam-automigrate will now only manage sequences within the search path, just as it only manages such tables.
+* Run database tests in separate temporary databases to protect unrelated databases.
+* Limit sequence management to the search path, as for tables.
+* **Breaking API change:** `renderDataType`, `editToSqlCommand`, and `prettyEditSQL` now return `Either RenderError` results.
+  Update callers to handle `Left` before using the rendered SQL.
+  Invalid names, unsupported types, and invalid edit structures return typed errors.
+  Default expressions remain trusted SQL that PostgreSQL checks.
+* Migration execution renders all edits before issuing DDL. Rendering errors therefore occur before any database changes.
+* SQL rendering quotes enum and extension type names. Temporal precision precedes `WITH/WITHOUT TIME ZONE`.
+  Executable SQL no longer contains `<UNSAFE>` markers. Safety checks remain separate from SQL rendering.
+* Identifiers are always double-quoted and string literals are emitted as escaped E-strings.
+* **Breaking change:** Generated identifiers longer than 63 UTF-8 bytes now use a deterministic FNV-1a suffix within PostgreSQL's 63-byte limit.
+  This includes companion sequence names. The new names can differ from names that PostgreSQL previously truncated.
+  Review migration plans for existing schemas before execution. Generated names within the byte limit remain unchanged.
+* **Breaking API change:** Move `mkSequenceName` from `Database.Beam.AutoMigrate.Types` to `Database.Beam.AutoMigrate.Util`.
+  Replace direct imports from `Types` with imports from `Database.Beam.AutoMigrate` or `Database.Beam.AutoMigrate.Util`.
+* Require GHC 9.10 or newer. Test with GHC 9.10.3 and remove the GHC 8.x build configurations.
+* Use the maintained Haskell setup action and a current Nixpkgs pin for development and CI.
+* **Breaking behavior change:** `UserDefinedFk` now disables automatic foreign key inference only for outgoing references from the annotated table type.
+  References from other table types remain intact, including references to the annotated type.
+  Existing schemas can gain foreign key constraints that earlier versions omitted.
+* **Breaking behavior change:** Infer composite foreign keys by matching field positions, not by sorting column names independently.
+  Preserve this correspondence through embedded keys and nullable references.
+  Migration plans can replace incorrectly paired constraints. Existing rows might violate the corrected constraints.
+  Review the migration plan and affected rows before execution.
 
 ## 0.1.6.0
 

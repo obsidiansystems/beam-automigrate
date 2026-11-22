@@ -14,14 +14,14 @@ module Database.Beam.AutoMigrate.Generic where
 
 import Data.Bifunctor
 import Data.Kind
-import qualified Data.List as L
 import qualified Data.Map.Strict as M
 import Data.Proxy
 import qualified Data.Set as S
+import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Annotated
 import Database.Beam.AutoMigrate.Compat
 import Database.Beam.AutoMigrate.Types
-import Database.Beam.AutoMigrate.Util (pkFieldNames)
+import Database.Beam.AutoMigrate.Util (generatedIdentifier, pkFieldNames)
 import Database.Beam.Schema (PrimaryKey, TableEntity)
 import qualified Database.Beam.Schema as Beam
 import Database.Beam.Schema.Tables (Beamable (..), dbEntityDescriptor, dbEntityName)
@@ -160,8 +160,13 @@ mkTableEntryNoFkDiscovery ::
 mkTableEntryNoFkDiscovery annEntity =
   let entity = annEntity ^. deannotate
       tName = entity ^. dbEntityDescriptor . dbEntityName
-      pkColSet = S.fromList $ pkFieldNames entity
-      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey (tName <> "_pkey") pkColSet)
+      pkCols = pkFieldNames entity
+      pkColSet = S.fromList pkCols
+      pkName =
+        generatedIdentifier
+          (tName <> "_pkey")
+          (["primary-key", tName] <> map columnName pkCols)
+      pks = if S.null pkColSet then mempty else S.singleton (PrimaryKey pkName pkColSet)
       (columns, seqs) = gColumns (Proxy @'GenSequences) (TableName tName) . from $ dbAnnotatedSchema (annEntity ^. annotatedDescriptor)
       annotatedCons = dbAnnotatedConstraints (annEntity ^. annotatedDescriptor)
    in ((TableName tName, Table (pks <> annotatedCons) columns), seqs)
@@ -200,7 +205,8 @@ instance
   ) =>
   GTableEntry be db (UserDefinedFk tbl' ': xs) 'False (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
   where
-  gTableEntries _ _ _ (K1 annEntity) = first (: []) (mkTableEntryNoFkDiscovery annEntity)
+  gTableEntries db _ _ x@(K1 _) =
+    gTableEntries db (Proxy @xs) (Proxy @(TestTableEqual tbl tbl')) x
 
 instance
   ( GColumns 'GenSequences (Rep (TableSchema tbl)),
@@ -344,31 +350,37 @@ instance
 instance
   ( Generic (AnnotatedDatabaseSettings be db),
     Generic (PrimaryKey tbl f),
-    GColumns 'NoGenSequences (Rep (PrimaryKey tbl f)),
+    GOrderedColumnNames (Rep (PrimaryKey tbl f)),
     GTableLookupSettings sel tbl (Rep (AnnotatedDatabaseSettings be db)),
     m ~ MetaSel sel su ss ds
   ) =>
   GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f)))
   where
   gTableConstraintsColumns db (TableName tname) (M1 (K1 e)) =
-    case cnames of
+    case localCols of
       [] -> S.empty -- TODO: if for whatever reason we have no columns in our key, we don't generate a constraint
       ColumnName cname : _ ->
         S.singleton
           ( ForeignKey
-              (tname <> "_" <> cname <> "_fkey")
+              ( generatedIdentifier
+                  (tname <> "_" <> cname <> "_fkey")
+                  (["foreign-key", tname, refName] <> map columnName localCols <> map columnName remoteCols)
+              )
               reftname
-              (S.fromList (zip (L.sort cnames) (L.sort refcnames)))
+              (S.fromList (zip localCols remoteCols))
               NoAction -- TODO: what should the default be?
               NoAction -- TODO: what should the default be?
           )
     where
-      cnames :: [ColumnName]
-      cnames = M.keys $ fst (gColumns (Proxy @NoGenSequences) (TableName tname) (from e))
+      localCols :: [ColumnName]
+      localCols = map ColumnName (gOrderedColumnNames (from e))
 
       reftname :: TableName
       refcnames :: [ColumnName]
-      (reftname, refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+      (reftname@(TableName refName), refcnames) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+
+      remoteCols :: [ColumnName]
+      remoteCols = refcnames
 
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
@@ -563,3 +575,39 @@ instance (GTableLookupTablesExpectFail sel tbl k ks) => GTableLookupTableExpectF
 instance GTableLookupTables sel tbl k ks => GTableLookupTable False sel tbl (k :*: ks) where
   gTableLookupTable _ sel tbl _ (k :*: ks) =
     gTableLookupTables sel tbl k ks
+
+-- | Preserve field correspondence when pairing foreign key columns.
+-- Collect names in structural order before storing complete pairs in a set.
+class GOrderedColumnNames (x :: * -> *) where
+  gOrderedColumnNames :: x p -> [T.Text]
+
+instance GOrderedColumnNames x => GOrderedColumnNames (D1 f x) where
+  gOrderedColumnNames (M1 x) = gOrderedColumnNames x
+
+instance GOrderedColumnNames x => GOrderedColumnNames (C1 f x) where
+  gOrderedColumnNames (M1 x) = gOrderedColumnNames x
+
+instance (GOrderedColumnNames a, GOrderedColumnNames b) => GOrderedColumnNames (a :*: b) where
+  gOrderedColumnNames (a :*: b) = gOrderedColumnNames a <> gOrderedColumnNames b
+
+instance GOrderedColumnNames U1 where
+  gOrderedColumnNames U1 = []
+
+instance GOrderedColumnNames (S1 m (K1 R (TableFieldSchema tbl ty))) where
+  gOrderedColumnNames (M1 (K1 (TableFieldSchema name _))) = [columnName name]
+
+instance
+  ( Generic (g (TableFieldSchema tbl2)),
+    GOrderedColumnNames (Rep (g (TableFieldSchema tbl2)))
+  ) =>
+  GOrderedColumnNames (S1 m (K1 R (g (TableFieldSchema tbl2))))
+  where
+  gOrderedColumnNames (M1 (K1 e)) = gOrderedColumnNames (from e)
+
+instance
+  ( Generic (PrimaryKey tbl1 (Beam.Nullable (TableFieldSchema tbl2))),
+    GOrderedColumnNames (Rep (PrimaryKey tbl1 (Beam.Nullable (TableFieldSchema tbl2))))
+  ) =>
+  GOrderedColumnNames (S1 m (K1 R (PrimaryKey tbl1 (Beam.Nullable (TableFieldSchema tbl2)))))
+  where
+  gOrderedColumnNames (M1 (K1 e)) = gOrderedColumnNames (from e)

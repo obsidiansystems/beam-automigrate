@@ -83,9 +83,6 @@ instance NFData SequenceName
 
 instance NFData Sequence
 
-mkSequenceName :: TableName -> ColumnName -> SequenceName
-mkSequenceName tname cname = SequenceName (tableName tname <> "___" <> columnName cname <> "___seq")
-
 parseSequenceName :: SequenceName -> Maybe (TableName, ColumnName)
 parseSequenceName (SequenceName sName) = case T.splitOn "___" sName of
   [tName, cName, "seq"] -> Just (TableName tName, ColumnName cName)
@@ -370,6 +367,16 @@ data DiffError
 instance Exception DiffError
 
 instance NFData DiffError
+
+-- | Report an invalid name, type, or edit structure during SQL rendering.
+-- The renderer does not inspect default SQL expressions. PostgreSQL checks these expressions.
+data RenderError
+  = InvalidSqlIdentifier Text
+  | InvalidSqlType ColumnType Text
+  | InvalidSqlEdit EditAction Text
+  deriving (Show, Eq)
+
+instance Exception RenderError
 
 --
 -- Utility functions

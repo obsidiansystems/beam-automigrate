@@ -1,4 +1,4 @@
-let pkgs = (import ./.ci/nixpkgs.nix).nixos2003;
+let pkgs = (import ./.ci/nixpkgs.nix).unstable;
 in
   pkgs.mkShell {
     name = "beam-automigrate";
@@ -7,6 +7,6 @@ in
       pkgs.ghcid
     ];
     inputsFrom = [
-      (import ./release.nix).compilers.ghc8107.env
+      (import ./release.nix).compilers.ghc9103.env
     ];
   }

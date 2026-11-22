@@ -22,7 +22,7 @@ in pkgs.nixosTest ({
     services.xserver.enable = false;
     environment.systemPackages = with pkgs; [
       postgresql
-      (import ./release.nix).compilers.ghc8107
+      (import ./release.nix).compilers.ghc9103
     ];
     users.users.${testUser} = {
       createHome = true;
