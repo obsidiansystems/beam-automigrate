@@ -7,9 +7,14 @@
 # one-line modules that derive the Schema, one per path, and reports each compile's wall time and
 # peak RSS (GNU time). A small program then checks that both paths give the same Schema.
 #
+# fromAnnotatedDbSettings needs a deeper type-family reduction stack than GHC's default (200) from
+# about 50 tables on, so its module is compiled with -freduction-depth=0. The indexed path compiles
+# with the default depth.
+#
 # Usage, from the repository root (it builds the library first):
 #   bench/compile-time/run.sh [N ...]          (default: 50 100 200)
-# Environment: GHC_OPTS (default -O1), TIME (path to GNU time, default: `time` on PATH),
+# Environment: GHC_OPTS (default -O1), GENERIC_RTS (RTS options for the generic compile, e.g.
+#              -M40g to stop it at a heap limit), TIME (path to GNU time, default: `time` on PATH),
 #              LIMIT_SECONDS (per compile, default 7200), OUT (default dist-newstyle/compile-bench).
 set -euo pipefail
 
@@ -132,13 +137,13 @@ for n in "${sizes[@]}"; do
   fks=$(( n >= 2 ? 2 * n - 3 : 0 ))
   db=$(measure "$dir/db.log" "$dir/Db$n.hs")
   idx=$(measure "$dir/indexed.log" "$dir/SchemaIndexed$n.hs")
-  gen=$(measure "$dir/generic.log" "$dir/SchemaGeneric$n.hs")
+  gen=$(measure "$dir/generic.log" -freduction-depth=0 "$dir/SchemaGeneric$n.hs" ${GENERIC_RTS:++RTS $GENERIC_RTS -RTS})
   echo "| $n | $fks | $db | $gen | $idx |" | tee -a "$out/results.md"
   if [[ $gen != *MB || $idx != *MB ]]; then
     tail -n 5 "$dir"/*.log
     continue
   fi
-  ghc -package-env "$env_file" $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" "$dir/Check$n.hs" -o "$dir/check" > "$dir/check.log" 2>&1 || { tail -n 20 "$dir/check.log"; exit 1; }
+  ghc -package-env "$env_file" $ghc_opts -i"$dir" -odir "$dir" -hidir "$dir" -freduction-depth=0 "$dir/Check$n.hs" -o "$dir/check" > "$dir/check.log" 2>&1 || { tail -n 20 "$dir/check.log"; exit 1; }
   "$dir/check"
 done
 echo
