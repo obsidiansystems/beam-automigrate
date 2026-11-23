@@ -25,6 +25,7 @@ module Database.Beam.AutoMigrate
 
     -- * Generating and running migrations
     Migration,
+    MigrationError (..),
     migrate,
     runMigrationUnsafe,
     runMigrationWithEditUpdate,
@@ -192,8 +193,11 @@ fromAnnotatedDbSettings ::
   ) =>
   AnnotatedDatabaseSettings be db ->
   Proxy (anns :: [Annotation]) ->
-  Schema
-fromAnnotatedDbSettings db p = gSchema db p (from db)
+  Either [ValidationFailed] Schema
+fromAnnotatedDbSettings db p = do
+  derived <- gSchema db p (from db)
+  validateSchema derived
+  pure derived
 
 -- | Produces the same 'Schema' as 'fromAnnotatedDbSettings', with a compile-time cost that is linear
 -- in the size of the database instead of quadratic.
@@ -517,7 +521,8 @@ tryRunMigrationsWithEditUpdate
   -> Pg.Connection
   -> IO ()
 tryRunMigrationsWithEditUpdate annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    expectedHaskellSchema <-
+      either (throwIO . HaskellSchemaValidationFailed) pure (fromAnnotatedDbSettings annotatedDb (Proxy @'[]))
     actualDatabaseSchema <- getSchema conn
     case diff expectedHaskellSchema actualDatabaseSchema of
       Left err -> do
@@ -555,6 +560,7 @@ calcMigrationSteps
   -> Pg.Connection
   -> IO Diff
 calcMigrationSteps annotatedDb conn = do
-    let expectedHaskellSchema = fromAnnotatedDbSettings annotatedDb (Proxy @'[])
+    expectedHaskellSchema <-
+      either (throwIO . HaskellSchemaValidationFailed) pure (fromAnnotatedDbSettings annotatedDb (Proxy @'[]))
     actualDatabaseSchema <- getSchema conn
     pure $ diff expectedHaskellSchema actualDatabaseSchema

@@ -3,9 +3,10 @@
 
 module Database.Beam.AutoMigrate.Validity
   ( -- * Types
+    Qualified (..),
     Reason (..),
     ApplyFailed,
-    ValidationFailed,
+    ValidationFailed (..),
 
     -- * Applying edits to a 'Schema'
     applyEdits,
@@ -24,6 +25,7 @@ import Control.Monad.Except
 import Data.Bifunctor
 import Data.Foldable
 import qualified Data.List as L
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Monoid
 import qualified Data.Set as S
@@ -81,6 +83,22 @@ data Reason
     -- 'TableConstraint's.
     DeletedConstraintAffectsExternalTables (TableName, TableConstraint) (Qualified ColumnName, TableConstraint)
   | EnumContainsDuplicateValues EnumerationName [Text]
+  | -- | Two constraints of the same table share a name.
+    DuplicateConstraintName TableName Text
+  | -- | A key or foreign key has no columns.
+    EmptyKey TableName Text
+  | -- | A foreign key repeats a local or remote column.
+    DuplicateForeignKeyColumns TableName Text
+  | -- | Two managed tables share the same name.
+    DuplicateTableName TableName
+  | -- | A table declares the same column twice.
+    DuplicateColumnName TableName ColumnName
+  | -- | Two managed sequences share the same name.
+    DuplicateSequenceName SequenceName
+  | -- | A foreign key's local and remote column lists differ in length.
+    ForeignKeyArityMismatch TableName TableName Int Int
+  | -- | An enum definition conflicts with another definition of the same name.
+    ConflictingEnumDefinition EnumerationName Enumeration Enumeration
   deriving (Show, Eq)
 
 data ApplyFailed
@@ -97,6 +115,9 @@ data ValidationFailed
   | InvalidColumn (Qualified ColumnName) Reason
   | InvalidRemoveColumnConstraint (Qualified ColumnName) Reason
   | InvalidRemoveTableConstraint TableName Reason
+  | InvalidTableName TableName Reason
+  | InvalidSequence SequenceName Reason
+  | InvalidForeignKeyDeclaration TableName TableName Reason
   deriving (Show, Eq)
 
 --
@@ -141,15 +162,22 @@ validateTableConstraint s tName tbl c = case c of
     allTblColumns :: S.Set ColumnName
     allTblColumns = M.keysSet . tableColumns $ tbl
 
-    checkFkIntegrity :: TableName -> S.Set (ColumnName, ColumnName) -> Either ValidationFailed ()
+    checkFkIntegrity :: TableName -> NE.NonEmpty (ColumnName, ColumnName) -> Either ValidationFailed ()
     checkFkIntegrity referencedTable columnPairs = runExcept $
       liftEither $
         case M.lookup referencedTable (schemaTables s) of
           Nothing -> throwError $ InvalidTableConstraint c (TableDoesntExist referencedTable)
           Just extTbl -> do
             let allExtColumns = M.keysSet (tableColumns extTbl)
-            let (localCols, referencedCols) = (S.map fst columnPairs, S.map snd columnPairs)
+                pairList = NE.toList columnPairs
+                (localCols, referencedCols) = (S.fromList (map fst pairList), S.fromList (map snd pairList))
+                cname = case c of
+                  ForeignKey n _ _ _ _ -> n
+                  PrimaryKey n _ -> n
+                  Unique n _ -> n
             if
+                | length (map fst pairList) /= S.size localCols || length (map snd pairList) /= S.size referencedCols ->
+                  throwError $ InvalidTableConstraint c (DuplicateForeignKeyColumns tName cname)
                 | not (localCols `S.isSubsetOf` allTblColumns) ->
                   throwError $ InvalidTableConstraint c (NotAllColumnsExist tName (S.difference localCols allTblColumns) allTblColumns)
                 | not (referencedCols `S.isSubsetOf` allExtColumns) ->
@@ -226,7 +254,8 @@ lookupColumnRef thisTable (tableConstraints -> constr) (Qualified extTbl colName
           if S.member colName cols then Just (Qualified thisTable colName, con) else Nothing
       PrimaryKey _ _ -> Nothing
       ForeignKey _ extTbl' columnPairs _ _ ->
-        let (localCols, referencedCols) = (S.map fst columnPairs, S.map snd columnPairs)
+        let pairList = NE.toList columnPairs
+            (localCols, referencedCols) = (S.fromList (map fst pairList), S.fromList (map snd pairList))
          in if
                 | S.member colName localCols && thisTable == extTbl -> Just (Qualified extTbl colName, con)
                 | S.member colName referencedCols && extTbl == extTbl' -> Just (Qualified extTbl colName, con)
@@ -358,6 +387,9 @@ toApplyFailed e (InvalidEnum _ reason) = InvalidEdit e reason
 toApplyFailed e (InvalidColumn _ reason) = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveColumnConstraint _ reason) = InvalidEdit e reason
 toApplyFailed e (InvalidRemoveTableConstraint _ reason) = InvalidEdit e reason
+toApplyFailed e (InvalidTableName _ reason) = InvalidEdit e reason
+toApplyFailed e (InvalidSequence _ reason) = InvalidEdit e reason
+toApplyFailed e (InvalidForeignKeyDeclaration _ _ reason) = InvalidEdit e reason
 
 -- | Tries to apply a list of edits to a 'Schema' to generate a new one. Fails with an 'ApplyFailed' error
 -- if the input list of 'Edit's would generate an invalid 'Schema'.

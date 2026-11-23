@@ -4,6 +4,7 @@
 -- Check quoted identifiers, type precision, edit structures, and SQL without safety markers.
 module Test.Database.Beam.AutoMigrate.Renderer (rendererTests) where
 
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -62,22 +63,21 @@ rendererTests =
             assertLeftIdentifier (defMkEdit (ColumnRemoved (TableName "bad\NULname") "c")),
           testCase "overlong identifiers are refused" $
             assertLeftIdentifier (defMkEdit (TableRemoved (TableName (T.replicate 64 "a")))),
-          testCase "empty keys and foreign keys are refused" $ do
-            assertLeftEdit (defMkEdit (TableConstraintAdded "t" (PrimaryKey "pk" S.empty)))
-            assertLeftEdit (defMkEdit (TableConstraintAdded "t" (ForeignKey "fk" "t" S.empty NoAction NoAction))),
+          testCase "empty keys are refused" $
+            assertLeftEdit (defMkEdit (TableConstraintAdded "t" (PrimaryKey "pk" S.empty))),
           testCase "duplicate foreign key columns are refused" $ do
             assertLeftEdit
               ( defMkEdit
                   ( TableConstraintAdded
                       "t"
-                      (ForeignKey "fk" "target" (S.fromList [("a", "x"), ("a", "y")]) NoAction NoAction)
+                      (ForeignKey "fk" "target" (("a", "x") :| [("a", "y")]) NoAction NoAction)
                   )
               )
             assertLeftEdit
               ( defMkEdit
                   ( TableConstraintAdded
                       "t"
-                      (ForeignKey "fk" "target" (S.fromList [("a", "x"), ("b", "x")]) NoAction NoAction)
+                      (ForeignKey "fk" "target" (("a", "x") :| [("b", "x")]) NoAction NoAction)
                   )
               ),
           testCase "invalid enum labels are refused, empty labels allowed" $ do

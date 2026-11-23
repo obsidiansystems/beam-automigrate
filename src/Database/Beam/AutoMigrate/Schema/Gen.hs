@@ -19,6 +19,7 @@ import Data.Foldable (foldlM)
 import Data.Functor ((<&>))
 import Data.Functor.Identity
 import Data.Int (Int16, Int32, Int64)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Proxy
 import Data.Scientific (Scientific, scientific)
@@ -472,7 +473,7 @@ deleteConstraintReferencing cName conss = S.filter (not . doesReference) conss
     doesReference :: TableConstraint -> Bool
     doesReference = \case
       PrimaryKey _ refs -> S.member cName refs
-      ForeignKey _ _ refs _ _ -> let ours = S.map snd refs in S.member cName ours
+      ForeignKey _ _ refs _ _ -> let ours = S.fromList (map snd (NE.toList refs)) in S.member cName ours
       Unique _ refs -> S.member cName refs
 
 similarColumn :: Column -> Gen Column

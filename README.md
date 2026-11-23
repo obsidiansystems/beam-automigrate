@@ -61,6 +61,7 @@ Deriving an `AnnotatedDatabaseSettings` for a Haskell database type is a matter 
 > {-# LANGUAGE TypeFamilies #-}
 > import Prelude hiding ((.))
 > import Control.Category ((.))
+> import Control.Exception (throwIO)
 > import Data.Proxy (Proxy(..))
 > import Database.Beam.Postgres
 > import Database.Beam.Schema
@@ -155,7 +156,7 @@ Once we have an `AnnotatedDatabaseSettings`, the next step is to generate a `Sch
 simply by calling `fromAnnotatedDbSettings`, like so:
 
 ```
-> hsSchema :: BA.Schema
+> hsSchema :: Either [BA.ValidationFailed] BA.Schema
 > hsSchema = BA.fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
 ```
@@ -208,7 +209,7 @@ Schema
                                 , ColumnName { columnName = "city" }
                                 )
                             ]
-                        ) NoAction NoAction
+                        ) Cascade Restrict
                     ]
                 , tableColumns = fromList
                     [
@@ -263,8 +264,9 @@ something like this:
 
 >
 > exampleShowMigration :: Connection -> IO ()
-> exampleShowMigration conn = runBeamPostgres conn $
->   BA.printMigration $ BA.migrate conn hsSchema
+> exampleShowMigration conn = do
+>   desired <- either (throwIO . BA.HaskellSchemaValidationFailed) pure hsSchema
+>   runBeamPostgres conn $ BA.printMigration $ BA.migrate conn desired
 >
 > exampleAutoMigration :: Connection -> IO ()
 > exampleAutoMigration conn =
@@ -313,7 +315,7 @@ ALTER TABLE "cities" ADD CONSTRAINT "cities_pkey" PRIMARY KEY (city);
 
 ALTER TABLE "weathers" ADD CONSTRAINT "weathers_pkey" PRIMARY KEY (id);
 
-ALTER TABLE "weathers" ADD CONSTRAINT "weathers_city__city_fkey" FOREIGN KEY (city__city) REFERENCES "cities"(city);
+ALTER TABLE "weathers" ADD CONSTRAINT "weathers_city__city_fkey" FOREIGN KEY (city__city) REFERENCES "cities"(city) ON DELETE CASCADE  ON UPDATE RESTRICT ;
 
 ```
 

@@ -21,6 +21,10 @@ description:
 extra-source-files:
   README.md
   CHANGELOG.md
+  tests/compile/Main.hs
+  tests/compile/pass/*.hs
+  tests/compile/fail/*.hs
+  tests/compile/control/*.hs
 
 tested-with:        GHC ==9.10.3
 
@@ -104,6 +108,7 @@ test-suite beam-automigrate-tests
   hs-source-dirs:     tests examples
   main-is:            Main.hs
   other-modules:      Test.Database.Beam.AutoMigrate.Arbitrary
+                      Test.Database.Beam.AutoMigrate.ForeignKeys
                       Test.Database.Beam.AutoMigrate.Identifiers
                       Test.Database.Beam.AutoMigrate.Renderer
                       Test.Database.Beam.AutoMigrate.Derivation
