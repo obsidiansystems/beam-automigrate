@@ -89,10 +89,10 @@ gen_schema() {
 module Schema${path}$n (schema) where
 
 import Data.Proxy (Proxy (..))
-import Database.Beam.AutoMigrate (Schema, $fun)
+import Database.Beam.AutoMigrate (Schema, ValidationFailed, $fun)
 import Db$n (annotatedDb)
 
-schema :: Schema
+schema :: Either [ValidationFailed] Schema
 schema = $fun annotatedDb (Proxy @'[])
 HS
 }
@@ -110,9 +110,10 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main =
-  if G.schema == I.schema
-    then putStrLn ("N=$n: same Schema, " <> show (M.size (schemaTables I.schema)) <> " tables")
-    else putStrLn "N=$n: the two paths give different Schemas" >> exitFailure
+  case (G.schema, I.schema) of
+    (Right g, Right i)
+      | g == i -> putStrLn ("N=$n: same Schema, " <> show (M.size (schemaTables i)) <> " tables")
+    _ -> putStrLn ("N=$n: the two paths give different results:\n" <> show G.schema <> "\n" <> show I.schema) >> exitFailure
 HS
 }
 
