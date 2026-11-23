@@ -99,5 +99,5 @@ jobs:
         cabal build --only-dependencies --enable-tests
     - name: Build
       run: cabal build --enable-tests all
-    - name: Test database isolation and cleanup
-      run: cabal run exe:beam-automigrate-integration-tests -- -p /Harness/ --num-threads=2 +RTS -N2 -RTS
+    - name: Test database isolation, SQL rendering, and foreign keys
+      run: cabal run exe:beam-automigrate-integration-tests -- -p '/Harness/ || /IdentifiersTypes/ || /Derivation/' --num-threads=2 +RTS -N2 -RTS

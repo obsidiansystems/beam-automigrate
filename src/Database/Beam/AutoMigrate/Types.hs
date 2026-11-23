@@ -10,6 +10,7 @@ module Database.Beam.AutoMigrate.Types where
 import Control.DeepSeq
 import Control.Exception
 import Data.ByteString.Lazy (ByteString)
+import Data.List.NonEmpty (NonEmpty)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
@@ -195,8 +196,8 @@ data TableConstraint
     PrimaryKey ConstraintName (Set ColumnName)
   | -- | This set of 'Column's identifies a Table's 'ForeignKey'. This is usually found in the 'tableConstraints'
     -- of the table where the foreign key is actually defined (in terms of 'REFERENCES').
-    -- The set stores a (fk_column, pk_column) correspondence.
-    ForeignKey ConstraintName TableName (Set (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
+    -- Preserve each local-to-referenced column pair in canonical order.
+    ForeignKey ConstraintName TableName (NonEmpty (ColumnName, ColumnName)) ReferenceAction {- onDelete -} ReferenceAction {- onUpdate -}
   | Unique ConstraintName (Set ColumnName)
   deriving (Show, Eq, Ord, Generic)
 

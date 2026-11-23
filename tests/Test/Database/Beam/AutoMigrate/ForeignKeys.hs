@@ -8,10 +8,11 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Checks on the foreign keys that 'foreignKeyOnPk' contributes to a 'Schema'.
+-- | Check that manual foreign keys preserve declared actions and use distinct names for separate references.
 module Test.Database.Beam.AutoMigrate.ForeignKeys (foreignKeyTests) where
 
 import qualified Data.Map.Strict as M
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Proxy (Proxy (..))
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -76,16 +77,18 @@ annotatedDB =
             <> foreignKeyOnPk (dbCities travelDB) routeTo Restrict NoAction
       }
 
--- | FK discovery runs for every table, as in the README example.
-hsSchema :: Schema
+-- | Enable inference for every table to detect duplicate manual and inferred foreign keys.
+hsSchema :: Either [ValidationFailed] Schema
 hsSchema = fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
-foreignKeysOf :: Text -> [TableConstraint]
-foreignKeysOf t =
-  [ c
-    | Just tbl <- [M.lookup (TableName t) (schemaTables hsSchema)],
-      c@ForeignKey {} <- S.toList (tableConstraints tbl)
-  ]
+foreignKeysOf :: Text -> Either [ValidationFailed] [TableConstraint]
+foreignKeysOf t = do
+  schema <- hsSchema
+  pure
+    [ c
+      | Just tbl <- [M.lookup (TableName t) (schemaTables schema)],
+        c@ForeignKey {} <- S.toList (tableConstraints tbl)
+    ]
 
 foreignKeyTests :: TestTree
 foreignKeyTests =
@@ -94,28 +97,28 @@ foreignKeyTests =
     [ QC.testProperty "overrides the foreign key found by FK discovery" $
         once $
           foreignKeysOf "weathers"
-            === [ ForeignKey
-                    "weathers_city__name_fkey"
+            === Right [ ForeignKey
+                    "weathers_city__name_cities_name_fkey"
                     (TableName "cities")
-                    (S.fromList [(ColumnName "city__name", ColumnName "name")])
+                    ((ColumnName "city__name", ColumnName "name") :| [])
                     Cascade
                     Restrict
                 ],
       QC.testProperty "gives distinct names to two keys on the same target table" $
         once $
-          S.fromList (foreignKeysOf "routes")
-            === S.fromList
+          fmap S.fromList (foreignKeysOf "routes")
+            === Right (S.fromList
               [ ForeignKey
-                  "routes_from__name_fkey"
+                  "routes_from__name_cities_name_fkey"
                   (TableName "cities")
-                  (S.fromList [(ColumnName "from__name", ColumnName "name")])
+                  ((ColumnName "from__name", ColumnName "name") :| [])
                   Cascade
                   NoAction,
                 ForeignKey
-                  "routes_to__name_fkey"
+                  "routes_to__name_cities_name_fkey"
                   (TableName "cities")
-                  (S.fromList [(ColumnName "to__name", ColumnName "name")])
+                  ((ColumnName "to__name", ColumnName "name") :| [])
                   Restrict
                   NoAction
-              ]
+              ])
     ]

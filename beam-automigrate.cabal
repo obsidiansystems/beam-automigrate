@@ -21,6 +21,10 @@ description:
 extra-source-files:
   README.md
   CHANGELOG.md
+  tests/compile/Main.hs
+  tests/compile/pass/*.hs
+  tests/compile/fail/*.hs
+  tests/compile/control/*.hs
 
 tested-with:        GHC ==9.10.3
 

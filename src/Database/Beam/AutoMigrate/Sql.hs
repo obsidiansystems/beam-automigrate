@@ -11,6 +11,7 @@ module Database.Beam.AutoMigrate.Sql
 where
 
 import Control.Monad (when)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.String.Conv (toS)
@@ -249,10 +250,9 @@ renderEditAction action = case action of
         PrimaryKey _ cols -> validateKey c cols
         ForeignKey _ target pairs _ _ -> do
           checkIdent (tableName target)
-          let pairList = S.toList pairs
+          let pairList = NE.toList pairs
               locals = map fst pairList
               remotes = map snd pairList
-          when (null pairList) $ Left (InvalidSqlEdit ctx "empty foreign key")
           mapM_ (checkIdent . columnName) locals
           mapM_ (checkIdent . columnName) remotes
           when (length (S.fromList locals) /= length locals) $
@@ -277,9 +277,9 @@ renderEditAction action = case action of
         ForeignKey _ target pairs onDelete onUpdate ->
           pure $
             "CONSTRAINT " <> sqlEscaped name
-              <> " FOREIGN KEY (" <> T.intercalate ", " (map (sqlEscaped . columnName . fst) (S.toList pairs)) <> ")"
+              <> " FOREIGN KEY (" <> T.intercalate ", " (map (sqlEscaped . columnName . fst) (NE.toList pairs)) <> ")"
               <> " REFERENCES " <> qual target
-              <> "(" <> T.intercalate ", " (map (sqlEscaped . columnName . snd) (S.toList pairs)) <> ")"
+              <> "(" <> T.intercalate ", " (map (sqlEscaped . columnName . snd) (NE.toList pairs)) <> ")"
               <> renderAction "ON DELETE" onDelete
               <> renderAction "ON UPDATE" onUpdate
 

@@ -6,10 +6,10 @@
 
 module ForeignKeys where
 
-import Control.Exception (bracket)
+import Control.Exception (bracket, throwIO)
 import Data.Proxy
 import Data.Text (Text)
-import Database.Beam.AutoMigrate (AnnotatedDatabaseSettings, Migration, Schema, defaultAnnotatedDbSettings, fromAnnotatedDbSettings, migrate, printMigration, unsafeRunMigration)
+import Database.Beam.AutoMigrate (AnnotatedDatabaseSettings, Migration, MigrationError (..), Schema, ValidationFailed, defaultAnnotatedDbSettings, fromAnnotatedDbSettings, migrate, printMigration, unsafeRunMigration)
 import Database.Beam.Postgres
 import Database.Beam.Schema (Beamable, Columnar, Database, PrimaryKey, TableEntity, defaultDbSettings)
 import qualified Database.Beam.Schema as Beam
@@ -55,7 +55,7 @@ instance Beam.Table WeatherT where
 forecastDB :: AnnotatedDatabaseSettings Postgres ForecastDB
 forecastDB = defaultAnnotatedDbSettings defaultDbSettings
 
-hsSchema :: Schema
+hsSchema :: Either [ValidationFailed] Schema
 hsSchema = fromAnnotatedDbSettings forecastDB (Proxy @'[])
 
 exampleShowMigration :: IO ()
@@ -63,11 +63,12 @@ exampleShowMigration = withBeamTestDb printMigration
 
 withBeamTestDb :: (Migration Pg -> Pg ()) -> IO ()
 withBeamTestDb action = do
+  desired <- either (throwIO . HaskellSchemaValidationFailed) pure hsSchema
   let connInfo = "host=localhost port=5432 dbname=beam-test-forecast-db"
   bracket (Pg.connectPostgreSQL connInfo) Pg.close $ \conn ->
     Pg.withTransaction conn $
       runBeamPostgres conn $ do
-        let mig = migrate conn hsSchema
+        let mig = migrate conn desired
         action mig
 
 exampleAutoMigration :: IO ()
