@@ -108,9 +108,8 @@ userTablesQ =
         "and relname NOT LIKE 'beam_%'"
       ]
 
--- | Get the stored default expression for every column, together with the
--- sequences and enums it depends on. Dependencies come from the real
--- @pg_depend@ edges of the default expression, never from parsing its SQL text.
+-- | Preserve each stored default expression and identify its sequence and enum dependencies.
+-- Read dependencies from @pg_depend@ rather than parsing SQL text.
 defaultsQ :: Pg.Query
 defaultsQ =
   fromString $
@@ -443,10 +442,9 @@ type AllDefaults = Map TableName Defaults
 
 type Defaults = Map ColumnName DefaultExpr
 
--- Get the complete stored SQL expression for every column default, together
--- with the sequence/enum dependencies observed in @pg_depend@. The expression
--- is stored verbatim; exact desired-vs-stored normalization is deferred to the
--- separate normalization pass.
+-- Preserve complete default expressions without rewriting their SQL.
+-- Read sequence and enum dependencies from @pg_depend@.
+-- Compare desired and stored expressions in a separate normalization pass.
 getAllDefaults :: Pg.Connection -> IO AllDefaults
 getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
   where

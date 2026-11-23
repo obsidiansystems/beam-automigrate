@@ -121,9 +121,8 @@ newtype ColumnName = ColumnName
 instance IsString ColumnName where
   fromString = ColumnName . T.pack
 
--- | A column default: the complete SQL expression PostgreSQL should store,
--- together with the resources that expression depends on. The expression text
--- is trusted SQL and is never parsed or rewritten here.
+-- | Preserve a column's complete default expression and its resource dependencies.
+-- Treat the expression as trusted SQL. Do not parse or rewrite it here.
 data DefaultExpr = DefaultExpr
   { defaultExpression :: Text,
     defaultSequenceDependencies :: Set SequenceName,

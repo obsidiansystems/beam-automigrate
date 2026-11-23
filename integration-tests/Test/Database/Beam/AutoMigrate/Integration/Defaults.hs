@@ -6,11 +6,10 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Live checks for the column-default lifecycle through the public runner:
--- replacing a default must preserve existing rows and affect only newly
--- inserted defaulted rows; removing it must produce SQL NULL; expression
--- defaults must execute with their declared casts; generated serial literals
--- execute for quoted and backslash-bearing names.
+-- | Check that default changes preserve existing rows and affect subsequent inserts through the public runner.
+-- Check that removing a nullable column's default makes an omitted value NULL.
+-- Check that expression defaults retain their casts.
+-- Check generated serial defaults with quotes and backslashes in sequence names.
 module Test.Database.Beam.AutoMigrate.Integration.Defaults (defaultsLiveTests) where
 
 import Control.Monad (void)

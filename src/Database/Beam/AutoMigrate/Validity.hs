@@ -346,8 +346,7 @@ validateTableConstraint s tName tbl c = case c of
                in Left $ InvalidTableConstraint c reason
             Just () -> Right ()
 
--- | Validate 'Column': its enum type and its default's declared sequence/enum
--- dependencies must exist in the schema.
+-- | Reject columns whose enum type or declared default dependencies are missing from the schema.
 validateColumn :: Schema -> TableName -> (ColumnName, Column) -> Either [ValidationFailed] ()
 validateColumn s tName (colName, col) = do
   case lookupEnum (colName, col) of

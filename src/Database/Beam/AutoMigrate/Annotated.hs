@@ -452,12 +452,11 @@ defaultsTo tyVal = FieldModification $ \old ->
             FieldSchema ty c (Just (pgDefaultExpression tyVal))
         }
 
--- | Postgres-specific function to convert any 'QGenExpr' into a meaningful
--- 'DefaultExpr', preserving the complete rendered expression. The expression is
--- never quoted as a string literal and no type cast is appended: PostgreSQL
--- coerces it to the declared column type itself. Enum dependencies come from
--- the expression's recursive column type; sequence dependencies start empty and
--- are discovered by server normalization.
+-- | Preserve a 'QGenExpr' as a complete SQL default expression.
+-- Do not quote the expression as a string literal or append a type cast.
+-- PostgreSQL coerces the expression to the declared column type.
+-- Collect enum dependencies from the column type, including array elements.
+-- Leave sequence dependencies empty until server normalization discovers them.
 pgDefaultExpression ::
   forall ty.
   (HasColumnType ty, HasSqlValueSyntax Pg.PgValueSyntax ty) =>

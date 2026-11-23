@@ -426,9 +426,7 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
--- A companion sequence owns its column's default; an explicit default on the
--- same column is kept and suppresses companion generation for now. The typed
--- conflict refusal is a step-10 refinement of structured derivation.
+-- Preserve an explicit column default instead of generating a companion sequence.
 instance HasCompanionSequence ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
   gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr mbDefault)))) =
     case (mbDefault, hasCompanionSequence (Proxy @ty) t name) of

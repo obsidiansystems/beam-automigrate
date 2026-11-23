@@ -258,11 +258,10 @@ instance HasCompanionSequence' 'True (SqlSerial a) where
         nextvalExpr = "nextval(" <> regclassLiteral sname <> "::regclass)"
      in Just ((s, Sequence tName cname), DefaultExpr nextvalExpr (S.singleton s) S.empty)
     where
-      -- Serialize the *generated* regclass literal in PostgreSQL's canonical
-      -- spelling: a plain lower-ascii identifier stays bare, anything else is
-      -- double-quoted and apostrophes/backslashes are escaped by the literal
-      -- encoder. The leading E is dropped only when the generated value has no
-      -- backslash, matching pg_get_expr's standard-string spelling.
+      -- Match PostgreSQL's stored spelling for generated sequence references.
+      -- Leave plain lowercase ASCII identifiers unquoted. Quote other identifiers.
+      -- Escape apostrophes and backslashes when encoding the string literal.
+      -- Omit the E prefix only when the generated value contains no backslash.
       regclassLiteral :: Text -> Text
       regclassLiteral name =
         let value = if isPlainIdentifier name then name else Util.sqlEscaped name

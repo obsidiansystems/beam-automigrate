@@ -7,10 +7,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Pure regression tests for the explicit column-default slot: exactly one
--- edit for a default-only change, matching reference enumeration, exact
--- simulation preconditions, dependency validation and generated serial
--- literal spelling.
+-- | Check that a default-only change produces exactly one edit.
+-- Check agreement with reference edits, simulation preconditions, resource dependencies, and generated sequence literals.
 module Test.Database.Beam.AutoMigrate.Defaults (defaultTests) where
 
 import Data.List (isInfixOf, sort)
