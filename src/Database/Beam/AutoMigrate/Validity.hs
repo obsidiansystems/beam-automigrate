@@ -8,6 +8,10 @@ module Database.Beam.AutoMigrate.Validity
     ApplyFailed,
     ValidationFailed (..),
 
+    -- * Canonicalization
+    canonicalizeSchema,
+    canonicalizeColumnType,
+
     -- * Applying edits to a 'Schema'
     applyEdits,
 
@@ -30,8 +34,11 @@ import qualified Data.Map.Strict as M
 import Data.Monoid
 import qualified Data.Set as S
 import Data.Text (Text)
+import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Diff
 import Database.Beam.AutoMigrate.Types
+import Database.Beam.AutoMigrate.Util (canonicalizeForeignKeyPairs, isValidIdentifier)
+import qualified Database.Beam.Backend.SQL.AST as AST
 import Lens.Micro ((&))
 
 -- | Simple type that allows us to talk about \"qualified entities\" like columns, which name might not be
@@ -99,6 +106,10 @@ data Reason
     ForeignKeyArityMismatch TableName TableName Int Int
   | -- | An enum definition conflicts with another definition of the same name.
     ConflictingEnumDefinition EnumerationName Enumeration Enumeration
+  | -- | Identify a column whose type declaration has invalid bounds or an unsupported form.
+    InvalidPhysicalColumnType (Qualified ColumnName) ColumnType Text
+  | -- | An identifier used by a physical type is not a valid PostgreSQL name.
+    InvalidIdentifier Text
   deriving (Show, Eq)
 
 data ApplyFailed
@@ -119,6 +130,136 @@ data ValidationFailed
   | InvalidSequence SequenceName Reason
   | InvalidForeignKeyDeclaration TableName TableName Reason
   deriving (Show, Eq)
+
+--
+-- Canonicalization
+--
+
+-- | Prevent equivalent type declarations from appearing as schema differences.
+-- Normalize types to the forms PostgreSQL stores.
+-- Sort complete foreign key pairs without changing their column correspondence.
+-- Keep default expressions and sequence ownership unchanged.
+canonicalizeSchema :: Schema -> Either [ValidationFailed] Schema
+canonicalizeSchema s = do
+  tables <- forM (M.toList (schemaTables s)) $ \(tName, tbl) -> do
+    cols <- forM (M.toList (tableColumns tbl)) $ \(cName, col) -> do
+      ty <- case canonicalizeColumnType (columnType col) of
+        Left err ->
+          Left [InvalidColumn (Qualified tName cName) (canonicalizationReason (Qualified tName cName) (columnType col) err)]
+        Right canonical -> Right canonical
+      pure (cName, col {columnType = ty})
+    pure (tName, tbl {tableColumns = M.fromList cols, tableConstraints = S.map canonicalConstraint (tableConstraints tbl)})
+  pure s {schemaTables = M.fromList tables}
+  where
+    canonicalConstraint (ForeignKey name target pairs onDelete onUpdate) =
+      ForeignKey name target (canonicalizeForeignKeyPairs pairs) onDelete onUpdate
+    canonicalConstraint other = other
+
+-- | Identify the affected column and declared type when rendering fails.
+canonicalizationReason :: Qualified ColumnName -> ColumnType -> RenderError -> Reason
+canonicalizationReason qual original = \case
+  InvalidSqlType _ msg -> InvalidPhysicalColumnType qual original msg
+  InvalidSqlIdentifier msg -> InvalidIdentifier msg
+  InvalidSqlEdit _ msg -> InvalidPhysicalColumnType qual original msg
+
+-- | Give schema validation and SQL rendering the same supported type rules.
+-- Normalize equivalent types. Return an error for unsupported forms or invalid bounds.
+canonicalizeColumnType :: ColumnType -> Either RenderError ColumnType
+canonicalizeColumnType = \case
+  SqlStdType std -> SqlStdType <$> canonicalizeStdType std
+  PgSpecificType pg -> PgSpecificType <$> canonicalizePgType pg
+  -- Match PostgreSQL storage for text-backed enums with unbounded VARCHAR.
+  DbEnumeration _ _ -> Right (SqlStdType (AST.DataTypeChar True Nothing Nothing))
+  SqlArrayType inner dims
+    | dims == 0 || dims > maxArrayRank ->
+      Left (InvalidSqlType (SqlArrayType inner dims) "array rank must be between 1 and 6")
+    | isArrayType inner ->
+      Left (InvalidSqlType (SqlArrayType inner dims) "nested arrays are not supported; declare one rank only")
+    | otherwise -> SqlArrayType <$> canonicalizeColumnType inner <*> pure dims
+  where
+    isArrayType = \case
+      SqlArrayType _ _ -> True
+      SqlStdType (AST.DataTypeArray _ _) -> True
+      _ -> False
+
+maxArrayRank :: Word
+maxArrayRank = 6
+
+canonicalizePgType :: PgDataType -> Either RenderError PgDataType
+canonicalizePgType = \case
+  PgEnumeration eName
+    | isValidIdentifier (enumName eName) -> Right (PgEnumeration eName)
+    | otherwise -> Left (InvalidSqlIdentifier (enumName eName))
+  PgVector dims -> case dims of
+    Nothing -> Right (PgVector Nothing)
+    Just n
+      | n >= 1 && n <= 16000 -> Right (PgVector (Just n))
+      | otherwise -> Left (InvalidSqlType (PgSpecificType (PgVector dims)) "vector dimensions must be between 1 and 16000")
+  other -> Right other
+
+maxCharWidth, maxBitWidth, maxNumericPrecision :: Word
+maxCharWidth = 10485760
+maxBitWidth = 83886080
+maxNumericPrecision = 1000
+
+canonicalizeStdType :: AST.DataType -> Either RenderError AST.DataType
+canonicalizeStdType std = case std of
+  AST.DataTypeChar varying prec charSet
+    | Just _ <- charSet ->
+      Left (InvalidSqlType (SqlStdType std) "explicit character sets are not supported")
+    | not varying, Nothing <- prec -> Right (AST.DataTypeChar False (Just 1) Nothing)
+    | otherwise -> AST.DataTypeChar varying <$> checkWidth std maxCharWidth prec <*> pure Nothing
+  -- Treat NATIONAL CHAR/VARCHAR as their ordinary CHAR/VARCHAR equivalents.
+  AST.DataTypeNationalChar varying prec -> canonicalizeStdType (AST.DataTypeChar varying prec Nothing)
+  AST.DataTypeBit varying prec
+    | not varying, Nothing <- prec -> Right (AST.DataTypeBit False (Just 1))
+    | otherwise -> AST.DataTypeBit varying <$> checkWidth std maxBitWidth prec
+  AST.DataTypeNumeric prec -> AST.DataTypeNumeric <$> checkNumeric std prec
+  -- Use NUMERIC for the equivalent DECIMAL declaration.
+  AST.DataTypeDecimal prec -> AST.DataTypeNumeric <$> checkNumeric std prec
+  -- Select REAL for FLOAT precision 1 through 24.
+  -- Select DOUBLE PRECISION for precision 25 through 53 or unspecified precision.
+  AST.DataTypeFloat (Just p)
+    | p >= 1 && p <= 24 -> Right AST.DataTypeReal
+    | p >= 25 && p <= 53 -> Right AST.DataTypeDoublePrecision
+    | otherwise -> Left (InvalidSqlType (SqlStdType std) "FLOAT precision must be between 1 and 53")
+  AST.DataTypeFloat Nothing -> Right AST.DataTypeDoublePrecision
+  AST.DataTypeTime prec tz ->
+    (\p -> AST.DataTypeTime p tz) <$> checkTemporalPrecision std prec
+  AST.DataTypeTimeStamp prec tz ->
+    (\p -> AST.DataTypeTimeStamp p tz) <$> checkTemporalPrecision std prec
+  -- Require 'SqlArrayType' so arrays use one supported representation.
+  AST.DataTypeArray _ _ ->
+    Left (InvalidSqlType (SqlStdType std) "AST array constructors are not supported; use SqlArrayType")
+  AST.DataTypeInterval {} -> unsupported
+  AST.DataTypeIntervalFromTo {} -> unsupported
+  AST.DataTypeRow {} -> unsupported
+  AST.DataTypeDomain {} -> unsupported
+  _ -> Right std
+  where
+    unsupported = Left (InvalidSqlType (SqlStdType std) "unsupported AST data type constructor")
+
+checkWidth :: AST.DataType -> Word -> Maybe Word -> Either RenderError (Maybe Word)
+checkWidth _ _ Nothing = Right Nothing
+checkWidth ty limit (Just w)
+  | w >= 1 && w <= limit = Right (Just w)
+  | otherwise = Left (InvalidSqlType (SqlStdType ty) ("width must be between 1 and " <> T.pack (show limit)))
+
+checkNumeric :: AST.DataType -> Maybe (Word, Maybe Word) -> Either RenderError (Maybe (Word, Maybe Word))
+checkNumeric _ Nothing = Right Nothing
+checkNumeric ty (Just (prec, scale))
+  | prec < 1 || prec > maxNumericPrecision =
+    Left (InvalidSqlType (SqlStdType ty) ("numeric precision must be between 1 and " <> T.pack (show maxNumericPrecision)))
+  | Just 0 == scale = Right (Just (prec, Nothing))
+  | maybe False (> maxNumericPrecision) scale =
+    Left (InvalidSqlType (SqlStdType ty) ("numeric scale must be between 0 and " <> T.pack (show maxNumericPrecision)))
+  | otherwise = Right (Just (prec, scale))
+
+checkTemporalPrecision :: AST.DataType -> Maybe Word -> Either RenderError (Maybe Word)
+checkTemporalPrecision ty prec = case prec of
+  Just p | p > 6 ->
+    Left (InvalidSqlType (SqlStdType ty) "temporal precision must be between 0 and 6")
+  _ -> Right prec
 
 --
 -- Validating a Schema and a set of edit actions.

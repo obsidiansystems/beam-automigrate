@@ -196,8 +196,9 @@ fromAnnotatedDbSettings ::
   Either [ValidationFailed] Schema
 fromAnnotatedDbSettings db p = do
   derived <- gSchema db p (from db)
-  validateSchema derived
-  pure derived
+  canonical <- canonicalizeSchema derived
+  validateSchema canonical
+  pure canonical
 
 -- | Produces the same 'Schema' as 'fromAnnotatedDbSettings', with a compile-time cost that is linear
 -- in the size of the database instead of quadratic.
@@ -245,8 +246,9 @@ fromAnnotatedDbSettingsIndexed db p = do
             schemaEnumerations = enumerations,
             schemaSequences = sequences
           }
-  validateSchema derived
-  pure derived
+  canonical <- canonicalizeSchema derived
+  validateSchema canonical
+  pure canonical
 
 -- | Render all edits before executing DDL to detect rendering errors before any database changes.
 renderEditCommands :: [WithPriority Edit] -> Either RenderError [Pg.PgCommandSyntax]
@@ -282,10 +284,14 @@ splitEditsOnSafety =
 -- it returns a 'Migration', which can then be executed via 'runMigration'.
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
-  dbSchema <- lift . liftIO $ getSchema conn
-  liftEither $ first HaskellSchemaValidationFailed (validateSchema hsSchema)
+  dbSchema0 <- lift . liftIO $ getSchema conn
+  -- Avoid repeated type-change edits for equivalent PostgreSQL types.
+  -- Normalize both the observed schema and the desired schema before comparison.
+  hsSchema' <- liftEither $ first HaskellSchemaValidationFailed (canonicalizeSchema hsSchema)
+  dbSchema <- liftEither $ first DatabaseSchemaValidationFailed (canonicalizeSchema dbSchema0)
+  liftEither $ first HaskellSchemaValidationFailed (validateSchema hsSchema')
   liftEither $ first DatabaseSchemaValidationFailed (validateSchema dbSchema)
-  let schemaDiff = diff hsSchema dbSchema
+  let schemaDiff = diff hsSchema' dbSchema
   case schemaDiff of
     Left e -> throwError (DiffFailed e)
     Right edits -> lift (put edits)

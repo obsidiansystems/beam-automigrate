@@ -19,6 +19,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Types
 import Database.Beam.AutoMigrate.Util (isValidIdentifier, sqlEscaped, sqlOptNumericPrec, sqlOptPrec, sqlSingleQuoted)
+import Database.Beam.AutoMigrate.Validity (canonicalizeColumnType)
 import qualified Database.Beam.Backend.SQL.AST as AST
 import qualified Database.Beam.Postgres.Syntax as Pg
 
@@ -33,23 +34,24 @@ checkLabel t
   | T.null t || isValidIdentifier t = Right ()
   | otherwise = Left (InvalidSqlIdentifier t)
 
--- | Render a column type or return a typed error.
--- Reject invalid precision, width, array rank, and vector dimensions.
--- Reject unsupported AST constructors instead of substituting a text type.
+-- | Apply the same type rules to direct SQL rendering and schema validation.
+-- Normalize equivalent types before rendering.
+-- Reject invalid bounds and unsupported types instead of substituting a text type.
 renderDataType :: ColumnType -> Either RenderError Text
-renderDataType ty0 = case ty0 of
-  SqlStdType stdType -> renderStdType stdType
-  -- Store text-based enums as unbounded VARCHAR.
-  DbEnumeration _ _ -> Right "VARCHAR"
-  PgSpecificType pgType -> renderPgType pgType
-  SqlArrayType inner dims
-    | dims < 1 || dims > 6 ->
-        Left (InvalidSqlType ty0 "array rank must be between 1 and 6")
-    | isArray inner ->
-        Left (InvalidSqlType ty0 "nested array types are not supported")
-    | otherwise ->
-        (<> T.replicate (fromIntegral dims) "[]") <$> renderDataType inner
+renderDataType ty0 = canonicalizeColumnType ty0 >>= go
   where
+    go = \case
+      SqlStdType stdType -> renderStdType stdType
+      -- Store text-based enums as unbounded VARCHAR.
+      DbEnumeration _ _ -> Right "VARCHAR"
+      PgSpecificType pgType -> renderPgType pgType
+      SqlArrayType inner dims
+        | dims < 1 || dims > 6 ->
+            Left (InvalidSqlType ty0 "array rank must be between 1 and 6")
+        | isArray inner ->
+            Left (InvalidSqlType ty0 "nested array types are not supported")
+        | otherwise ->
+            (<> T.replicate (fromIntegral dims) "[]") <$> go inner
     isArray = \case
       SqlArrayType _ _ -> True
       _ -> False
