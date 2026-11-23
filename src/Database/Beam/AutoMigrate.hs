@@ -234,9 +234,8 @@ splitEditsOnSafety =
 migrate :: MonadIO m => Pg.Connection -> Schema -> Migration m
 migrate conn hsSchema = do
   dbSchema0 <- lift . liftIO $ getSchema conn
-  -- Both observed and desired sides are canonicalized: PostgreSQL stores CHAR
-  -- without a width as CHAR(1), DECIMAL as NUMERIC, text-backed enums as
-  -- VARCHAR and so on, so an uncanonicalized boundary would diff forever.
+  -- Avoid repeated type-change edits for equivalent PostgreSQL types.
+  -- Normalize both the observed schema and the desired schema before comparison.
   hsSchema' <- liftEither $ first HaskellSchemaValidationFailed (canonicalizeSchema hsSchema)
   dbSchema <- liftEither $ first DatabaseSchemaValidationFailed (canonicalizeSchema dbSchema0)
   liftEither $ first HaskellSchemaValidationFailed (validateSchema hsSchema')

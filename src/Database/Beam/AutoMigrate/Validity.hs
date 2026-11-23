@@ -106,8 +106,7 @@ data Reason
     ForeignKeyArityMismatch TableName TableName Int Int
   | -- | An enum definition conflicts with another definition of the same name.
     ConflictingEnumDefinition EnumerationName Enumeration Enumeration
-  | -- | This 'Column' uses a physical type PostgreSQL cannot represent as
-    -- declared (bad width/precision/rank or an unsupported constructor).
+  | -- | Identify a column whose type declaration has invalid bounds or an unsupported form.
     InvalidPhysicalColumnType (Qualified ColumnName) ColumnType Text
   | -- | An identifier used by a physical type is not a valid PostgreSQL name.
     InvalidIdentifier Text
@@ -136,13 +135,10 @@ data ValidationFailed
 -- Canonicalization
 --
 
--- | Normalize physical type aliases and structural forms to the shapes
--- PostgreSQL actually stores, so a supported declaration does not fail its
--- postcheck merely because the Haskell-side constructors differ from the
--- introspected ones. Default expressions are never rewritten here.
---
--- Foreign key pairs are sorted as pairs, never as independent column lists.
--- Sequence ownership fields are left untouched.
+-- | Prevent equivalent type declarations from appearing as schema differences.
+-- Normalize types to the forms PostgreSQL stores.
+-- Sort complete foreign key pairs without changing their column correspondence.
+-- Keep default expressions and sequence ownership unchanged.
 canonicalizeSchema :: Schema -> Either [ValidationFailed] Schema
 canonicalizeSchema s = do
   tables <- forM (M.toList (schemaTables s)) $ \(tName, tbl) -> do
@@ -159,22 +155,20 @@ canonicalizeSchema s = do
       ForeignKey name target (canonicalizeForeignKeyPairs pairs) onDelete onUpdate
     canonicalConstraint other = other
 
--- | Map a renderer failure onto the contextual validation reason for one
--- column declaration.
+-- | Identify the affected column and declared type when rendering fails.
 canonicalizationReason :: Qualified ColumnName -> ColumnType -> RenderError -> Reason
 canonicalizationReason qual original = \case
   InvalidSqlType _ msg -> InvalidPhysicalColumnType qual original msg
   InvalidSqlIdentifier msg -> InvalidIdentifier msg
   InvalidSqlEdit _ msg -> InvalidPhysicalColumnType qual original msg
 
--- | Canonicalize one physical column type, rejecting forms PostgreSQL cannot
--- represent as requested. Shared by schema validation and SQL rendering so both
--- boundaries agree on the supported model.
+-- | Give schema validation and SQL rendering the same supported type rules.
+-- Normalize equivalent types. Return an error for unsupported forms or invalid bounds.
 canonicalizeColumnType :: ColumnType -> Either RenderError ColumnType
 canonicalizeColumnType = \case
   SqlStdType std -> SqlStdType <$> canonicalizeStdType std
   PgSpecificType pg -> PgSpecificType <$> canonicalizePgType pg
-  -- A text-backed enum is an unbounded VARCHAR column in PostgreSQL.
+  -- Match PostgreSQL storage for text-backed enums with unbounded VARCHAR.
   DbEnumeration _ _ -> Right (SqlStdType (AST.DataTypeChar True Nothing Nothing))
   SqlArrayType inner dims
     | dims == 0 || dims > maxArrayRank ->
@@ -215,15 +209,16 @@ canonicalizeStdType std = case std of
       Left (InvalidSqlType (SqlStdType std) "explicit character sets are not supported")
     | not varying, Nothing <- prec -> Right (AST.DataTypeChar False (Just 1) Nothing)
     | otherwise -> AST.DataTypeChar varying <$> checkWidth std maxCharWidth prec <*> pure Nothing
-  -- NATIONAL CHAR/VARCHAR are ordinary CHAR/VARCHAR in PostgreSQL.
+  -- Treat NATIONAL CHAR/VARCHAR as their ordinary CHAR/VARCHAR equivalents.
   AST.DataTypeNationalChar varying prec -> canonicalizeStdType (AST.DataTypeChar varying prec Nothing)
   AST.DataTypeBit varying prec
     | not varying, Nothing <- prec -> Right (AST.DataTypeBit False (Just 1))
     | otherwise -> AST.DataTypeBit varying <$> checkWidth std maxBitWidth prec
   AST.DataTypeNumeric prec -> AST.DataTypeNumeric <$> checkNumeric std prec
-  -- DECIMAL is NUMERIC.
+  -- Use NUMERIC for the equivalent DECIMAL declaration.
   AST.DataTypeDecimal prec -> AST.DataTypeNumeric <$> checkNumeric std prec
-  -- FLOAT(1..24) is REAL; FLOAT(25..53) and unqualified FLOAT are DOUBLE PRECISION.
+  -- Select REAL for FLOAT precision 1 through 24.
+  -- Select DOUBLE PRECISION for precision 25 through 53 or unspecified precision.
   AST.DataTypeFloat (Just p)
     | p >= 1 && p <= 24 -> Right AST.DataTypeReal
     | p >= 25 && p <= 53 -> Right AST.DataTypeDoublePrecision
@@ -233,7 +228,7 @@ canonicalizeStdType std = case std of
     (\p -> AST.DataTypeTime p tz) <$> checkTemporalPrecision std prec
   AST.DataTypeTimeStamp prec tz ->
     (\p -> AST.DataTypeTimeStamp p tz) <$> checkTemporalPrecision std prec
-  -- Only 'SqlArrayType' models arrays in this release.
+  -- Require 'SqlArrayType' so arrays use one supported representation.
   AST.DataTypeArray _ _ ->
     Left (InvalidSqlType (SqlStdType std) "AST array constructors are not supported; use SqlArrayType")
   AST.DataTypeInterval {} -> unsupported

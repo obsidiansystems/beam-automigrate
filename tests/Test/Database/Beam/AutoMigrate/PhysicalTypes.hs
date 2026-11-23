@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Pure regression tests for physical type canonicalization: PostgreSQL alias
--- normalization, supported bounds and contextual schema validation.
+-- | Check that equivalent PostgreSQL types normalize to the same representation.
+-- Check supported bounds and errors that identify invalid column declarations.
 module Test.Database.Beam.AutoMigrate.PhysicalTypes (physicalTypesTests) where
 
 import qualified Data.Map.Strict as M
