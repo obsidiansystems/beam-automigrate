@@ -121,15 +121,27 @@ newtype ColumnName = ColumnName
 instance IsString ColumnName where
   fromString = ColumnName . T.pack
 
+-- | Preserve a column's complete default expression and its resource dependencies.
+-- Treat the expression as trusted SQL. Do not parse or rewrite it here.
+data DefaultExpr = DefaultExpr
+  { defaultExpression :: Text,
+    defaultSequenceDependencies :: Set SequenceName,
+    defaultEnumDependencies :: Set EnumerationName
+  }
+  deriving (Show, Eq, Ord, Generic)
+
+instance NFData DefaultExpr
+
 data Column = Column
   { columnType :: ColumnType,
-    columnConstraints :: Set ColumnConstraint
+    columnConstraints :: Set ColumnConstraint,
+    columnDefault :: Maybe DefaultExpr
   }
   deriving (Show, Eq, Generic)
 
 -- Manual instance as 'AST.DataType' doesn't derive 'NFData'.
 instance NFData Column where
-  rnf c = rnf (columnConstraints c)
+  rnf c = rnf (columnConstraints c) `seq` rnf (columnDefault c)
 
 -- | Basic types for columns. We piggyback on 'beam-core' SQL types for now. Albeit they are a bit more
 -- specialised (i.e, SQL specific), we are less subject from their and our representation to diverge.
@@ -205,7 +217,6 @@ instance NFData TableConstraint
 
 data ColumnConstraint
   = NotNull
-  | Default Text {- the actual default -}
   deriving (Show, Eq, Ord, Generic)
 
 instance NFData ColumnConstraint
@@ -242,6 +253,7 @@ data AutomaticEditAction
   | ColumnAdded TableName ColumnName Column
   | ColumnRemoved TableName ColumnName
   | ColumnTypeChanged TableName ColumnName ColumnType {- old type -} ColumnType {- new type -}
+  | ColumnDefaultChanged TableName ColumnName (Maybe DefaultExpr) {- old -} (Maybe DefaultExpr) {- new -}
   | ColumnConstraintAdded TableName ColumnName ColumnConstraint
   | ColumnConstraintRemoved TableName ColumnName ColumnConstraint
   | EnumTypeAdded EnumerationName Enumeration
@@ -269,6 +281,7 @@ defaultEditSafety = \case
   ColumnAdded {} -> Safe
   ColumnRemoved {} -> Unsafe
   ColumnTypeChanged {} -> Unsafe
+  ColumnDefaultChanged {} -> Safe
   ColumnConstraintAdded {} -> Safe
   ColumnConstraintRemoved {} -> Safe
   EnumTypeAdded {} -> Safe
@@ -346,6 +359,7 @@ instance NFData AutomaticEditAction where
   rnf (ColumnAdded tName cName col) = tName `deepseq` cName `deepseq` col `deepseq` ()
   rnf (ColumnRemoved tName colName) = tName `deepseq` colName `deepseq` ()
   rnf (ColumnTypeChanged tName colName c1 c2) = c1 `seq` c2 `seq` tName `deepseq` colName `deepseq` ()
+  rnf (ColumnDefaultChanged tName cName old new) = tName `deepseq` cName `deepseq` old `deepseq` new `deepseq` ()
   rnf (ColumnConstraintAdded tName cName cCon) = tName `deepseq` cName `deepseq` cCon `deepseq` ()
   rnf (ColumnConstraintRemoved tName colName cCon) = tName `deepseq` colName `deepseq` cCon `deepseq` ()
   rnf (EnumTypeAdded eName enum) = eName `deepseq` enum `deepseq` ()

@@ -114,6 +114,7 @@ test-suite beam-automigrate-tests
                       Test.Database.Beam.AutoMigrate.Renderer
                       Test.Database.Beam.AutoMigrate.Derivation
                       Test.Database.Beam.AutoMigrate.Composite
+                      Test.Database.Beam.AutoMigrate.Defaults
   build-depends:
       base
     , beam-automigrate
@@ -139,6 +140,7 @@ executable beam-automigrate-integration-tests
                       Test.Database.Beam.AutoMigrate.Integration.Renderer
                       Test.Database.Beam.AutoMigrate.Composite
                       Test.Database.Beam.AutoMigrate.Integration.Composite
+                      Test.Database.Beam.AutoMigrate.Integration.Defaults
   build-depends:
       base
     , beam-automigrate

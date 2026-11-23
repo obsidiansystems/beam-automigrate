@@ -108,16 +108,30 @@ userTablesQ =
         "and relname NOT LIKE 'beam_%'"
       ]
 
--- | Get information about default values for /all/ tables.
+-- | Preserve each stored default expression and identify its sequence and enum dependencies.
+-- Read dependencies from @pg_depend@ rather than parsing SQL text.
 defaultsQ :: Pg.Query
 defaultsQ =
   fromString $
     unlines
-      [ "SELECT col.table_name::text, col.column_name::text, col.column_default::text, col.data_type::text ",
-        "FROM information_schema.columns col ",
-        "WHERE col.column_default IS NOT NULL ",
-        "AND col.table_schema NOT IN('information_schema', 'pg_catalog') ",
-        "ORDER BY col.table_name"
+      [ "SELECT c.relname::text, a.attname::text,",
+        "       pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, false)::text,",
+        "       COALESCE(array_agg(DISTINCT sc.relname) FILTER (WHERE sc.oid IS NOT NULL), ARRAY[]::name[])::text[],",
+        "       COALESCE(array_agg(DISTINCT ty.typname) FILTER (WHERE ty.oid IS NOT NULL), ARRAY[]::name[])::text[]",
+        "FROM pg_catalog.pg_attrdef ad",
+        "JOIN pg_catalog.pg_class c ON c.oid = ad.adrelid",
+        "JOIN pg_catalog.pg_namespace ns ON ns.oid = c.relnamespace",
+        "JOIN pg_catalog.pg_attribute a ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum",
+        "LEFT JOIN pg_catalog.pg_depend dep",
+        "  ON dep.classid = 'pg_attrdef'::regclass AND dep.objid = ad.oid",
+        " AND dep.refclassid IN ('pg_class'::regclass, 'pg_type'::regclass)",
+        "LEFT JOIN pg_catalog.pg_class sc",
+        "  ON dep.refclassid = 'pg_class'::regclass AND sc.oid = dep.refobjid AND sc.relkind = 'S'",
+        "LEFT JOIN pg_catalog.pg_type ty",
+        "  ON dep.refclassid = 'pg_type'::regclass AND ty.oid = dep.refobjid AND ty.typtype = 'e'",
+        "WHERE ns.nspname = ANY (current_schemas(false))",
+        "  AND c.relkind = 'r' AND c.relname NOT LIKE 'beam_%'",
+        "GROUP BY c.relname, a.attname, ad.adbin, ad.adrelid, ad.adnum"
       ]
 
 -- | Get information about columns for this table. Due to the fact this is a query executed for /each/
@@ -307,8 +321,7 @@ getSchema conn = do
         ] of
         Just cType -> do
           let nullConstraint = if attnotnull then S.fromList [NotNull] else mempty
-          let inferredConstraints = nullConstraint <> fromMaybe mempty (S.singleton <$> mbDefault)
-          let newColumn = Column cType inferredConstraints
+          let newColumn = Column cType nullConstraint mbDefault
           pure $ M.insert columnName newColumn c
         Nothing ->
           fail $
@@ -331,10 +344,10 @@ pgEnumTypeToColumnType enumData oid =
 
 pgSerialTyColumnType ::
   Pg.Oid ->
-  Maybe ColumnConstraint ->
+  Maybe DefaultExpr ->
   Maybe ColumnType
-pgSerialTyColumnType oid (Just (Default d)) = do
-  guard $ (Pg.typoid Pg.int4 == oid && "nextval" `T.isInfixOf` d && "seq" `T.isInfixOf` d)
+pgSerialTyColumnType oid (Just de) = do
+  guard (Pg.typoid Pg.int4 == oid && not (S.null (defaultSequenceDependencies de)))
   pure $ SqlStdType intType
 pgSerialTyColumnType _ _ = Nothing
 
@@ -427,60 +440,25 @@ type AllTableConstraints = Map TableName (Set TableConstraint)
 
 type AllDefaults = Map TableName Defaults
 
-type Defaults = Map ColumnName ColumnConstraint
+type Defaults = Map ColumnName DefaultExpr
 
--- Get all defaults values for /all/ the columns.
--- FIXME(adn) __IMPORTANT:__ This function currently __always_ attach an explicit type annotation to the
--- default value, by reading its 'date_type' field, to resolve potential ambiguities.
--- The reason for this is that we cannot reliably guarantee a convertion between default values are read
--- by postgres and values we infer on the Schema side (using the 'beam-core' machinery). In theory we
--- wouldn't need to explicitly annotate the types before generating a 'Default' constraint on the 'Schema'
--- side, but this doesn't always work. For example, if we **always** specify a \"::numeric\" annotation for
--- an 'Int', Postgres might yield \"-1::integer\" for non-positive values and simply \"-1\" for all the rest.
--- To complicate the situation /even if/ we explicitly specify the cast
--- (i.e. \"SET DEFAULT '?::character varying'), Postgres will ignore this when reading the default back.
--- What we do here is obviously not optimal, but on the other hand it's not clear to me how to solve this
--- in a meaningful and non-invasive way, for a number of reasons:
---
-
--- * For example \"beam-migrate"\ seems to resort to be using explicit serialisation for the types, although
-
---   I couldn't find explicit trace if that applies for defaults explicitly.
---   (cfr. the \"Database.Beam.AutoMigrate.Serialization\" module in \"beam-migrate\").
---
-
--- * Another big problem is __rounding__: For example if we insert as \"double precision\" the following:
-
---   Default "'-0.22030397057804563'" , Postgres will round the value and return Default "'-0.220303970578046'".
---   Again, it's not clear to me how to prevent the users from shooting themselves here.
---
-
--- * Another quirk is with dates: \"beam\" renders a date like \'1864-05-10\' (note the single quotes) but
-
---   Postgres strip those when reading the default value back.
---
-
--- * Range types are also tricky to infer. 'beam-core' escapes the range type name when rendering its default
-
---   value, whereas Postgres annotates each individual field and yield the unquoted identifier. Compare:
---   1. Beam:     \""numrange"(0, 2, '[)')\"
---   2. Postgres: \"numrange((0)::numeric, (2)::numeric, '[)'::text)\"
---
+-- Preserve complete default expressions without rewriting their SQL.
+-- Read sequence and enum dependencies from @pg_depend@.
+-- Compare desired and stored expressions in a separate normalization pass.
 getAllDefaults :: Pg.Connection -> IO AllDefaults
 getAllDefaults conn = Pg.fold_ conn defaultsQ mempty (\acc -> pure . addDefault acc)
   where
-    addDefault :: AllDefaults -> (TableName, ColumnName, Text, Text) -> AllDefaults
-    addDefault m (tName, colName, defValue, dataType) =
-      let cleanedDefault = case T.breakOn "::" defValue of
-            (uncasted, defMb)
-              | T.null defMb ->
-                "'" <> T.dropAround ((==) '\'') uncasted <> "'::" <> dataType
-            _ -> defValue
-          entry = M.singleton colName (Default cleanedDefault)
+    addDefault :: AllDefaults -> (TableName, ColumnName, Text, V.Vector Text, V.Vector Text) -> AllDefaults
+    addDefault m (tName, colName, defValue, seqDeps, enumDeps) =
+      let entry =
+            DefaultExpr
+              defValue
+              (S.fromList (map SequenceName (V.toList seqDeps)))
+              (S.fromList (map EnumerationName (V.toList enumDeps)))
        in M.alter
             ( \case
-                Nothing -> Just entry
-                Just ss -> Just $ ss <> entry
+                Nothing -> Just (M.singleton colName entry)
+                Just ss -> Just (M.insert colName entry ss)
             )
             tName
             m

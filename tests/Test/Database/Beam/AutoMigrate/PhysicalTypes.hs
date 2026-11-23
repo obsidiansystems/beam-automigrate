@@ -107,12 +107,13 @@ physicalTypesTests =
                 columnConstraints col @?= S.singleton NotNull,
           testCase "default expressions are never rewritten" $ do
             let expr = "nextval('a___b___seq'::regclass)"
-            case canonicalizeSchema (schemaWith (DbEnumeration (EnumerationName "e") (Enumeration ["x"])) (Just (Default expr))) of
+            case canonicalizeSchema (schemaWithDefault (DbEnumeration (EnumerationName "e") (Enumeration ["x"])) (DefaultExpr expr S.empty S.empty)) of
               Left errs -> assertFailure ("unexpected failures: " <> show errs)
               Right s -> do
                 let col = tableColumns (schemaTables s M.! "t") M.! "c"
                 columnType col @?= SqlStdType (AST.DataTypeChar True Nothing Nothing)
-                columnConstraints col @?= S.singleton (Default expr),
+                columnConstraints col @?= S.empty
+                columnDefault col @?= Just (DefaultExpr expr S.empty S.empty),
           testCase "an invalid physical type is reported against its column" $
             case canonicalizeSchema (schemaWith (SqlStdType (AST.DataTypeTime (Just 7) False)) Nothing) of
               Left [InvalidColumn (Qualified tName cName) (InvalidPhysicalColumnType qName original msg)] -> do
@@ -133,7 +134,19 @@ schemaWith ty mbConstraint =
           "t"
           ( Table
               S.empty
-              (M.singleton "c" (Column ty (maybe S.empty S.singleton mbConstraint)))
+              (M.singleton "c" (Column ty (maybe S.empty S.singleton mbConstraint) Nothing))
+          )
+    }
+
+schemaWithDefault :: ColumnType -> DefaultExpr -> Schema
+schemaWithDefault ty de =
+  noSchema
+    { schemaTables =
+        M.singleton
+          "t"
+          ( Table
+              S.empty
+              (M.singleton "c" (Column ty S.empty (Just de)))
           )
     }
 

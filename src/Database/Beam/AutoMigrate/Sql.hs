@@ -206,6 +206,14 @@ renderEditAction action = case action of
       checkIdent (columnName colName)
       rendered <- renderDataType new
       pure $ alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " TYPE " <> rendered
+    ColumnDefaultChanged tblName colName _old mbNew -> do
+      checkIdent (tableName tblName)
+      checkIdent (columnName colName)
+      pure $ case mbNew of
+        Just new ->
+          alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " SET DEFAULT " <> defaultExpression new
+        Nothing ->
+          alterTable tblName <> "ALTER COLUMN " <> sqlEscaped (columnName colName) <> " DROP DEFAULT"
     ColumnConstraintAdded tblName colName cstr -> do
       checkIdent (tableName tblName)
       checkIdent (columnName colName)
@@ -241,6 +249,7 @@ renderEditAction action = case action of
       pure $
         ty
           <> T.concat (map (" " <>) (map (renderColumnConstraint SetConstraint) (S.toList (columnConstraints col))))
+          <> maybe mempty ((" DEFAULT " <>) . defaultExpression) (columnDefault col)
 
     -- Check a constraint before returning its name.
     validateTableConstraint :: TableConstraint -> Either RenderError Text
@@ -312,10 +321,8 @@ data AlterTableAction = SetConstraint | DropConstraint
   deriving (Eq)
 
 renderColumnConstraint :: AlterTableAction -> ColumnConstraint -> Text
-renderColumnConstraint act = \case
+renderColumnConstraint _ = \case
   NotNull -> "NOT NULL"
-  Default defValue | act == SetConstraint -> "DEFAULT " <> defValue
-  Default _ -> "DEFAULT"
 
 renderAction :: Text -> ReferenceAction -> Text
 renderAction actionPrefix = \case

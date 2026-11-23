@@ -55,6 +55,7 @@ editPriority = \case
   ColumnAdded {} -> Priority 3
   -- Operations that set constraints or change the shape of a type have lower priority
   ColumnTypeChanged {} -> Priority 4
+  ColumnDefaultChanged {} -> Priority 4
   EnumTypeValueAdded {} -> Priority 5
   -- foreign keys need to go last, as the referenced columns needs to be either UNIQUE or have PKs.
   TableConstraintAdded _ Unique {} -> Priority 6
@@ -123,25 +124,21 @@ diffTablesReferenceImplementation hsTables dbTables = do
   pure $ whenAdded tablesAdded <> whenRemoved tablesRemoved <> whenBoth
   where
     whenAdded :: Tables -> [WithPriority Edit]
-    whenAdded = concatMap (addEdit TableAdded TableConstraintAdded tableConstraints) . M.toList
+    whenAdded =
+      concatMap
+        (\(k, v) -> mkEdit (TableAdded k v) : map (mkEdit . TableConstraintAdded k) (S.toList (tableConstraints v)))
+        . M.toList
 
     whenRemoved :: Tables -> [WithPriority Edit]
     whenRemoved =
-      concatMap (addEdit (\k _ -> TableRemoved k) TableConstraintRemoved tableConstraints) . M.toList
+      concatMap
+        (\(k, v) -> mkEdit (TableRemoved k) : map (mkEdit . TableConstraintRemoved k) (S.toList (tableConstraints v)))
+        . M.toList
 
     go :: [WithPriority Edit] -> ((TableName, Table), (TableName, Table)) -> Diff
     go e ((hsName, hsTable), (dbName, dbTable)) = assert (hsName == dbName) $ do
       d <- diffTableReferenceImplementation hsName hsTable dbTable
       pure $ e <> d
-
-addEdit ::
-  (k -> v -> AutomaticEditAction) ->
-  (k -> c -> AutomaticEditAction) ->
-  (v -> S.Set c) ->
-  (k, v) ->
-  [WithPriority Edit]
-addEdit onValue onConstr getConstr (k, v) =
-  mkEdit (onValue k v) : map (mkEdit . onConstr k) (S.toList $ getConstr v)
 
 diffTableReferenceImplementation :: TableName -> Table -> Table -> Diff
 diffTableReferenceImplementation tName hsTable dbTable = do
@@ -172,12 +169,10 @@ diffTableReferenceImplementation tName hsTable dbTable = do
       pure $ e <> d
 
     whenAdded :: Columns -> [WithPriority Edit]
-    whenAdded =
-      concatMap (addEdit (ColumnAdded tName) (ColumnConstraintAdded tName) columnConstraints) . M.toList
+    whenAdded = map (\(k, v) -> mkEdit (ColumnAdded tName k v)) . M.toList
 
     whenRemoved :: Columns -> [WithPriority Edit]
-    whenRemoved =
-      concatMap (addEdit (\k _ -> ColumnRemoved tName k) (ColumnConstraintRemoved tName) columnConstraints) . M.toList
+    whenRemoved = map (\(k, _) -> mkEdit (ColumnRemoved tName k)) . M.toList
 
 diffColumnReferenceImplementation :: TableName -> ColumnName -> Column -> Column -> Diff
 diffColumnReferenceImplementation tName colName hsColumn dbColumn = do
@@ -192,7 +187,10 @@ diffColumnReferenceImplementation tName colName hsColumn dbColumn = do
   let typeChanged = do
         guard (columnType hsColumn /= columnType dbColumn)
         pure [mkEdit $ ColumnTypeChanged tName colName (columnType dbColumn) (columnType hsColumn)]
-  pure $ join $ catMaybes [colConstraintsAdded, colConstraintsRemoved, typeChanged]
+  let defaultChanged = do
+        guard (columnDefault hsColumn /= columnDefault dbColumn)
+        pure [mkEdit $ ColumnDefaultChanged tName colName (columnDefault dbColumn) (columnDefault hsColumn)]
+  pure $ join $ catMaybes [colConstraintsAdded, colConstraintsRemoved, typeChanged, defaultChanged]
 
 --
 -- Actual implementation
@@ -303,21 +301,10 @@ diffTable tName hsTable dbTable = do
   where
     whenColumnAdded :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
     whenColumnAdded =
-      traverseMissing
-        ( \k v -> do
-            let added = mkEdit $ ColumnAdded tName k v
-            let constraintsAdded = map (mkEdit . ColumnConstraintAdded tName k) (S.toList $ columnConstraints v)
-            pure $ D.fromList (added : constraintsAdded)
-        )
+      traverseMissing (\k v -> pure . D.singleton . mkEdit $ ColumnAdded tName k v)
 
     whenColumnRemoved :: WhenMissing (Either DiffError) ColumnName Column (DList (WithPriority Edit))
-    whenColumnRemoved =
-      traverseMissing
-        ( \k v -> do
-            let removed = mkEdit $ ColumnRemoved tName k
-            let constraintsRemoved = map (mkEdit . ColumnConstraintRemoved tName k) (S.toList $ columnConstraints v)
-            pure $ D.fromList (removed : constraintsRemoved)
-        )
+    whenColumnRemoved = traverseMissing (\k _ -> pure . D.singleton . mkEdit $ ColumnRemoved tName k)
 
     whenBoth :: WhenMatched (Either DiffError) ColumnName Column Column (DList (WithPriority Edit))
     whenBoth = zipWithAMatched (diffColumn tName)
@@ -335,4 +322,7 @@ diffColumn tName colName hsColumn dbColumn = do
   let typeChanged = do
         guard (columnType hsColumn /= columnType dbColumn)
         pure $ D.singleton (mkEdit $ ColumnTypeChanged tName colName (columnType dbColumn) (columnType hsColumn))
-  pure $ foldl' D.append D.empty $ catMaybes [colConstraintsAdded, colConstraintsRemoved, typeChanged]
+  let defaultChanged = do
+        guard (columnDefault hsColumn /= columnDefault dbColumn)
+        pure $ D.singleton (mkEdit $ ColumnDefaultChanged tName colName (columnDefault dbColumn) (columnDefault hsColumn))
+  pure $ foldl' D.append D.empty $ catMaybes [colConstraintsAdded, colConstraintsRemoved, typeChanged, defaultChanged]
