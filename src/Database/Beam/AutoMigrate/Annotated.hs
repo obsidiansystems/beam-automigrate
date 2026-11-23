@@ -547,8 +547,7 @@ data PendingForeignKey = PendingForeignKey
   }
   deriving (Show, Eq)
 
--- | Special-case combinator to use when defining FK constraints referencing the /primary key/ of the
--- target table.
+-- | Declare a foreign key that references the complete primary key of the target table.
 --
 -- Apply the declared reference actions instead of the inferred actions for the same local columns.
 -- Other inferred foreign keys remain unchanged.

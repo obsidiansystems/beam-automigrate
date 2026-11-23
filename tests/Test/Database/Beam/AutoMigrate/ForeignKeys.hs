@@ -8,7 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Checks on the foreign keys that 'foreignKeyOnPk' contributes to a 'Schema'.
+-- | Check that manual foreign keys preserve declared actions and use distinct names for separate references.
 module Test.Database.Beam.AutoMigrate.ForeignKeys (foreignKeyTests) where
 
 import qualified Data.Map.Strict as M
@@ -77,7 +77,7 @@ annotatedDB =
             <> foreignKeyOnPk (dbCities travelDB) routeTo Restrict NoAction
       }
 
--- | FK discovery runs for every table, as in the README example.
+-- | Enable inference for every table to detect duplicate manual and inferred foreign keys.
 hsSchema :: Either [ValidationFailed] Schema
 hsSchema = fromAnnotatedDbSettings annotatedDB (Proxy @'[])
 
