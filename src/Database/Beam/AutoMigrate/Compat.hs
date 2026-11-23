@@ -292,8 +292,8 @@ instance (Show a, Typeable a, Enum a, Bounded a) => HasColumnType (PgEnum a) whe
     -- Postgres converts enumeration types to lowercase, so we need to call 'toLower' here.
     PgSpecificType (PgEnumeration $ EnumerationName (T.toLower . T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty))
 
-  defaultEnums p@(Proxy :: (Proxy (PgEnum a))) =
-    let (PgSpecificType (PgEnumeration ty)) = defaultColumnType p
+  defaultEnums (Proxy :: (Proxy (PgEnum a))) =
+    let ty = EnumerationName (T.toLower . T.pack $ showsTypeRep (typeRep (Proxy @a)) mempty)
         vals = Enumeration $ map (T.pack . show) ([minBound .. maxBound] :: [a])
      in M.singleton ty vals
 
