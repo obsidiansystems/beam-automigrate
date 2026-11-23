@@ -6,13 +6,14 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | Check that 'fromAnnotatedDbSettingsIndexed' derives the same 'Schema' as
--- 'fromAnnotatedDbSettings', on every database in this repository that the generic path accepts,
--- and that it reports a missing or ambiguous foreign-key target when the schema is evaluated.
+-- | Check that 'fromAnnotatedDbSettingsIndexed' returns the same result as
+-- 'fromAnnotatedDbSettings', a 'Schema' or the same validation failures, on every database in this
+-- repository that the generic path compiles, and that it reports a missing or ambiguous
+-- foreign-key target when the result is evaluated.
 module Test.Database.Beam.AutoMigrate.Indexed (indexedTests) where
 
-import Control.DeepSeq (force)
 import Control.Exception (ErrorCall (..), evaluate, try)
+import Data.Either (isLeft)
 import Data.Int (Int64)
 import Data.List (isInfixOf)
 import qualified Data.Map.Strict as M
@@ -73,7 +74,7 @@ indexedTests =
             sameSchema
               Example.hsSchema
               (fromAnnotatedDbSettingsIndexed Example.annotatedDB (Proxy @'[ 'UserDefinedFk Example.LineItemT])),
-          testCase "foreignKeyOnPk next to discovered keys, no annotations" $
+          testCase "foreignKeyOnPk overriding a discovered key, no annotations" $
             sameSchema
               (fromAnnotatedDbSettings overridesDb (Proxy @'[]))
               (fromAnnotatedDbSettingsIndexed overridesDb (Proxy @'[])),
@@ -84,13 +85,44 @@ indexedTests =
           testCase "discovery disabled for several tables" $
             sameSchema
               (fromAnnotatedDbSettings overridesDb (Proxy @'[ 'UserDefinedFk TripT, 'UserDefinedFk PersonT]))
-              (fromAnnotatedDbSettingsIndexed overridesDb (Proxy @'[ 'UserDefinedFk TripT, 'UserDefinedFk PersonT]))
+              (fromAnnotatedDbSettingsIndexed overridesDb (Proxy @'[ 'UserDefinedFk TripT, 'UserDefinedFk PersonT])),
+          testCase "a well formed raw foreign key declaration" $
+            sameSchema
+              (fromAnnotatedDbSettings (Derivation.pendingAnnotated [wellFormedPending]) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (Derivation.pendingAnnotated [wellFormedPending]) (Proxy @'[]))
+        ],
+      testGroup
+        "same validation failures as fromAnnotatedDbSettings"
+        [ testCase "an empty explicit foreign key" $
+            sameFailure
+              (fromAnnotatedDbSettings (Derivation.pendingAnnotated [pending [] []]) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (Derivation.pendingAnnotated [pending [] []]) (Proxy @'[])),
+          testCase "an explicit foreign key with unequal arities" $
+            sameFailure
+              (fromAnnotatedDbSettings (Derivation.pendingAnnotated [pending ["a", "b"] ["id"]]) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (Derivation.pendingAnnotated [pending ["a", "b"] ["id"]]) (Proxy @'[])),
+          testCase "an explicit foreign key with repeated columns" $
+            sameFailure
+              (fromAnnotatedDbSettings (Derivation.pendingAnnotated [pending ["a", "a"] ["x", "y"]]) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (Derivation.pendingAnnotated [pending ["a", "a"] ["x", "y"]]) (Proxy @'[])),
+          testCase "two explicit foreign keys with the same name" $
+            sameFailure
+              (fromAnnotatedDbSettings (Derivation.pendingAnnotated [duplicatePending, duplicatePending]) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (Derivation.pendingAnnotated [duplicatePending, duplicatePending]) (Proxy @'[])),
+          testCase "two tables with the same name" $
+            sameFailure
+              (fromAnnotatedDbSettings (defaultAnnotatedDbSettings Derivation.dupTableDb) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (defaultAnnotatedDbSettings Derivation.dupTableDb) (Proxy @'[])),
+          testCase "two columns and their sequences with the same name" $
+            sameFailure
+              (fromAnnotatedDbSettings (defaultAnnotatedDbSettings Derivation.dupColumnsDb) (Proxy @'[]))
+              (fromAnnotatedDbSettingsIndexed (defaultAnnotatedDbSettings Derivation.dupColumnsDb) (Proxy @'[]))
         ],
       testGroup
         "the overrides fixture exercises what it claims"
-        [ testCase "towns carry both the discovered and the annotated foreign key" $ do
+        [ testCase "foreignKeyOnPk replaces the discovered key on the same column" $ do
             let towns = tableOf (fromAnnotatedDbSettingsIndexed overridesDb (Proxy @'[])) "towns"
-            S.map fkActions (foreignKeys towns) @?= S.fromList [(NoAction, NoAction), (Cascade, Restrict)],
+            S.map fkActions (foreignKeys towns) @?= S.fromList [(Cascade, Restrict)],
           testCase "UserDefinedFk keeps only the annotated foreign key" $ do
             let towns = tableOf (fromAnnotatedDbSettingsIndexed overridesDb (Proxy @'[ 'UserDefinedFk TownT])) "towns"
             S.map fkActions (foreignKeys towns) @?= S.fromList [(Cascade, Restrict)],
@@ -110,9 +142,15 @@ indexedTests =
         ]
     ]
 
--- | Compare table by table first, so that a failure names the table that differs.
-sameSchema :: Schema -> Schema -> Assertion
-sameSchema expected actual = do
+-- | Both paths derive a 'Schema', and the two are equal. Compare table by table first, so that a
+-- failure names the table that differs.
+sameSchema :: Either [ValidationFailed] Schema -> Either [ValidationFailed] Schema -> Assertion
+sameSchema (Right expected) (Right actual) = sameRightSchema expected actual
+sameSchema expected actual =
+  assertFailure ("expected two schemas, got\n" <> show expected <> "\nand\n" <> show actual)
+
+sameRightSchema :: Schema -> Schema -> Assertion
+sameRightSchema expected actual = do
   M.keys (schemaTables actual) @?= M.keys (schemaTables expected)
   sequence_
     [ assertBool ("table " <> show name <> " differs:\nexpected " <> show e <> "\nactual   " <> show a) (e == a)
@@ -122,18 +160,36 @@ sameSchema expected actual = do
   schemaSequences actual @?= schemaSequences expected
   assertBool "schemas differ" (actual == expected)
 
-expectError :: String -> Schema -> Assertion
-expectError needle schema = do
-  r <- try (evaluate (force schema))
+-- | Both paths reject the database, with the same failures in the same order.
+sameFailure :: Either [ValidationFailed] Schema -> Either [ValidationFailed] Schema -> Assertion
+sameFailure expected actual = do
+  assertBool ("expected validation to fail, got " <> show expected) (isLeft expected)
+  actual @?= expected
+
+expectError :: String -> Either [ValidationFailed] Schema -> Assertion
+expectError needle result = do
+  r <- try (evaluate (length (show result)))
   case r of
     Left (ErrorCall msg)
       | needle `isInfixOf` msg -> pure ()
       | otherwise -> assertFailure ("unexpected error: " <> msg)
-    Right _ -> assertFailure "expected an error, but the Schema evaluated"
+    Right _ -> assertFailure "expected an error, but the result evaluated"
 
-tableOf :: Schema -> Text -> Table
-tableOf schema name =
+tableOf :: Either [ValidationFailed] Schema -> Text -> Table
+tableOf (Left failures) _ = error ("validation failed: " <> show failures)
+tableOf (Right schema) name =
   M.findWithDefault (error ("missing table " <> show name)) (TableName name) (schemaTables schema)
+
+pending :: [Text] -> [Text] -> PendingForeignKey
+pending locals remotes =
+  PendingForeignKey (TableName "pending_target") (map ColumnName locals) (map ColumnName remotes) NoAction NoAction
+
+wellFormedPending :: PendingForeignKey
+wellFormedPending =
+  PendingForeignKey (TableName "pending_target") [ColumnName "id"] [ColumnName "target_id"] Cascade Restrict
+
+duplicatePending :: PendingForeignKey
+duplicatePending = pending ["pending_id"] ["pending_target_id"]
 
 foreignKeys :: Table -> S.Set TableConstraint
 foreignKeys = S.filter isFk . tableConstraints

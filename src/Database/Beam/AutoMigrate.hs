@@ -214,7 +214,10 @@ fromAnnotatedDbSettings db p = do
 --    'Database.Beam.Schema.PrimaryKey' field with one lookup in the index.
 --
 -- The annotation list works as in 'fromAnnotatedDbSettings': @'UserDefinedFk' tbl@ disables FK
--- discovery for the tables of type @tbl@, and their 'foreignKeyOnPk' annotations are kept.
+-- discovery for the tables of type @tbl@, and their 'foreignKeyOnPk' annotations are kept. A
+-- 'foreignKeyOnPk' key overrides a discovered key on the same columns, and the result goes through
+-- the same checks ('validateSchema', duplicate names, foreign-key arity), so a database that
+-- 'fromAnnotatedDbSettings' rejects with a 'Left' gets the same 'Left' here.
 --
 -- Use it when the compile time or memory of 'fromAnnotatedDbSettings' is a problem. The trade-off is
 -- where two errors appear. A foreign key whose target table is not in the database, or whose target
@@ -231,15 +234,19 @@ fromAnnotatedDbSettingsIndexed ::
   ) =>
   AnnotatedDatabaseSettings be db ->
   Proxy (anns :: [Annotation]) ->
-  Schema
-fromAnnotatedDbSettingsIndexed db p =
+  Either [ValidationFailed] Schema
+fromAnnotatedDbSettingsIndexed db p = do
   let rep = from db
-      (tables, sequences) = gIndexedTables p (fkIndex db) rep
-   in Schema
-        { schemaTables = tables,
-          schemaEnumerations = gEnums db rep,
-          schemaSequences = sequences
-        }
+  ((tables, sequences), enumerations) <-
+    bothEither (gIndexedTables p (fkIndex db) rep) (gEnums db rep)
+  let derived =
+        Schema
+          { schemaTables = tables,
+            schemaEnumerations = enumerations,
+            schemaSequences = sequences
+          }
+  validateSchema derived
+  pure derived
 
 -- | Render all edits before executing DDL to detect rendering errors before any database changes.
 renderEditCommands :: [WithPriority Edit] -> Either RenderError [Pg.PgCommandSyntax]
