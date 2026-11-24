@@ -130,6 +130,7 @@ instance HasCompanionSequence' 'False ty where
 
 instance HasColumnType ty => HasColumnType (Beam.TableField e ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
+  defaultEnums _ = defaultEnums (Proxy @ty)
 
 instance HasColumnType ty => HasColumnType (Maybe ty) where
   defaultColumnType _ = defaultColumnType (Proxy @ty)
@@ -232,6 +233,7 @@ instance HasColumnType a => HasColumnType (Vector a) where
   defaultColumnType _ = case defaultColumnType (Proxy @a) of
     SqlArrayType t d -> SqlArrayType t (d + 1)
     t -> SqlArrayType t 1
+  defaultEnums _ = defaultEnums (Proxy @a)
 
 --
 -- Support for 'SqlSerial'. \"SERIAL\" is treated by Postgres as syntactic sugar for:

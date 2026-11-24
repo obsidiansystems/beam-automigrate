@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -12,15 +13,18 @@
 module Test.Database.Beam.AutoMigrate.Defaults (defaultTests) where
 
 import Data.List (isInfixOf, sort)
+import Data.Int (Int32)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Vector (Vector)
 import Data.Proxy (Proxy (..))
 import Database.Beam.AutoMigrate
 import qualified Database.Beam.Backend.SQL.AST as AST
-import Database.Beam.Backend.SQL.Types (SqlSerial)
+import Database.Beam.Backend.SQL.Types (SqlSerial (..))
 import Database.Beam.Postgres (Postgres)
+import Database.Beam.Query (val_)
 import Database.Beam.Schema hiding (Table)
 import qualified Database.Beam.Schema as Beam
 import GHC.Generics (Generic)
@@ -78,6 +82,32 @@ defaultTests =
             S.size (defaultSequenceDependencies de) @?= 1
           other -> assertFailure ("expected one derived default, got " <> show other)
         M.size (schemaSequences schema) @?= 1,
+      testCase "an explicit serial default is refused with its column context" $ do
+        let settings = serialDbSettings `withDbModification` dbModification
+              { serialDbParents = annotateTableFields tableModification
+                  { serialParentId = defaultsTo (val_ (SqlSerial (7 :: Int32))) }
+              }
+        case fromAnnotatedDbSettings settings (Proxy @'[]) of
+          Left [InvalidColumn qualified (CompanionSequenceConflictsWithDefault other)] -> do
+            qualified @?= Qualified "serial_parent" "id"
+            other @?= qualified
+          other -> assertFailure ("expected a typed companion conflict, got " <> show other),
+      testCase "a referencing serial key keeps an explicit default without a companion" $ do
+        let settings = serialDbSettings `withDbModification` dbModification
+              { serialDbChildren = annotateTableFields tableModification
+                  { serialChildParent = SerialParentKey (defaultsTo (val_ (SqlSerial (7 :: Int32)))) }
+              }
+        schema <- either (assertFailure . show) pure (fromAnnotatedDbSettings settings (Proxy @'[]))
+        M.size (schemaSequences schema) @?= 1
+        let expressions = [defaultExpression de | tbl <- M.elems (schemaTables schema),
+              col <- M.elems (tableColumns tbl), Just de <- [columnDefault col]]
+        assertBool "the explicit child default is retained" ("7" `elem` expressions),
+      testCase "nullable enum arrays retain the native enumeration definition" $ do
+        schema <- either (assertFailure . show) pure (fromAnnotatedDbSettings serialDbSettings (Proxy @'[]))
+        case defaultColumnType (Proxy @SerialMood) of
+          PgSpecificType (PgEnumeration name) ->
+            schemaEnumerations schema @?= M.singleton name (Enumeration ["Cheerful", "Sad"])
+          other -> assertFailure ("expected a native enum, got " <> show other),
       testCase "companion sequence uses bounded canonical names" $ do
         let (sq, de) = companion "parents" "p_id"
         seqName sq @?= "parents___p_id___seq"
@@ -138,13 +168,18 @@ schemaWith mbDefault =
 -- Typed fixture for companion-sequence derivation.
 --
 
+data SerialMood = Cheerful | Sad
+  deriving (Show, Enum, Bounded)
+  deriving (HasColumnType) via (PgEnum SerialMood)
+
 data SerialParentT f = SerialParentRow
-  { serialParentId :: Columnar f (SqlSerial Int)
+  { serialParentId :: Columnar f (SqlSerial Int32),
+    serialParentMoods :: Columnar f (Maybe (Vector SerialMood))
   }
   deriving (Generic, Beamable)
 
 instance Beam.Table SerialParentT where
-  data PrimaryKey SerialParentT f = SerialParentKey (Columnar f (SqlSerial Int))
+  data PrimaryKey SerialParentT f = SerialParentKey (Columnar f (SqlSerial Int32))
     deriving (Generic, Beamable)
   primaryKey = SerialParentKey . serialParentId
 
@@ -166,7 +201,11 @@ data SerialDbT f = SerialDb
   deriving (Generic, Database be)
 
 serialDbSettings :: AnnotatedDatabaseSettings Postgres SerialDbT
-serialDbSettings = defaultAnnotatedDbSettings defaultDbSettings
+serialDbSettings = defaultAnnotatedDbSettings $
+  defaultDbSettings `withDbModification` dbModification
+    { serialDbParents = setEntityName "serial_parent" <>
+        modifyTableFields tableModification {serialParentId = fieldNamed "id"}
+    }
 
 assertContains :: String -> String -> Assertion
 assertContains needle haystack =

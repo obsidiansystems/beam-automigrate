@@ -116,6 +116,8 @@ data Reason
     InvalidPhysicalColumnType (Qualified ColumnName) ColumnType Text
   | -- | An identifier used by a physical type is not a valid PostgreSQL name.
     InvalidIdentifier Text
+  | -- | An explicit default conflicts with a generated serial companion.
+    CompanionSequenceConflictsWithDefault (Qualified ColumnName)
   deriving (Show, Eq)
 
 data ApplyFailed
