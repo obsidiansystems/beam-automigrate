@@ -439,17 +439,24 @@ instance (GTableConstraintColumns be db a, GTableConstraintColumns be db b) => G
 -- Column entries
 --
 
+-- Reject competing explicit and generated defaults on the same column.
+-- Referencing keys keep explicit defaults without generating a companion sequence.
 instance HasCompanionSequence ty => GColumns 'GenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
-  gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
-    case hasCompanionSequence (Proxy @ty) t name of
-      Nothing ->
-        Right (M.singleton name (Column ty constr), mempty)
-      Just (sq, extraDefault) ->
-        Right (M.singleton name (Column ty (S.insert extraDefault constr)), uncurry M.singleton sq)
+  gColumns Proxy t (M1 (K1 (TableFieldSchema name (FieldSchema ty constr mbDefault)))) =
+    case (mbDefault, hasCompanionSequence (Proxy @ty) t name) of
+      (Just _, Just _) ->
+        let qualified = Qualified t name
+         in Left [InvalidColumn qualified (CompanionSequenceConflictsWithDefault qualified)]
+      (Just _, Nothing) ->
+        Right (M.singleton name (Column ty constr mbDefault), mempty)
+      (Nothing, Just (sq, companionDefault)) ->
+        Right (M.singleton name (Column ty constr (Just companionDefault)), uncurry M.singleton sq)
+      (Nothing, Nothing) ->
+        Right (M.singleton name (Column ty constr Nothing), mempty)
 
 instance GColumns 'NoGenSequences (S1 m (K1 R (TableFieldSchema tbl ty))) where
-  gColumns Proxy _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr)))) =
-    Right (M.singleton name (Column ty constr), mempty)
+  gColumns Proxy _ (M1 (K1 (TableFieldSchema name (FieldSchema ty constr mbDefault)))) =
+    Right (M.singleton name (Column ty constr mbDefault), mempty)
 
 instance
   {-# OVERLAPS #-}

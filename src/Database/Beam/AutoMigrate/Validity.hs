@@ -84,6 +84,12 @@ data Reason
     -- not unique or not fields of a PRIMARY KEY.
     ColumnsInFkAreNotUniqueOrPrimaryKeyFields TableName [Qualified ColumnName]
   | ColumnStillReferencesSequence SequenceName (Qualified ColumnName)
+  | -- | A default references a sequence which doesn't exist.
+    DefaultReferencesNonExistingSequence (Qualified ColumnName) SequenceName
+  | -- | A default references an enumeration which doesn't exist.
+    DefaultReferencesNonExistingEnum (Qualified ColumnName) EnumerationName
+  | -- | The column's stored default did not match the expected old value.
+    ColumnDefaultMismatch (Qualified ColumnName) (Maybe DefaultExpr) (Maybe DefaultExpr)
   | -- | This 'TableConstraint' references one or more 'Column's which don't exist.
     NotAllColumnsExist TableName (S.Set ColumnName) (S.Set ColumnName)
   | -- | Deleting this 'TableConstraint' would affect the selected external 'Column's and some external
@@ -110,6 +116,8 @@ data Reason
     InvalidPhysicalColumnType (Qualified ColumnName) ColumnType Text
   | -- | An identifier used by a physical type is not a valid PostgreSQL name.
     InvalidIdentifier Text
+  | -- | An explicit default conflicts with a generated serial companion.
+    CompanionSequenceConflictsWithDefault (Qualified ColumnName)
   deriving (Show, Eq)
 
 data ApplyFailed
@@ -340,17 +348,22 @@ validateTableConstraint s tName tbl c = case c of
                in Left $ InvalidTableConstraint c reason
             Just () -> Right ()
 
--- | Validate 'Column'.
--- NOTE(adn) For now in this context a 'Column' is always considered valid, /except/ if it references an
--- 'Enum' type which doesn't exist.
+-- | Reject columns whose enum type or declared default dependencies are missing from the schema.
 validateColumn :: Schema -> TableName -> (ColumnName, Column) -> Either [ValidationFailed] ()
-validateColumn s tName (colName, col) =
+validateColumn s tName (colName, col) = do
   case lookupEnum (colName, col) of
     Nothing -> Right ()
     Just eName | eName `elem` M.keys (schemaEnumerations s) -> Right ()
     Just eName ->
       let reason = ColumnReferencesNonExistingEnum (Qualified tName colName) eName
        in Left [InvalidColumn (Qualified tName colName) reason]
+  forM_ (columnDefault col) $ \de -> do
+    forM_ (S.toList (defaultSequenceDependencies de)) $ \sName ->
+      unless (M.member sName (schemaSequences s)) $
+        Left [InvalidColumn (Qualified tName colName) (DefaultReferencesNonExistingSequence (Qualified tName colName) sName)]
+    forM_ (S.toList (defaultEnumDependencies de)) $ \eName ->
+      unless (M.member eName (schemaEnumerations s)) $
+        Left [InvalidColumn (Qualified tName colName) (DefaultReferencesNonExistingEnum (Qualified tName colName) eName)]
 
 -- | A 'Schema' enum is considered always valid in this context /except/ if it contains duplicate values.
 validateSchemaEnums :: Schema -> Either [ValidationFailed] ()
@@ -442,18 +455,12 @@ validateRemoveSequence s sName (Sequence targetTable targetColumn) =
   let mbCol = do
         tbl <- M.lookup targetTable (schemaTables s)
         col <- M.lookup targetColumn (tableColumns tbl)
-        pure $ any hasNextValConstraint (S.toList (columnConstraints col))
+        pure $ maybe False (S.member sName . defaultSequenceDependencies) (columnDefault col)
    in case mbCol of
         Just True ->
           let reason = ColumnStillReferencesSequence sName (Qualified targetTable targetColumn)
            in Left $ InvalidRemoveSequence sName reason
         _ -> Right ()
-  where
-    hasNextValConstraint :: ColumnConstraint -> Bool
-    hasNextValConstraint (Default defTxt) = case parseSequenceName (SequenceName defTxt) of
-      Just (tName, cName) | tName == targetTable && cName == targetColumn -> True
-      _ -> False
-    hasNextValConstraint _ = False
 
 -- | Validate that adding a new 'TableConstraint' doesn't violate referential integrity.
 validateAddTableConstraint :: Schema -> TableName -> Table -> TableConstraint -> Either ValidationFailed ()
@@ -505,7 +512,6 @@ validateRemoveColumnConstraint ::
   Either ValidationFailed ()
 validateRemoveColumnConstraint tbl (Qualified tName colName) = \case
   NotNull -> mapM_ checkIntegrity (tableConstraints tbl)
-  Default _ -> pure ()
   where
     checkIntegrity :: TableConstraint -> Either ValidationFailed ()
     checkIntegrity constr = case constr of
@@ -563,6 +569,8 @@ applyEdit s edit@(Edit e _safety) = runExcept $ case e of
       withExistingTable tName edit s (removeColumn edit s colName tName)
     ColumnTypeChanged tName colName oldType newType ->
       withExistingColumn tName colName edit s (\_ -> changeColumnType edit colName oldType newType)
+    ColumnDefaultChanged tName colName oldDefault newDefault ->
+      withExistingColumn tName colName edit s (\_ -> changeColumnDefault edit s tName colName oldDefault newDefault)
     ColumnConstraintAdded tName colName con ->
       withExistingColumn tName colName edit s (\_ -> addColumnConstraint edit tName con colName)
     ColumnConstraintRemoved tName colName con ->
@@ -609,8 +617,7 @@ addColumn e colName col tbl = liftEither $ do
   columns' <-
     M.alterF
       ( \case
-          -- Constraints are added as a separate edit step.
-          Nothing -> Right (Just col {columnConstraints = mempty})
+          Nothing -> Right (Just col)
           Just existing -> Left (InvalidEdit e (ColumnAlreadyExist colName existing))
       )
       colName
@@ -668,6 +675,28 @@ changeColumnType e colName oldType newType col =
   if columnType col /= oldType
     then Left $ InvalidEdit e (ColumnTypeMismatch colName col oldType)
     else pure . Just $ col {columnType = newType}
+
+changeColumnDefault ::
+  Edit ->
+  Schema ->
+  TableName ->
+  ColumnName ->
+  Maybe DefaultExpr ->
+  Maybe DefaultExpr ->
+  Column ->
+  Either ApplyFailed (Maybe Column)
+changeColumnDefault e s tName colName oldDefault newDefault col
+  | columnDefault col /= oldDefault =
+      Left (InvalidEdit e (ColumnDefaultMismatch (Qualified tName colName) (columnDefault col) oldDefault))
+  | otherwise = do
+      forM_ newDefault $ \de -> do
+        forM_ (S.toList (defaultSequenceDependencies de)) $ \sName ->
+          unless (M.member sName (schemaSequences s)) $
+            Left (InvalidEdit e (DefaultReferencesNonExistingSequence (Qualified tName colName) sName))
+        forM_ (S.toList (defaultEnumDependencies de)) $ \eName ->
+          unless (M.member eName (schemaEnumerations s)) $
+            Left (InvalidEdit e (DefaultReferencesNonExistingEnum (Qualified tName colName) eName))
+      pure . Just $ col {columnDefault = newDefault}
 
 addColumnConstraint ::
   Edit ->

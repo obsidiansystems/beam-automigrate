@@ -17,7 +17,8 @@ import System.Process (proc, readCreateProcessWithExitCode, readProcess)
 passFixtures :: [FilePath]
 passFixtures =
   [ "ManualDisambiguation.hs",
-    "CompositeNullable.hs"
+    "CompositeNullable.hs",
+    "EnumArraysSerial.hs"
   ]
 
 failFixtures :: [FilePath]
