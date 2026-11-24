@@ -11,6 +11,7 @@ import Test.Database.Beam.AutoMigrate.Identifiers (identifierTests)
 import Test.Database.Beam.AutoMigrate.Renderer (rendererTests)
 import qualified Test.Database.Beam.AutoMigrate.Derivation as Derivation
 import Test.Database.Beam.AutoMigrate.Composite (compositeTests)
+import Test.Database.Beam.AutoMigrate.Indexed (indexedTests)
 import Test.Database.Beam.AutoMigrate.PhysicalTypes (physicalTypesTests)
 import Test.Database.Beam.AutoMigrate.Defaults (defaultTests)
 import Test.QuickCheck
@@ -22,7 +23,7 @@ main :: IO ()
 main = defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Tests" [identifierTests, physicalTypesTests, rendererTests, Derivation.tests, compositeTests, defaultTests, properties, foreignKeyTests]
+tests = testGroup "Tests" [identifierTests, physicalTypesTests, rendererTests, Derivation.tests, compositeTests, defaultTests, indexedTests, properties, foreignKeyTests]
 
 properties :: TestTree
 properties =

@@ -18,6 +18,7 @@ module Database.Beam.AutoMigrate
     -- * Generating a Schema
     -- $generatingASchema
     fromAnnotatedDbSettings,
+    fromAnnotatedDbSettingsIndexed,
 
     -- * Downcasting an AnnotatedDatabaseSettings into a simple DatabaseSettings
     deAnnotateDatabase,
@@ -195,6 +196,56 @@ fromAnnotatedDbSettings ::
   Either [ValidationFailed] Schema
 fromAnnotatedDbSettings db p = do
   derived <- gSchema db p (from db)
+  canonical <- canonicalizeSchema derived
+  validateSchema canonical
+  pure canonical
+
+-- | Produces the same 'Schema' as 'fromAnnotatedDbSettings', with a compile-time cost that is linear
+-- in the size of the database instead of quadratic.
+--
+-- 'fromAnnotatedDbSettings' resolves the target of each discovered foreign key with a type-level
+-- search over every table of the database, so the typechecker does O(tables × foreign keys) work.
+-- On a database with hundreds of tables, compiling the module that derives the schema dominates
+-- build time and memory. This function instead:
+--
+-- 1. folds the database once into an 'FkIndex' that maps the 'Data.Typeable.TypeRep' of each table
+--    type to its name and primary-key columns;
+-- 2. assembles each table on its own with 'mkTableEntryNoFkDiscovery';
+-- 3. discovers each table's foreign keys by walking only that table's fields, resolving each
+--    'Database.Beam.Schema.PrimaryKey' field with one lookup in the index.
+--
+-- The annotation list works as in 'fromAnnotatedDbSettings': @'UserDefinedFk' tbl@ disables FK
+-- discovery for the tables of type @tbl@, and their 'foreignKeyOnPk' annotations are kept. A
+-- 'foreignKeyOnPk' key overrides a discovered key on the same columns, and the result goes through
+-- the same checks ('validateSchema', duplicate names, foreign-key arity), so a database that
+-- 'fromAnnotatedDbSettings' rejects with a 'Left' gets the same 'Left' here.
+--
+-- Use it when the compile time or memory of 'fromAnnotatedDbSettings' is a problem. The trade-off is
+-- where two errors appear. A foreign key whose target table is not in the database, or whose target
+-- table type occurs more than once, is a type error with 'fromAnnotatedDbSettings'. Here it is a
+-- call to 'error' when that table's constraints are evaluated, for example by 'migrate' or by a test
+-- that forces the 'Schema'. A test that compares the result with 'fromAnnotatedDbSettings', or that
+-- simply evaluates it, moves the check back before deployment.
+fromAnnotatedDbSettingsIndexed ::
+  forall be db anns.
+  ( Generic (AnnotatedDatabaseSettings be db),
+    GTableIndex (Rep (AnnotatedDatabaseSettings be db)),
+    GIndexedTables anns (Rep (AnnotatedDatabaseSettings be db)),
+    GEnums be db (Rep (AnnotatedDatabaseSettings be db))
+  ) =>
+  AnnotatedDatabaseSettings be db ->
+  Proxy (anns :: [Annotation]) ->
+  Either [ValidationFailed] Schema
+fromAnnotatedDbSettingsIndexed db p = do
+  let rep = from db
+  ((tables, sequences), enumerations) <-
+    bothEither (gIndexedTables p (fkIndex db) rep) (gEnums db rep)
+  let derived =
+        Schema
+          { schemaTables = tables,
+            schemaEnumerations = enumerations,
+            schemaSequences = sequences
+          }
   canonical <- canonicalizeSchema derived
   validateSchema canonical
   pure canonical

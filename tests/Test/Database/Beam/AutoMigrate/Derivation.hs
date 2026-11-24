@@ -8,7 +8,16 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Test.Database.Beam.AutoMigrate.Derivation (tests) where
+module Test.Database.Beam.AutoMigrate.Derivation
+  ( tests,
+    annotatedDb,
+    RegionT,
+    CityT,
+    pendingAnnotated,
+    dupTableDb,
+    dupColumnsDb,
+  )
+where
 
 import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty (..))

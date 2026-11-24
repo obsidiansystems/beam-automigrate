@@ -16,8 +16,10 @@ import Data.Bifunctor
 import Data.Kind
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Lazy as ML
 import qualified Data.Map.Strict as M
 import Data.Proxy
+import Data.Typeable (TypeRep, Typeable, typeRep)
 import qualified Data.Set as S
 import qualified Data.Text as T
 import Database.Beam.AutoMigrate.Annotated
@@ -264,13 +266,24 @@ mkTableEntryFkDiscovery ::
   AnnotatedDatabaseSettings be db ->
   AnnotatedDatabaseEntity be db (TableEntity tbl) ->
   Either [ValidationFailed] ((TableName, Table), Sequences)
-mkTableEntryFkDiscovery db annEntity = do
+mkTableEntryFkDiscovery db annEntity =
+  mkTableEntryWithInferredFks
+    (\tName -> gTableConstraintsColumns db tName (from (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))))
+    annEntity
+
+-- | Assemble a table with 'mkTableEntryNoFkDiscovery', then add the foreign keys that the given
+-- function infers for it. An explicit foreign key on the same local columns overrides an inferred one.
+mkTableEntryWithInferredFks ::
+  ( GColumns 'GenSequences (Rep (TableSchema tbl)),
+    Generic (TableSchema tbl),
+    Beam.Table tbl
+  ) =>
+  (TableName -> Either [ValidationFailed] (S.Set TableConstraint)) ->
+  AnnotatedDatabaseEntity be db (TableEntity tbl) ->
+  Either [ValidationFailed] ((TableName, Table), Sequences)
+mkTableEntryWithInferredFks inferFks annEntity = do
   ((tName, table), seqs) <- mkTableEntryNoFkDiscovery annEntity
-  inferred <-
-    gTableConstraintsColumns
-      db
-      tName
-      (from (dbAnnotatedSchema (annEntity ^. annotatedDescriptor)))
+  inferred <- inferFks tName
   let explicitLocalSets =
         S.fromList (map foreignKeyLocalColumns (filter isForeignKey (S.toList (tableConstraints table))))
       keptInferred =
@@ -490,31 +503,37 @@ instance
   GTableConstraintColumns be db (S1 m (K1 R (PrimaryKey tbl f)))
   where
   gTableConstraintsColumns db localTable (M1 (K1 e)) =
-    let localCols = map ColumnName (gOrderedColumnNames (from e))
-        (reftname, remoteCols) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
-        invalid reason = Left [InvalidForeignKeyDeclaration localTable reftname reason]
-     in if null localCols || null remoteCols
-          then invalid (EmptyKey localTable "FOREIGN KEY")
-          else
-            if length localCols /= length remoteCols
-              then invalid (ForeignKeyArityMismatch localTable reftname (length localCols) (length remoteCols))
-              else case NE.nonEmpty (zip localCols remoteCols) of
-                Nothing -> invalid (EmptyKey localTable "FOREIGN KEY")
-                Just pairs
-                  | length (L.nub localCols) /= length localCols
-                      || length (L.nub remoteCols) /= length remoteCols ->
-                    invalid (DuplicateForeignKeyColumns localTable (foreignKeyName localTable pairs reftname))
-                  | otherwise ->
-                    Right
-                      ( S.singleton
-                          ( ForeignKey
-                              (foreignKeyName localTable pairs reftname)
-                              reftname
-                              (canonicalizeForeignKeyPairs pairs)
-                              NoAction
-                              NoAction
-                          )
-                      )
+    let (reftname, remoteCols) = gTableLookupSettings (Proxy @sel) (Proxy @tbl) (from db)
+     in discoveredForeignKey localTable (map ColumnName (gOrderedColumnNames (from e))) reftname remoteCols
+
+-- | Build the constraint for a discovered foreign key from the local columns of a 'PrimaryKey'
+-- field and the target table's name and primary-key columns, pairing them by position.
+discoveredForeignKey :: TableName -> [ColumnName] -> TableName -> [ColumnName] -> Either [ValidationFailed] (S.Set TableConstraint)
+discoveredForeignKey localTable localCols reftname remoteCols =
+  if null localCols || null remoteCols
+    then invalid (EmptyKey localTable "FOREIGN KEY")
+    else
+      if length localCols /= length remoteCols
+        then invalid (ForeignKeyArityMismatch localTable reftname (length localCols) (length remoteCols))
+        else case NE.nonEmpty (zip localCols remoteCols) of
+          Nothing -> invalid (EmptyKey localTable "FOREIGN KEY")
+          Just pairs
+            | length (L.nub localCols) /= length localCols
+                || length (L.nub remoteCols) /= length remoteCols ->
+              invalid (DuplicateForeignKeyColumns localTable (foreignKeyName localTable pairs reftname))
+            | otherwise ->
+              Right
+                ( S.singleton
+                    ( ForeignKey
+                        (foreignKeyName localTable pairs reftname)
+                        reftname
+                        (canonicalizeForeignKeyPairs pairs)
+                        NoAction
+                        NoAction
+                    )
+                )
+  where
+    invalid reason = Left [InvalidForeignKeyDeclaration localTable reftname reason]
 
 -- We want a type class for the table lookup, because we want to return a
 -- value-level table name based on the database settings!
@@ -745,3 +764,261 @@ instance
   GOrderedColumnNames (S1 m (K1 R (PrimaryKey tbl1 (Beam.Nullable (TableFieldSchema tbl2)))))
   where
   gOrderedColumnNames (M1 (K1 e)) = gOrderedColumnNames (from e)
+
+--
+-- Indexed FK discovery
+--
+-- 'GTableConstraintColumns' resolves the target of each 'PrimaryKey' field with
+-- 'GTableLookupSettings', which walks every table of the database at the type level and keeps
+-- walking after a match to rule out a second one. The typechecker therefore does
+-- O(tables × foreign keys) work, which dominates compile time and memory on large databases.
+--
+-- The classes below derive the same 'Schema' in time linear in the number of tables and fields:
+--
+-- 1. 'GTableIndex' folds the database record once into an 'FkIndex', which maps the 'TypeRep' of
+--    each table type to its name and primary-key columns.
+-- 2. 'GIndexedTables' and 'GIndexedTableEntry' assemble each table on its own with
+--    'mkTableEntryWithInferredFks', where 'GIndexedFks' walks only that table's 'TableSchema' and
+--    resolves each 'PrimaryKey' field by one 'M.lookup' in the index.
+--
+-- Everything else is shared with the generic path: each discovered key is built by
+-- 'discoveredForeignKey', a 'foreignKeyOnPk' key on the same local columns overrides it, and
+-- duplicate tables, sequences, columns and enums are rejected by the same functions in the same
+-- order, so both paths return the same 'Either'.
+--
+-- A foreign key whose target table is missing, or whose target table type occurs more than once,
+-- is a type error in the generic path ('LookupFailed', 'LookupAmbiguous'). Here it is a call to
+-- 'error' when that table's constraints are evaluated.
+
+-- | For each table type in a database: the table name and the names of its primary-key columns.
+--
+-- The values are lazy. A table type that occurs more than once maps to an 'error' that is raised only
+-- when a foreign key refers to that type, so a database with a repeated table type that nothing
+-- refers to is accepted, as it is by 'GTableLookupSettings'.
+type FkIndex = M.Map TypeRep (TableName, [ColumnName])
+
+-- | Build an 'FkIndex' from the entries that 'GTableIndex' collects.
+fkIndexFromEntries :: [(TypeRep, (TableName, [ColumnName]))] -> FkIndex
+fkIndexFromEntries entries = ML.mapWithKey resolve grouped
+  where
+    grouped :: ML.Map TypeRep [(TableName, [ColumnName])]
+    grouped = ML.fromListWith (flip (<>)) [(rep, [entry]) | (rep, entry) <- entries]
+
+    resolve _ [entry] = entry
+    resolve rep many =
+      error $
+        "beam-automigrate: cannot derive a foreign key to table type "
+          <> show rep
+          <> ", because the database contains it more than once (tables "
+          <> show (map fst many)
+          <> "). Disable FK discovery for the referencing tables with 'UserDefinedFk' and declare "
+          <> "their foreign keys with 'foreignKeyOnPk'."
+
+-- | Look up the target of a foreign key in the index.
+lookupFkTarget :: TypeRep -> FkIndex -> (TableName, [ColumnName])
+lookupFkTarget rep idx =
+  case M.lookup rep idx of
+    Just target -> target
+    Nothing ->
+      error $
+        "beam-automigrate: cannot derive a foreign key to table type "
+          <> show rep
+          <> ", because the database does not contain a table of that type."
+
+-- | Collect one 'FkIndex' entry for each table of a database, in one pass over its 'Rep'.
+class GTableIndex (x :: Type -> Type) where
+  gTableIndex :: x p -> [(TypeRep, (TableName, [ColumnName]))] -> [(TypeRep, (TableName, [ColumnName]))]
+
+instance GTableIndex x => GTableIndex (D1 f x) where
+  gTableIndex (M1 x) = gTableIndex x
+
+instance GTableIndex x => GTableIndex (C1 f x) where
+  gTableIndex (M1 x) = gTableIndex x
+
+instance GTableIndex x => GTableIndex (S1 f x) where
+  gTableIndex (M1 x) = gTableIndex x
+
+instance (GTableIndex a, GTableIndex b) => GTableIndex (a :*: b) where
+  gTableIndex (a :*: b) = gTableIndex a . gTableIndex b
+
+instance
+  (Beam.Table tbl, Typeable tbl) =>
+  GTableIndex (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
+  where
+  gTableIndex (K1 annEntity) = (tableIndexEntry annEntity :)
+
+-- sub-db support for GTableIndex
+
+instance
+  ( Generic (innerDB (AnnotatedDatabaseEntity be outerDB)),
+    Beam.Database be innerDB,
+    GTableIndex (Rep (innerDB (AnnotatedDatabaseEntity be outerDB)))
+  ) =>
+  GTableIndex (K1 R (innerDB (AnnotatedDatabaseEntity be outerDB)))
+  where
+  gTableIndex (K1 innerDB) = gTableIndex (from innerDB)
+
+-- | One table's 'FkIndex' entry.
+tableIndexEntry ::
+  forall be db tbl.
+  (Beam.Table tbl, Typeable tbl) =>
+  AnnotatedDatabaseEntity be db (TableEntity tbl) ->
+  (TypeRep, (TableName, [ColumnName]))
+tableIndexEntry annEntity =
+  let entity = annEntity ^. deannotate
+   in (typeRep (Proxy @tbl), (TableName (entity ^. dbEntityDescriptor . dbEntityName), pkFieldNames entity))
+
+-- | Build the 'FkIndex' of a database.
+fkIndex ::
+  (Generic (AnnotatedDatabaseSettings be db), GTableIndex (Rep (AnnotatedDatabaseSettings be db))) =>
+  AnnotatedDatabaseSettings be db ->
+  FkIndex
+fkIndex db = fkIndexFromEntries (gTableIndex (from db) [])
+
+-- | 'True' when the annotation list disables FK discovery for the table, that is, when it contains
+-- @'UserDefinedFk' tbl@. This costs O(length anns) per table, once.
+type family HasUserDefinedFk (tbl :: TableKind) (anns :: [Annotation]) :: Bool where
+  HasUserDefinedFk _ '[] = 'False
+  HasUserDefinedFk tbl ('UserDefinedFk tbl ': _) = 'True
+  HasUserDefinedFk tbl (_ ': xs) = HasUserDefinedFk tbl xs
+
+-- | Assemble the tables of a database. The indexed counterpart of 'GTables', with the same
+-- duplicate checks ('combineTables', 'combineEntries') applied in the same order.
+class GIndexedTables (anns :: [Annotation]) (x :: Type -> Type) where
+  gIndexedTables :: Proxy anns -> FkIndex -> x p -> Either [ValidationFailed] (Tables, Sequences)
+
+instance GIndexedTables anns x => GIndexedTables anns (D1 f x) where
+  gIndexedTables p idx (M1 x) = gIndexedTables p idx x
+
+instance GIndexedTables anns x => GIndexedTables anns (C1 f x) where
+  gIndexedTables p idx (M1 x) = gIndexedTables p idx x
+
+instance GIndexedTableEntry anns x => GIndexedTables anns (S1 f x) where
+  gIndexedTables p idx (M1 x) = do
+    (tbls, sqs) <- gIndexedTableEntries p idx x
+    pure (M.fromList tbls, sqs)
+
+instance (GIndexedTables anns a, GIndexedTables anns b) => GIndexedTables anns (a :*: b) where
+  gIndexedTables p idx (a :*: b) =
+    bothEither (gIndexedTables p idx a) (gIndexedTables p idx b)
+      >>= \((ta, sa), (tb, sb)) -> combineTables ta sa tb sb
+
+-- | Assemble the tables under one field of a database. The indexed counterpart of 'GTableEntry'.
+class GIndexedTableEntry (anns :: [Annotation]) (x :: Type -> Type) where
+  gIndexedTableEntries :: Proxy anns -> FkIndex -> x p -> Either [ValidationFailed] ([(TableName, Table)], Sequences)
+
+instance
+  IndexedTableEntry (HasUserDefinedFk tbl anns) tbl =>
+  GIndexedTableEntry anns (K1 R (AnnotatedDatabaseEntity be db (TableEntity tbl)))
+  where
+  gIndexedTableEntries _ idx (K1 annEntity) =
+    first (: []) <$> indexedTableEntry (Proxy @(HasUserDefinedFk tbl anns)) idx annEntity
+
+-- sub-db support for GIndexedTableEntry
+
+instance
+  ( Generic (innerDB (AnnotatedDatabaseEntity be outerDB)),
+    Beam.Database be innerDB,
+    GIndexedTableEntry anns (Rep (innerDB (AnnotatedDatabaseEntity be outerDB)))
+  ) =>
+  GIndexedTableEntry anns (K1 R (innerDB (AnnotatedDatabaseEntity be outerDB)))
+  where
+  gIndexedTableEntries p idx (K1 innerDB) = gIndexedTableEntries p idx (from innerDB)
+
+instance GIndexedTableEntry anns x => GIndexedTableEntry anns (D1 f x) where
+  gIndexedTableEntries p idx (M1 x) = gIndexedTableEntries p idx x
+
+instance GIndexedTableEntry anns x => GIndexedTableEntry anns (C1 f x) where
+  gIndexedTableEntries p idx (M1 x) = gIndexedTableEntries p idx x
+
+instance GIndexedTableEntry anns x => GIndexedTableEntry anns (S1 f x) where
+  gIndexedTableEntries p idx (M1 x) = gIndexedTableEntries p idx x
+
+instance
+  (GIndexedTableEntry anns a, GIndexedTableEntry anns b) =>
+  GIndexedTableEntry anns (a :*: b)
+  where
+  gIndexedTableEntries p idx (a :*: b) =
+    bothEither (gIndexedTableEntries p idx a) (gIndexedTableEntries p idx b)
+      >>= \((la, sa), (lb, sb)) -> combineEntries la sa lb sb
+
+-- | Assemble one table, with FK discovery ('False) or without it ('True).
+class IndexedTableEntry (userDefinedFk :: Bool) (tbl :: TableKind) where
+  indexedTableEntry ::
+    Proxy userDefinedFk ->
+    FkIndex ->
+    AnnotatedDatabaseEntity be db (TableEntity tbl) ->
+    Either [ValidationFailed] ((TableName, Table), Sequences)
+
+instance
+  ( GColumns 'GenSequences (Rep (TableSchema tbl)),
+    Generic (TableSchema tbl),
+    Beam.Table tbl
+  ) =>
+  IndexedTableEntry 'True tbl
+  where
+  indexedTableEntry _ _ = mkTableEntryNoFkDiscovery
+
+instance
+  ( GColumns 'GenSequences (Rep (TableSchema tbl)),
+    Generic (TableSchema tbl),
+    Beam.Table tbl,
+    GIndexedFks (Rep (TableSchema tbl))
+  ) =>
+  IndexedTableEntry 'False tbl
+  where
+  indexedTableEntry _ = mkTableEntryIndexedFkDiscovery
+
+-- | Like 'mkTableEntryFkDiscovery', but resolves foreign-key targets in an 'FkIndex' instead of
+-- searching the database type once per foreign key.
+mkTableEntryIndexedFkDiscovery ::
+  ( GColumns 'GenSequences (Rep (TableSchema tbl)),
+    Generic (TableSchema tbl),
+    Beam.Table tbl,
+    GIndexedFks (Rep (TableSchema tbl))
+  ) =>
+  FkIndex ->
+  AnnotatedDatabaseEntity be db (TableEntity tbl) ->
+  Either [ValidationFailed] ((TableName, Table), Sequences)
+mkTableEntryIndexedFkDiscovery idx annEntity =
+  mkTableEntryWithInferredFks
+    (\tName -> gIndexedFks idx tName (from (dbAnnotatedSchema (annEntity ^. annotatedDescriptor))))
+    annEntity
+
+-- | Discover the foreign keys of one table. The indexed counterpart of 'GTableConstraintColumns'.
+class GIndexedFks (x :: Type -> Type) where
+  gIndexedFks :: FkIndex -> TableName -> x p -> Either [ValidationFailed] (S.Set TableConstraint)
+
+instance GIndexedFks x => GIndexedFks (D1 f x) where
+  gIndexedFks idx tbl (M1 x) = gIndexedFks idx tbl x
+
+instance GIndexedFks x => GIndexedFks (C1 f x) where
+  gIndexedFks idx tbl (M1 x) = gIndexedFks idx tbl x
+
+instance (GIndexedFks a, GIndexedFks b) => GIndexedFks (a :*: b) where
+  gIndexedFks idx tbl (a :*: b) =
+    bothEither (gIndexedFks idx tbl a) (gIndexedFks idx tbl b)
+      >>= \(ca, cb) -> Right (S.union ca cb)
+
+instance GIndexedFks (S1 m (K1 R (TableFieldSchema tbl ty))) where
+  gIndexedFks _ _ (M1 (K1 _)) = Right S.empty
+
+instance
+  {-# OVERLAPS #-}
+  ( Generic (sub f),
+    GIndexedFks (Rep (sub f))
+  ) =>
+  GIndexedFks (S1 m (K1 R (sub f)))
+  where
+  gIndexedFks idx tname (M1 (K1 e)) = gIndexedFks idx tname (from e)
+
+instance
+  ( Typeable tbl,
+    Generic (PrimaryKey tbl f),
+    GOrderedColumnNames (Rep (PrimaryKey tbl f))
+  ) =>
+  GIndexedFks (S1 m (K1 R (PrimaryKey tbl f)))
+  where
+  gIndexedFks idx localTable (M1 (K1 e)) =
+    let (reftname, remoteCols) = lookupFkTarget (typeRep (Proxy @tbl)) idx
+     in discoveredForeignKey localTable (map ColumnName (gOrderedColumnNames (from e))) reftname remoteCols

@@ -15,6 +15,8 @@ module Test.Database.Beam.AutoMigrate.Composite
   ( compositeTests,
     compositeSchema,
     manualSchema,
+    compositeDb,
+    nestedDb,
   )
 where
 
